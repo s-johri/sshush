@@ -20,8 +20,16 @@ type Identity struct {
 	PublicKeyPath string
 	Algorithm KeyAlgorithm
 	Comment string
+
+	// Fingerprint is the SHA256 fingerprint of the public key (e.g. "SHA256:...").
+	// Computed from the key on disk and used to match against agent-loaded keys.
+	Fingerprint string
+
 	ExistsOnDisk bool
 	LoadedInAgent bool
+
+	// AgentFingerprint is the fingerprint reported by the agent for this identity
+	// once it is loaded. Equal to Fingerprint on a match; empty when not loaded.
 	AgentFingerprint string
 }
 
