@@ -20,15 +20,25 @@ type fakeScanner struct {
 func (f fakeScanner) Scan() ([]config.Identity, error) { return f.ids, f.err }
 
 type fakeConfig struct {
-	model *config.SshConfigModel
-	err   error
+	model   *config.SshConfigModel
+	err     error
+	edits   []config.HostID
+	deletes []config.HostID
+	saved   int
 }
 
-func (f fakeConfig) Load() (*config.SshConfigModel, error)             { return f.model, f.err }
-func (f fakeConfig) SetHostField(config.HostID, string, string) error { return nil }
-func (f fakeConfig) AddHost(config.Host) error                         { return nil }
-func (f fakeConfig) DeleteHost(config.HostID) error                    { return nil }
-func (f fakeConfig) Save() error                                       { return nil }
+func (f *fakeConfig) Load() (*config.SshConfigModel, error) { return f.model, f.err }
+func (f *fakeConfig) SetHostField(h config.HostID, k, v string) error {
+	f.edits = append(f.edits, h+"/"+config.HostID(k)+"="+config.HostID(v))
+	return nil
+}
+func (f *fakeConfig) DeleteHostField(h config.HostID, k string) error {
+	f.deletes = append(f.deletes, h+"/"+config.HostID(k))
+	return nil
+}
+func (f *fakeConfig) AddHost(config.Host) error     { return nil }
+func (f *fakeConfig) DeleteHost(config.HostID) error { return nil }
+func (f *fakeConfig) Save() error                   { f.saved++; return nil }
 
 type fakeAgent struct {
 	keys    []agent.AgentKey
@@ -42,7 +52,7 @@ func (f *fakeAgent) Add(p string) error              { f.added = append(f.added,
 func (f *fakeAgent) Remove(p string) error           { f.removed = append(f.removed, p); return nil }
 
 func TestRefreshMerge(t *testing.T) {
-	cfg := fakeConfig{model: &config.SshConfigModel{
+	cfg := &fakeConfig{model: &config.SshConfigModel{
 		Hosts:       map[config.HostID]config.Host{"web": {ID: "web", Name: "web"}},
 		SourceFiles: []string{"/x/config"},
 	}}
@@ -78,7 +88,7 @@ func TestRefreshMerge(t *testing.T) {
 }
 
 func TestAgentMutationRouting(t *testing.T) {
-	cfg := fakeConfig{model: &config.SshConfigModel{}}
+	cfg := &fakeConfig{model: &config.SshConfigModel{}}
 	scan := fakeScanner{ids: []config.Identity{
 		{ID: "disk", Path: "/k/disk", Fingerprint: "SHA256:AAA", ExistsOnDisk: true},
 	}}
@@ -118,8 +128,45 @@ func TestAgentMutationRouting(t *testing.T) {
 	}
 }
 
+func TestEditHostSavesAndRefreshes(t *testing.T) {
+	cfg := &fakeConfig{model: &config.SshConfigModel{
+		Hosts: map[config.HostID]config.Host{"web": {ID: "web", Name: "web"}},
+	}}
+	app := New(fakeScanner{}, cfg, &fakeAgent{})
+
+	if err := app.EditHost("web", "User", "deploy"); err != nil {
+		t.Fatalf("EditHost: %v", err)
+	}
+	if len(cfg.edits) != 1 || cfg.edits[0] != "web/User=deploy" {
+		t.Errorf("edit not forwarded: %v", cfg.edits)
+	}
+	if cfg.saved != 1 {
+		t.Errorf("Save called %d times, want 1", cfg.saved)
+	}
+	if app.model == nil {
+		t.Error("snapshot not refreshed after edit")
+	}
+}
+
+func TestDeleteHostFieldSavesAndRefreshes(t *testing.T) {
+	cfg := &fakeConfig{model: &config.SshConfigModel{
+		Hosts: map[config.HostID]config.Host{"web": {ID: "web", Name: "web"}},
+	}}
+	app := New(fakeScanner{}, cfg, &fakeAgent{})
+
+	if err := app.DeleteHostField("web", "ForwardAgent"); err != nil {
+		t.Fatalf("DeleteHostField: %v", err)
+	}
+	if len(cfg.deletes) != 1 || cfg.deletes[0] != "web/ForwardAgent" {
+		t.Errorf("delete not forwarded: %v", cfg.deletes)
+	}
+	if cfg.saved != 1 {
+		t.Errorf("Save called %d times, want 1", cfg.saved)
+	}
+}
+
 func TestRefreshNoAgentDegrades(t *testing.T) {
-	cfg := fakeConfig{model: &config.SshConfigModel{}}
+	cfg := &fakeConfig{model: &config.SshConfigModel{}}
 	scan := fakeScanner{ids: []config.Identity{{ID: "k", Fingerprint: "SHA256:AAA"}}}
 	ag := &fakeAgent{err: agent.ErrNoAgent}
 

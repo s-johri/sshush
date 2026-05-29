@@ -115,6 +115,112 @@ func TestLoadMissingMain(t *testing.T) {
 	}
 }
 
+// TestSetFieldPreservesFormatting guards the unsafe rawValue trick: editing a
+// value must change only that value, keeping indentation and trailing comment.
+func TestSetFieldPreservesFormatting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host web\n    HostName 1.2.3.4\n    User old  # deploy user\n")
+
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetHostField("web", "User", "deploy2"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "Host web\n    HostName 1.2.3.4\n    User deploy2  # deploy user\n"
+	if got := r.files[0].cfg.String(); got != want {
+		t.Errorf("edit output:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestAppendFieldIndented(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host web\n    HostName 1.2.3.4\n")
+
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetHostField("web", "Port", "2222"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "Host web\n    HostName 1.2.3.4\n    Port 2222\n"
+	if got := r.files[0].cfg.String(); got != want {
+		t.Errorf("append output:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestSaveWritesBackupAndFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	orig := "Host web\n    User old\n"
+	writeFile(t, path, orig)
+
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetHostField("web", "User", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := os.ReadFile(path)
+	if string(got) != "Host web\n    User new\n" {
+		t.Errorf("written file = %q", got)
+	}
+	bak, err := os.ReadFile(path + ".bak")
+	if err != nil {
+		t.Fatalf("backup not written: %v", err)
+	}
+	if string(bak) != orig {
+		t.Errorf("backup = %q, want original %q", bak, orig)
+	}
+}
+
+func TestDeleteHostField(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host web\n    HostName 1.2.3.4\n    ForwardAgent yes\n    User deploy\n")
+
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DeleteHostField("web", "ForwardAgent"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "Host web\n    HostName 1.2.3.4\n    User deploy\n"
+	if got := r.files[0].cfg.String(); got != want {
+		t.Errorf("delete output:\n got %q\nwant %q", got, want)
+	}
+	// Deleting an absent directive is a no-op, not an error.
+	if err := r.DeleteHostField("web", "Nope"); err != nil {
+		t.Errorf("deleting absent directive should not error: %v", err)
+	}
+}
+
+func TestSetHostFieldUnknown(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host web\n    User old\n")
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetHostField("ghost", "User", "x"); err == nil {
+		t.Error("expected error for unknown host")
+	}
+}
+
 func hostIDs(m *config.SshConfigModel) []config.HostID {
 	var out []config.HostID
 	for k := range m.Hosts {

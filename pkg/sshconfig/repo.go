@@ -5,10 +5,13 @@ package sshconfig
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	sshcfg "github.com/kevinburke/ssh_config"
 	"github.com/s-johri/sshush/pkg/config"
@@ -25,6 +28,7 @@ const maxIncludeDepth = 5
 type ConfigRepo interface {
 	Load() (*config.SshConfigModel, error)
 	SetHostField(h config.HostID, key, val string) error
+	DeleteHostField(h config.HostID, key string) error
 	AddHost(config.Host) error
 	DeleteHost(config.HostID) error
 	Save() error
@@ -42,7 +46,9 @@ type loadedFile struct {
 type FileRepo struct {
 	Path string // path to user config; empty means ~/.ssh/config
 
-	files []*loadedFile // parse order: main file first, then includes
+	files    []*loadedFile   // parse order: main file first, then includes
+	dirty    map[string]bool // files mutated since load, keyed by path
+	backedUp map[string]bool // files whose .bak has been written this session
 }
 
 // New returns a FileRepo for path. Empty path defaults to ~/.ssh/config.
@@ -61,6 +67,8 @@ func (r *FileRepo) Load() (*config.SshConfigModel, error) {
 	}
 
 	r.files = nil
+	r.dirty = map[string]bool{}
+	r.backedUp = map[string]bool{}
 	visited := map[string]bool{}
 	if err := r.loadFile(main, 0, visited); err != nil {
 		return nil, err
@@ -226,9 +234,47 @@ func (r *FileRepo) resolvePath() (string, error) {
 	return filepath.Join(home, ".ssh", "config"), nil
 }
 
-// SetHostField implements ConfigRepo. (Milestone 7.)
+// SetHostField sets key=val on host h, updating the existing directive in place
+// (preserving its indentation and trailing comment) or appending a new one that
+// mimics the block's indentation. The change is in-memory only until Save.
 func (r *FileRepo) SetHostField(h config.HostID, key, val string) error {
-	return ErrNotImplemented
+	lf, host := r.findHost(h)
+	if host == nil {
+		return fmt.Errorf("unknown host %q", h)
+	}
+
+	for _, node := range host.Nodes {
+		kv, ok := node.(*sshcfg.KV)
+		if ok && strings.EqualFold(kv.Key, key) {
+			setKVValue(kv, val)
+			r.dirty[lf.path] = true
+			return nil
+		}
+	}
+
+	// No existing directive: append one indented like its siblings.
+	kv := &sshcfg.KV{Key: key, Value: val}
+	setKVIndent(kv, blockIndent(host))
+	host.Nodes = append(host.Nodes, kv)
+	r.dirty[lf.path] = true
+	return nil
+}
+
+// DeleteHostField removes the first directive matching key from host h. It is a
+// no-op (no error) if the host has no such directive. In-memory until Save.
+func (r *FileRepo) DeleteHostField(h config.HostID, key string) error {
+	lf, host := r.findHost(h)
+	if host == nil {
+		return fmt.Errorf("unknown host %q", h)
+	}
+	for i, node := range host.Nodes {
+		if kv, ok := node.(*sshcfg.KV); ok && strings.EqualFold(kv.Key, key) {
+			host.Nodes = append(host.Nodes[:i], host.Nodes[i+1:]...)
+			r.dirty[lf.path] = true
+			return nil
+		}
+	}
+	return nil
 }
 
 // AddHost implements ConfigRepo. (Milestone 8.)
@@ -241,7 +287,76 @@ func (r *FileRepo) DeleteHost(h config.HostID) error {
 	return ErrNotImplemented
 }
 
-// Save implements ConfigRepo. (Milestone 7: backup then write each file.)
+// Save writes every dirty file back to disk. Before the first write of a file
+// this session it copies the file's original contents to "<path>.bak", so an
+// unexpected result is always recoverable. Files are written with their
+// existing permissions (default 0600).
 func (r *FileRepo) Save() error {
-	return ErrNotImplemented
+	for _, lf := range r.files {
+		if !r.dirty[lf.path] {
+			continue
+		}
+		if !r.backedUp[lf.path] {
+			if err := os.WriteFile(lf.path+".bak", lf.raw, fileMode(lf.path)); err != nil {
+				return fmt.Errorf("backup %s: %w", lf.path, err)
+			}
+			r.backedUp[lf.path] = true
+		}
+		if err := os.WriteFile(lf.path, []byte(lf.cfg.String()), fileMode(lf.path)); err != nil {
+			return fmt.Errorf("write %s: %w", lf.path, err)
+		}
+		r.dirty[lf.path] = false
+	}
+	return nil
+}
+
+// findHost locates the file and AST host block for a model HostID.
+func (r *FileRepo) findHost(h config.HostID) (*loadedFile, *sshcfg.Host) {
+	for _, lf := range r.files {
+		for _, host := range lf.cfg.Hosts {
+			if mh, ok := hostFromAST(host); ok && mh.ID == h {
+				return lf, host
+			}
+		}
+	}
+	return nil, nil
+}
+
+// fileMode returns the file's current permissions, or 0600 if it can't stat.
+func fileMode(path string) os.FileMode {
+	if fi, err := os.Stat(path); err == nil {
+		return fi.Mode().Perm()
+	}
+	return 0o600
+}
+
+// blockIndent returns the leading-space width of the first directive in a host
+// block, so appended directives line up. Defaults to 4 spaces.
+func blockIndent(host *sshcfg.Host) int {
+	for _, node := range host.Nodes {
+		if kv, ok := node.(*sshcfg.KV); ok {
+			return int(reflect.ValueOf(kv).Elem().FieldByName("leadingSpace").Int())
+		}
+	}
+	return 4
+}
+
+// setKVValue updates a KV's value so String() emits it. The library always
+// populates the unexported rawValue from the parsed text and prefers it over
+// Value, so rawValue must be cleared. Indentation, spacing, and any trailing
+// comment are preserved. Pinned to ssh_config v1.6.0; guarded by TestSetField.
+func setKVValue(kv *sshcfg.KV, val string) {
+	kv.Value = val
+	setUnexportedString(kv, "rawValue", "")
+}
+
+// setKVIndent sets a freshly created KV's leading indentation (unexported).
+func setKVIndent(kv *sshcfg.KV, spaces int) {
+	v := reflect.ValueOf(kv).Elem().FieldByName("leadingSpace")
+	reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().SetInt(int64(spaces))
+}
+
+func setUnexportedString(ptr any, field, val string) {
+	v := reflect.ValueOf(ptr).Elem().FieldByName(field)
+	reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().SetString(val)
 }

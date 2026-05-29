@@ -6,8 +6,10 @@ package tui
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	// agent is imported only to build the ssh-add command handed to
@@ -38,6 +40,27 @@ type agentDoneMsg struct {
 	err  error
 }
 
+// editDoneMsg reports the outcome of a host write (edit or delete).
+type editDoneMsg struct {
+	verb string // "saved" or "removed", for the status line
+	err  error
+}
+
+// editMode tracks the host-editing overlay state.
+type editMode int
+
+const (
+	modeNormal        editMode = iota
+	modeNewKey                 // typing a new option name
+	modeEdit                   // typing a value
+	modeConfirm                // confirming a write
+	modeConfirmDelete          // confirming a directive removal
+)
+
+// coreFields are always offered for editing; a host's existing option keys are
+// appended to these when the edit overlay opens.
+var coreFields = []string{"HostName", "User", "Port"}
+
 // Model is the BubbleTea model for sshush.
 type Model struct {
 	svc service.Service
@@ -52,12 +75,23 @@ type Model struct {
 	err     error
 	status  string // transient feedback (e.g. last agent action)
 
+	// host edit overlay
+	mode        editMode
+	input       textinput.Model
+	editFields  []string // core fields + the host's existing option keys
+	fieldIdx    int      // index into editFields
+	newKey      string   // option name being added (modeNewKey/modeEdit)
+	pendingHost config.HostID
+
 	width, height int
 }
 
 // New builds a Model bound to svc.
 func New(svc service.Service) Model {
-	return Model{svc: svc, loading: true}
+	ti := textinput.New()
+	ti.CharLimit = 256
+	ti.Width = 40
+	return Model{svc: svc, loading: true, input: ti}
 }
 
 // Init kicks off the first refresh.
@@ -98,6 +132,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		return m, m.refresh
 
+	case editDoneMsg:
+		if msg.err != nil {
+			m.status = "edit error: " + msg.err.Error()
+			return m, nil
+		}
+		m.status = "host " + msg.verb + " (backup written)"
+		m.loading = true
+		return m, m.refresh
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -105,6 +148,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Overlay modes capture input first.
+	switch m.mode {
+	case modeNewKey:
+		return m.handleNewKey(msg)
+	case modeEdit:
+		return m.handleEditKey(msg)
+	case modeConfirm, modeConfirmDelete:
+		return m.handleConfirmKey(msg)
+	}
+
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
@@ -123,11 +176,209 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter", " ":
 		return m.toggleSelectedKey()
+	case "e":
+		return m.beginEdit()
 	case "r":
 		m.loading = true
 		return m, m.refresh
 	}
 	return m, nil
+}
+
+// beginEdit opens the edit overlay on the selected host. Only directives the
+// host actually has are listed; absent ones (e.g. Port) are added via ctrl+o.
+func (m Model) beginEdit() (tea.Model, tea.Cmd) {
+	host, ok := m.editTarget()
+	if !ok {
+		return m, nil
+	}
+	m.editFields = presentFields(host)
+	m.fieldIdx = 0
+	m.newKey = ""
+	m.mode = modeEdit
+	m.status = ""
+	m.input.SetValue(m.currentFieldValue())
+	m.input.CursorEnd()
+	m.input.Focus()
+	return m, textinput.Blink
+}
+
+// presentFields lists the directives set on a host, core fields first.
+func presentFields(host config.Host) []string {
+	var f []string
+	if host.Hostname != "" {
+		f = append(f, "HostName")
+	}
+	if host.User != "" {
+		f = append(f, "User")
+	}
+	if host.Port != 0 {
+		f = append(f, "Port")
+	}
+	opts := make([]string, 0, len(host.Options))
+	for opt := range host.Options {
+		opts = append(opts, opt)
+	}
+	sort.Strings(opts)
+	return append(f, opts...)
+}
+
+// beginAddOption switches the open edit overlay to typing a new option name.
+func (m Model) beginAddOption() (tea.Model, tea.Cmd) {
+	m.mode = modeNewKey
+	m.status = ""
+	m.input.SetValue("")
+	m.input.Focus()
+	return m, textinput.Blink
+}
+
+// editTarget validates that a host is selected on the Hosts pane and records it.
+func (m *Model) editTarget() (config.Host, bool) {
+	if m.active != paneHosts {
+		return config.Host{}, false
+	}
+	host, ok := m.selectedHost()
+	if !ok {
+		m.status = "no host selected"
+		return config.Host{}, false
+	}
+	m.pendingHost = host.ID
+	return host, true
+}
+
+// handleNewKey collects an option name, then transitions to value entry.
+func (m Model) handleNewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		return m.cancelOverlay("add cancelled")
+	case "enter":
+		key := strings.TrimSpace(m.input.Value())
+		if key == "" {
+			m.status = "option name cannot be empty"
+			return m, nil
+		}
+		m.newKey = key
+		m.mode = modeEdit
+		m.input.SetValue("")
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// handleEditKey drives value entry. tab cycles fields (existing edits only);
+// ctrl+d deletes the active directive; enter confirms.
+func (m Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	editingExisting := m.newKey == "" && len(m.editFields) > 0
+	switch msg.String() {
+	case "esc":
+		return m.cancelOverlay("edit cancelled")
+	case "ctrl+o": // add a new option (works whether or not fields exist)
+		if m.newKey == "" {
+			return m.beginAddOption()
+		}
+	case "tab":
+		if editingExisting { // cycling only applies to existing fields
+			m.fieldIdx = (m.fieldIdx + 1) % len(m.editFields)
+			m.input.SetValue(m.currentFieldValue())
+			m.input.CursorEnd()
+		}
+		return m, nil
+	case "ctrl+d":
+		if editingExisting {
+			m.mode = modeConfirmDelete
+		}
+		return m, nil
+	case "enter":
+		if m.newKey == "" && len(m.editFields) == 0 {
+			m.status = "no directives set — ctrl+o to add one"
+			return m, nil
+		}
+		if strings.TrimSpace(m.input.Value()) == "" {
+			m.status = "value cannot be empty (ctrl+d to delete a directive)"
+			return m, nil
+		}
+		m.mode = modeConfirm
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// handleConfirmKey gates writes and deletes: only "y" proceeds.
+func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	confirming := m.mode
+	if msg.String() != "y" && msg.String() != "Y" {
+		return m.cancelOverlay("cancelled")
+	}
+	host := m.pendingHost
+	field := m.activeField()
+	m.input.Blur()
+	m.mode = modeNormal
+	m.status = "writing…"
+	if confirming == modeConfirmDelete {
+		return m, m.deleteCmd(host, field)
+	}
+	return m, m.editCmd(host, field, strings.TrimSpace(m.input.Value()))
+}
+
+func (m Model) cancelOverlay(status string) (tea.Model, tea.Cmd) {
+	m.mode = modeNormal
+	m.input.Blur()
+	m.newKey = ""
+	m.status = status
+	return m, nil
+}
+
+// editCmd / deleteCmd dispatch the write off the UI goroutine.
+func (m Model) editCmd(h config.HostID, field, val string) tea.Cmd {
+	return func() tea.Msg { return editDoneMsg{verb: "saved", err: m.svc.EditHost(h, field, val)} }
+}
+
+func (m Model) deleteCmd(h config.HostID, field string) tea.Cmd {
+	return func() tea.Msg { return editDoneMsg{verb: "removed", err: m.svc.DeleteHostField(h, field)} }
+}
+
+func (m Model) selectedHost() (config.Host, bool) {
+	if len(m.hosts) == 0 {
+		return config.Host{}, false
+	}
+	return m.hosts[m.cursor[paneHosts]], true
+}
+
+// activeField is the directive being edited: a newly typed option name, else
+// the currently selected existing field.
+func (m Model) activeField() string {
+	if m.newKey != "" {
+		return m.newKey
+	}
+	if m.fieldIdx < len(m.editFields) {
+		return m.editFields[m.fieldIdx]
+	}
+	return ""
+}
+
+// currentFieldValue returns the selected host's value for the active field.
+func (m Model) currentFieldValue() string {
+	h, ok := m.selectedHost()
+	if !ok {
+		return ""
+	}
+	switch m.activeField() {
+	case "HostName":
+		return h.Hostname
+	case "User":
+		return h.User
+	case "Port":
+		if h.Port == 0 {
+			return ""
+		}
+		return strconv.Itoa(h.Port)
+	default:
+		return h.Options[m.activeField()]
+	}
 }
 
 // toggleSelectedKey loads or unloads the highlighted key in the agent via
@@ -206,8 +457,17 @@ var (
 	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 )
 
-// View renders the current pane.
+// View renders the current pane or an active overlay.
 func (m Model) View() string {
+	switch m.mode {
+	case modeNewKey:
+		return m.viewNewKey()
+	case modeEdit:
+		return m.viewEdit()
+	case modeConfirm, modeConfirmDelete:
+		return m.viewConfirm()
+	}
+
 	var b strings.Builder
 
 	keysTab, hostsTab := "Keys", "Hosts"
@@ -233,12 +493,72 @@ func (m Model) View() string {
 	if m.status != "" {
 		b.WriteString("  " + m.status + "\n")
 	}
-	b.WriteString(dimStyle.Render("  ↑/↓ move · tab switch · enter load/unload · r refresh · q quit"))
+	b.WriteString(dimStyle.Render("  " + m.helpLine()))
 	if m.srcFile != "" {
 		b.WriteString(dimStyle.Render("   " + m.srcFile))
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+func (m Model) viewNewKey() string {
+	var b strings.Builder
+	b.WriteString(tabActive.Render("Add option to "+string(m.pendingHost)) + "\n\n")
+	b.WriteString("  option name (e.g. ForwardAgent)\n")
+	b.WriteString("  " + m.input.View() + "\n\n")
+	b.WriteString(dimStyle.Render("  enter next · esc cancel"))
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (m Model) viewEdit() string {
+	var b strings.Builder
+	title := "Edit host: " + string(m.pendingHost)
+	if m.newKey != "" {
+		title = "Add " + m.newKey + " to " + string(m.pendingHost)
+	}
+	b.WriteString(tabActive.Render(title) + "\n\n")
+	switch {
+	case m.newKey != "":
+		b.WriteString("  " + m.newKey + "\n")
+		b.WriteString("  " + m.input.View() + "\n\n")
+		b.WriteString(dimStyle.Render("  enter confirm · esc cancel"))
+	case len(m.editFields) == 0:
+		b.WriteString(dimStyle.Render("  (no directives set)") + "\n\n")
+		b.WriteString(dimStyle.Render("  ctrl+o add option · esc cancel"))
+	default:
+		b.WriteString("  " + m.activeField() + "\n")
+		b.WriteString("  " + m.input.View() + "\n\n")
+		b.WriteString(dimStyle.Render("  tab next · ctrl+o add option · ctrl+d delete · enter confirm · esc cancel"))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (m Model) viewConfirm() string {
+	field := m.activeField()
+	var b strings.Builder
+	if m.mode == modeConfirmDelete {
+		b.WriteString(errStyle.Render("Confirm delete") + "\n\n")
+		b.WriteString(fmt.Sprintf("  Remove %s from %s\n", field, m.pendingHost))
+	} else {
+		val := strings.TrimSpace(m.input.Value())
+		b.WriteString(tabActive.Render("Confirm write") + "\n\n")
+		b.WriteString(fmt.Sprintf("  Set %s of %s to %q\n", field, m.pendingHost, val))
+	}
+	b.WriteString(dimStyle.Render("  (a .bak backup of the config file is written first)") + "\n\n")
+	b.WriteString("  " + rowActive.Render("y") + " write    " + rowActive.Render("n") + " cancel")
+	b.WriteString("\n")
+	return b.String()
+}
+
+// helpLine is the footer hint, tailored to the active pane.
+func (m Model) helpLine() string {
+	common := "↑/↓ move · tab switch · r refresh · q quit"
+	if m.active == paneKeys {
+		return "enter load/unload · " + common
+	}
+	return "e edit host · " + common
 }
 
 func (m Model) viewKeys() string {

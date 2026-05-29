@@ -23,6 +23,7 @@ type Service interface {
 	AddKeyToAgent(config.IdentityID) error
 	RemoveKeyFromAgent(config.IdentityID) error
 	EditHost(h config.HostID, field, val string) error
+	DeleteHostField(h config.HostID, field string) error
 	AddHost(config.Host) error
 	DeleteHost(config.HostID) error
 }
@@ -151,8 +152,31 @@ func (a *App) diskIdentity(id config.IdentityID) (config.Identity, error) {
 	return ident, nil
 }
 
-// EditHost implements Service.
-func (a *App) EditHost(h config.HostID, field, val string) error { return ErrNotImplemented }
+// EditHost sets field=val on host h, persists the change (backing up the file),
+// and refreshes the cached snapshot so callers see the result.
+func (a *App) EditHost(h config.HostID, field, val string) error {
+	if err := a.Config.SetHostField(h, field, val); err != nil {
+		return err
+	}
+	if err := a.Config.Save(); err != nil {
+		return err
+	}
+	_, err := a.Refresh()
+	return err
+}
+
+// DeleteHostField removes a directive from host h, persists (with backup), and
+// refreshes the cached snapshot.
+func (a *App) DeleteHostField(h config.HostID, field string) error {
+	if err := a.Config.DeleteHostField(h, field); err != nil {
+		return err
+	}
+	if err := a.Config.Save(); err != nil {
+		return err
+	}
+	_, err := a.Refresh()
+	return err
+}
 
 // AddHost implements Service.
 func (a *App) AddHost(h config.Host) error { return ErrNotImplemented }
