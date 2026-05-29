@@ -4,7 +4,15 @@
 // passphrases on encrypted keys.
 package agent
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"net"
+	"os"
+
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
+)
 
 // ErrNotImplemented is returned by stubbed methods during scaffolding.
 var ErrNotImplemented = errors.New("not implemented")
@@ -37,9 +45,47 @@ func New(sock string) *Client {
 	return &Client{Sock: sock}
 }
 
-// List implements AgentClient.
+// List implements AgentClient. It connects to the agent over the unix socket
+// and returns the loaded identities with their SHA256 fingerprints. Returns
+// ErrNoAgent (wrapped) when the socket is unset or unreachable so callers can
+// degrade gracefully.
 func (c *Client) List() ([]AgentKey, error) {
-	return nil, ErrNotImplemented
+	conn, err := c.dial()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	keys, err := agent.NewClient(conn).List()
+	if err != nil {
+		return nil, fmt.Errorf("agent list: %w", err)
+	}
+
+	out := make([]AgentKey, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, AgentKey{
+			Fingerprint: ssh.FingerprintSHA256(k),
+			Comment:     k.Comment,
+			Format:      k.Format,
+		})
+	}
+	return out, nil
+}
+
+// dial opens the agent socket: c.Sock if set, else $SSH_AUTH_SOCK.
+func (c *Client) dial() (net.Conn, error) {
+	sock := c.Sock
+	if sock == "" {
+		sock = os.Getenv("SSH_AUTH_SOCK")
+	}
+	if sock == "" {
+		return nil, ErrNoAgent
+	}
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNoAgent, err)
+	}
+	return conn, nil
 }
 
 // Add implements AgentClient.
