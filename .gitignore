@@ -23,3 +23,26 @@ sshush
 .vscode/
 *.swp
 *.swo
+
+# Personal scratch (track ARCHITECTURE.md / ADRs; ignore day-notes)
+SCRATCH.md
+NOTES.local.md
+TODO.local.md
+
+# SSH material — NEVER commit real keys/configs/backups
+id_rsa
+id_ecdsa
+id_ed25519
+id_dsa
+*.pem
+*_key
+*_key.pub
+id_*.pub
+known_hosts
+known_hosts.*
+ssh_config.bak
+config.bak
+*.bak
+# local test fixtures with real data (commit sanitized fixtures under testdata/ explicitly)
+/.ssh/
+testdata/local/
