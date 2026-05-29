@@ -5,6 +5,7 @@ go 1.25.4
 require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
+	github.com/kevinburke/ssh_config v1.6.0
 	golang.org/x/crypto v0.52.0
 )
 
