@@ -5,6 +5,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/config"
@@ -40,10 +41,79 @@ func New(k keys.KeyScanner, c sshconfig.ConfigRepo, a agent.AgentClient) *App {
 	return &App{Keys: k, Config: c, Agent: a}
 }
 
-// Refresh scans disk + parses config + lists agent keys, merges by
-// fingerprint, and caches the snapshot.
+// Refresh parses config, scans disk keys, lists agent keys, and merges them
+// into a single snapshot. Disk keys are matched to agent keys by fingerprint:
+// a match sets LoadedInAgent and AgentFingerprint. Agent keys with no matching
+// disk key are surfaced as synthetic identities (ExistsOnDisk=false) so the
+// agent's true state is visible. A missing agent degrades gracefully — keys
+// simply show as unloaded. The merged model is cached for mutation methods.
 func (a *App) Refresh() (*config.SshConfigModel, error) {
-	return nil, ErrNotImplemented
+	model, err := a.Config.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+	if model.Identities == nil {
+		model.Identities = map[config.IdentityID]config.Identity{}
+	}
+
+	ids, err := a.Keys.Scan()
+	if err != nil {
+		return nil, fmt.Errorf("scan keys: %w", err)
+	}
+	for _, id := range ids {
+		model.Identities[id.ID] = id
+	}
+
+	// Agent state is best-effort: never let an absent agent fail a refresh.
+	agentKeys, err := a.Agent.List()
+	if err != nil && !errors.Is(err, agent.ErrNoAgent) {
+		return nil, fmt.Errorf("list agent: %w", err)
+	}
+	mergeAgent(model, agentKeys)
+
+	a.model = model
+	return model, nil
+}
+
+// mergeAgent marks disk identities loaded when their fingerprint is in the
+// agent, and adds synthetic identities for agent keys with no disk match.
+func mergeAgent(model *config.SshConfigModel, agentKeys []agent.AgentKey) {
+	// Index disk identities by fingerprint for matching.
+	byFP := map[string]config.IdentityID{}
+	for id, ident := range model.Identities {
+		if ident.Fingerprint != "" {
+			byFP[ident.Fingerprint] = id
+		}
+	}
+
+	for _, ak := range agentKeys {
+		if id, ok := byFP[ak.Fingerprint]; ok {
+			ident := model.Identities[id]
+			ident.LoadedInAgent = true
+			ident.AgentFingerprint = ak.Fingerprint
+			model.Identities[id] = ident
+			continue
+		}
+		// Agent key not on disk: surface it so the view reflects reality.
+		synthID := config.IdentityID("agent:" + ak.Fingerprint)
+		model.Identities[synthID] = config.Identity{
+			ID:               synthID,
+			Name:             agentName(ak),
+			Comment:          ak.Comment,
+			Fingerprint:      ak.Fingerprint,
+			ExistsOnDisk:     false,
+			LoadedInAgent:    true,
+			AgentFingerprint: ak.Fingerprint,
+		}
+	}
+}
+
+// agentName picks a human label for an agent-only key: its comment, else fp.
+func agentName(ak agent.AgentKey) string {
+	if ak.Comment != "" {
+		return ak.Comment
+	}
+	return ak.Fingerprint
 }
 
 // AddKeyToAgent implements Service.
