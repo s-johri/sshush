@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -88,12 +90,47 @@ func (c *Client) dial() (net.Conn, error) {
 	return conn, nil
 }
 
-// Add implements AgentClient.
+// Add implements AgentClient by shelling out to ssh-add so the terminal can
+// prompt for a passphrase on encrypted keys. For interactive use inside a TUI,
+// prefer AddCommand with tea.ExecProcess so the program yields the terminal.
 func (c *Client) Add(path string) error {
-	return ErrNotImplemented
+	return run(c.addCmd(path))
 }
 
-// Remove implements AgentClient.
+// Remove implements AgentClient (ssh-add -d <path>).
 func (c *Client) Remove(path string) error {
-	return ErrNotImplemented
+	return run(c.removeCmd(path))
 }
+
+func (c *Client) addCmd(path string) *exec.Cmd    { return c.cmd(path) }
+func (c *Client) removeCmd(path string) *exec.Cmd { return c.cmd("-d", path) }
+
+// cmd builds an ssh-add invocation honoring c.Sock when set.
+func (c *Client) cmd(args ...string) *exec.Cmd {
+	cmd := exec.Command("ssh-add", args...)
+	if c.Sock != "" {
+		cmd.Env = append(os.Environ(), "SSH_AUTH_SOCK="+c.Sock)
+	}
+	return cmd
+}
+
+// run executes an ssh-add command, surfacing stderr in the returned error.
+func run(cmd *exec.Cmd) error {
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("ssh-add: %s: %w", msg, err)
+		}
+		return fmt.Errorf("ssh-add: %w", err)
+	}
+	return nil
+}
+
+// AddCommand builds an `ssh-add <path>` command using the ambient
+// $SSH_AUTH_SOCK. Intended for tea.ExecProcess, which yields the terminal so
+// ssh-add can prompt for a passphrase, then resumes the TUI.
+func AddCommand(path string) *exec.Cmd { return exec.Command("ssh-add", path) }
+
+// RemoveCommand builds an `ssh-add -d <path>` command for tea.ExecProcess.
+func RemoveCommand(path string) *exec.Cmd { return exec.Command("ssh-add", "-d", path) }

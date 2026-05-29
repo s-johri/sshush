@@ -10,6 +10,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	// agent is imported only to build the ssh-add command handed to
+	// tea.ExecProcess, which yields the terminal so a passphrase prompt works.
+	// All other IO goes through service.Service.
+	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/service"
 )
@@ -28,6 +32,12 @@ type refreshedMsg struct {
 	err   error
 }
 
+// agentDoneMsg reports the outcome of an ssh-add add/remove run via ExecProcess.
+type agentDoneMsg struct {
+	verb string // "loaded" or "unloaded", for the status line
+	err  error
+}
+
 // Model is the BubbleTea model for sshush.
 type Model struct {
 	svc service.Service
@@ -40,6 +50,7 @@ type Model struct {
 
 	loading bool
 	err     error
+	status  string // transient feedback (e.g. last agent action)
 
 	width, height int
 }
@@ -77,6 +88,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applySnapshot(msg.model)
 		return m, nil
 
+	case agentDoneMsg:
+		if msg.err != nil {
+			m.status = "agent error: " + msg.err.Error()
+			return m, nil
+		}
+		m.status = "key " + msg.verb
+		// Re-sync so the loaded badge reflects the new agent state.
+		m.loading = true
+		return m, m.refresh
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -100,11 +121,36 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor[m.active]++
 		}
 		return m, nil
+	case "enter", " ":
+		return m.toggleSelectedKey()
 	case "r":
 		m.loading = true
 		return m, m.refresh
 	}
 	return m, nil
+}
+
+// toggleSelectedKey loads or unloads the highlighted key in the agent via
+// ssh-add, run through tea.ExecProcess so the terminal is free for a passphrase
+// prompt. Only applies on the Keys pane to on-disk keys.
+func (m Model) toggleSelectedKey() (tea.Model, tea.Cmd) {
+	if m.active != paneKeys || len(m.ids) == 0 {
+		return m, nil
+	}
+	sel := m.ids[m.cursor[paneKeys]]
+	if !sel.ExistsOnDisk || sel.Path == "" {
+		m.status = "cannot toggle agent-only key (no file on disk)"
+		return m, nil
+	}
+
+	verb, cmd := "loaded", agent.AddCommand(sel.Path)
+	if sel.LoadedInAgent {
+		verb, cmd = "unloaded", agent.RemoveCommand(sel.Path)
+	}
+	m.status = "running ssh-add…"
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return agentDoneMsg{verb: verb, err: err}
+	})
 }
 
 // applySnapshot turns a model into sorted display slices, clamping cursors.
@@ -184,7 +230,10 @@ func (m Model) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  ↑/↓ move · tab switch · r refresh · q quit"))
+	if m.status != "" {
+		b.WriteString("  " + m.status + "\n")
+	}
+	b.WriteString(dimStyle.Render("  ↑/↓ move · tab switch · enter load/unload · r refresh · q quit"))
 	if m.srcFile != "" {
 		b.WriteString(dimStyle.Render("   " + m.srcFile))
 	}

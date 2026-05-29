@@ -116,11 +116,40 @@ func agentName(ak agent.AgentKey) string {
 	return ak.Fingerprint
 }
 
-// AddKeyToAgent implements Service.
-func (a *App) AddKeyToAgent(id config.IdentityID) error { return ErrNotImplemented }
+// AddKeyToAgent loads the identity's private key into the agent. The identity
+// must exist on disk; agent-only and missing keys cannot be added.
+func (a *App) AddKeyToAgent(id config.IdentityID) error {
+	ident, err := a.diskIdentity(id)
+	if err != nil {
+		return err
+	}
+	return a.Agent.Add(ident.Path)
+}
 
-// RemoveKeyFromAgent implements Service.
-func (a *App) RemoveKeyFromAgent(id config.IdentityID) error { return ErrNotImplemented }
+// RemoveKeyFromAgent drops the identity's key from the agent (ssh-add -d needs
+// the key file, so the identity must exist on disk).
+func (a *App) RemoveKeyFromAgent(id config.IdentityID) error {
+	ident, err := a.diskIdentity(id)
+	if err != nil {
+		return err
+	}
+	return a.Agent.Remove(ident.Path)
+}
+
+// diskIdentity returns a cached identity that has a usable on-disk key path.
+func (a *App) diskIdentity(id config.IdentityID) (config.Identity, error) {
+	if a.model == nil {
+		return config.Identity{}, errors.New("no snapshot loaded; call Refresh first")
+	}
+	ident, ok := a.model.Identities[id]
+	if !ok {
+		return config.Identity{}, fmt.Errorf("unknown identity %q", id)
+	}
+	if !ident.ExistsOnDisk || ident.Path == "" {
+		return config.Identity{}, fmt.Errorf("identity %q has no key file on disk", id)
+	}
+	return ident, nil
+}
 
 // EditHost implements Service.
 func (a *App) EditHost(h config.HostID, field, val string) error { return ErrNotImplemented }

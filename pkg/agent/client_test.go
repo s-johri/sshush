@@ -73,6 +73,32 @@ func TestListMatchesFingerprint(t *testing.T) {
 	}
 }
 
+func TestCommandBuilders(t *testing.T) {
+	add := AddCommand("/k/id_ed25519")
+	if got := add.Args[len(add.Args)-1]; got != "/k/id_ed25519" {
+		t.Errorf("AddCommand path arg = %q", got)
+	}
+	rm := RemoveCommand("/k/id_ed25519")
+	if len(rm.Args) < 3 || rm.Args[1] != "-d" {
+		t.Errorf("RemoveCommand args = %v, want ssh-add -d <path>", rm.Args)
+	}
+
+	// c.Sock must be injected into the subprocess environment.
+	c := New("/tmp/agent.sock")
+	if env := c.addCmd("/k/x").Env; !envHas(env, "SSH_AUTH_SOCK=/tmp/agent.sock") {
+		t.Errorf("addCmd env missing socket override: %v", env)
+	}
+}
+
+func envHas(env []string, want string) bool {
+	for _, e := range env {
+		if e == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestListNoAgent(t *testing.T) {
 	// Nonexistent socket path => unreachable => ErrNoAgent.
 	_, err := New(filepath.Join(t.TempDir(), "missing.sock")).List()

@@ -76,6 +76,37 @@ func TestNavClampAndTab(t *testing.T) {
 	}
 }
 
+func TestToggleAgentOnlyKeyRejected(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"orphan": {ID: "orphan", Name: "orphan", LoadedInAgent: true, ExistsOnDisk: false},
+		},
+	}
+	m := New(fakeService{model: snap})
+	m = feed(m, refreshedMsg{model: snap})
+
+	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(Model)
+	if cmd != nil {
+		t.Error("agent-only key should not dispatch ssh-add")
+	}
+	if !strings.Contains(m.status, "agent-only") {
+		t.Errorf("status = %q, want agent-only rejection", m.status)
+	}
+}
+
+func TestAgentDoneTriggersRefresh(t *testing.T) {
+	m := New(fakeService{model: snapshot()})
+	out, cmd := m.Update(agentDoneMsg{verb: "loaded"})
+	m = out.(Model)
+	if cmd == nil {
+		t.Error("successful agent action should trigger a refresh")
+	}
+	if !strings.Contains(m.status, "loaded") {
+		t.Errorf("status = %q", m.status)
+	}
+}
+
 func TestRefreshErrorShown(t *testing.T) {
 	m := New(fakeService{})
 	m = feed(m, refreshedMsg{err: errFake{}})
