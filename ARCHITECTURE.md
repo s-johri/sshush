@@ -15,7 +15,7 @@ Interactive CLI/TUI to switch SSH keys, inspect the agent, view hosts, and edit 
 ## Layout
 
 ```
-cmd/cli/main.go        entrypoint, wires service -> tui
+cmd/sshush/main.go     entrypoint, wires service -> tui
 pkg/config/            domain model (Identity, Host, SshConfigModel) — exists
 pkg/sshconfig/         parse + round-trip write (kevinburke wrapper)
 pkg/keys/              scan ~/.ssh for keypairs, detect algo/comment
@@ -99,7 +99,31 @@ TUI holds a snapshot. Mutations dispatched as `tea.Cmd` (async goroutine) → ca
 | 10 | Hot reload (fsnotify), reconcile | medium |
 | 11 | App config (~/.config/sshush), default identity | low |
 | 12 | `load-default` subcommand + shell startup snippet generator (print only) | low |
-| 13 | lipgloss styling pass | none |
+| 13 | lipgloss styling pass: bordered panes, grouped help, key↔host links | none |
+| 14 | README + installation instructions | none (docs) |
+| 15 | Self-updating binary via GitHub releases | medium |
+
+### Milestone 14 detail
+
+`README.md` covering: what sshush is, a screenshot/asciinema, feature list, install
+options (`go install`, prebuilt binary, build from source), the `shell-init` snippet
+for shell-startup loading, keybindings, and the `~/.config/sshush/config.toml`
+settings. Keep ARCHITECTURE.md as the design doc; README is the user-facing entry.
+
+### Milestone 15 detail
+
+Ship versioned releases and let the binary update itself:
+
+- **Versioning**: embed version via `-ldflags -X main.version=...`; add a `sshush
+  version` subcommand. Tag releases `vX.Y.Z`.
+- **Release pipeline**: GitHub Actions on tag → build cross-platform binaries
+  (linux/darwin, amd64/arm64) → attach to a GitHub Release (goreleaser is the
+  standard tool).
+- **Self-update**: `sshush update` checks the latest release via the GitHub API,
+  downloads the matching asset, verifies a checksum, and replaces the running
+  binary in place (e.g. `minio/selfupdate` or `creativeprojects/go-selfupdate`).
+  Risk: replacing the executable + signature/checksum verification — gate clearly,
+  no auto-update without consent.
 
 ### Milestone 9 detail
 
