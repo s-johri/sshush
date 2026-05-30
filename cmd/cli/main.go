@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/s-johri/sshush/internal/tui"
 	"github.com/s-johri/sshush/pkg/agent"
+	"github.com/s-johri/sshush/pkg/appconfig"
 	"github.com/s-johri/sshush/pkg/keys"
 	"github.com/s-johri/sshush/pkg/service"
 	"github.com/s-johri/sshush/pkg/sshconfig"
@@ -22,6 +23,13 @@ func main() {
 	)
 
 	model := tui.New(svc)
+
+	// App settings (default identity). Best-effort: run without on error.
+	settings := appconfig.New("")
+	if _, err := settings.Load(); err == nil {
+		model = model.WithSettings(settings)
+	}
+
 	// Hot reload is best-effort: if the watcher can't start, run without it.
 	if w, err := watch.New(); err == nil {
 		defer w.Close()

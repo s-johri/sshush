@@ -62,6 +62,16 @@ type fileWatcher interface {
 	Events() <-chan struct{}
 }
 
+// appSettings persists sshush's own preferences (default identity). The TUI
+// depends on this narrow interface so it can run without settings and be tested
+// with a fake. The real implementation is pkg/appconfig.Store.
+type appSettings interface {
+	DefaultIdentity() config.IdentityID
+	AutoLoad() bool
+	SetDefaultIdentity(config.IdentityID) error
+	ClearDefault() error
+}
+
 // reloadMsg signals that watched files changed and the model should refresh.
 type reloadMsg struct{}
 
@@ -151,6 +161,10 @@ type Model struct {
 	pendingReload   bool      // a change arrived while an overlay was open
 	muteReloadUntil time.Time // ignore reloads until this time (self-induced writes)
 
+	// app settings / default identity
+	settings   appSettings
+	autoLoaded bool // startup auto-load of the default identity has run
+
 	width, height int
 }
 
@@ -166,6 +180,12 @@ func New(svc service.Service) Model {
 // one, the model still works and refreshes only on explicit actions.
 func (m Model) WithWatcher(w fileWatcher) Model {
 	m.watcher = w
+	return m
+}
+
+// WithSettings attaches persisted app settings (default identity). Optional.
+func (m Model) WithSettings(s appSettings) Model {
+	m.settings = s
 	return m
 }
 
@@ -254,7 +274,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = nil
 		m.applySnapshot(msg.model)
-		return m, nil
+		return m.maybeAutoLoad()
 
 	case agentDoneMsg:
 		if msg.err != nil {
@@ -335,6 +355,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.toggleSelectedKey()
 	case "U":
 		return m.unloadAll()
+	case "s":
+		return m.setDefaultKey()
 	case "e":
 		return m.beginEdit()
 	case "i":
@@ -698,6 +720,59 @@ func (m Model) editCmd(h config.HostID, field, val string) tea.Cmd {
 
 func (m Model) deleteCmd(h config.HostID, field string) tea.Cmd {
 	return func() tea.Msg { return editDoneMsg{verb: "removed", err: m.svc.DeleteHostField(h, field)} }
+}
+
+// maybeAutoLoad loads the configured default identity into the agent once, on
+// the first snapshot, if it exists on disk and is not already loaded.
+func (m Model) maybeAutoLoad() (tea.Model, tea.Cmd) {
+	if m.autoLoaded || m.settings == nil || !m.settings.AutoLoad() {
+		return m, nil
+	}
+	m.autoLoaded = true // attempt only once per session
+
+	id := m.settings.DefaultIdentity()
+	if id == "" {
+		return m, nil
+	}
+	for _, ident := range m.ids {
+		if ident.ID == id && ident.ExistsOnDisk && !ident.LoadedInAgent {
+			m.status = "loading default key…"
+			return m, tea.ExecProcess(agent.AddCommand(ident.Path),
+				func(err error) tea.Msg { return agentDoneMsg{verb: "default key loaded", err: err} })
+		}
+	}
+	return m, nil
+}
+
+// setDefaultKey toggles the selected key as the startup default (Keys pane):
+// setting it, or unsetting it when it is already the default.
+func (m Model) setDefaultKey() (tea.Model, tea.Cmd) {
+	if m.active != paneKeys || m.settings == nil || len(m.ids) == 0 {
+		if m.settings == nil {
+			m.status = "no settings file configured"
+		}
+		return m, nil
+	}
+	sel := m.ids[m.cursor[paneKeys]]
+
+	if sel.ID == m.settings.DefaultIdentity() {
+		if err := m.settings.ClearDefault(); err != nil {
+			m.status = "settings error: " + err.Error()
+			return m, nil
+		}
+		m.status = "default key unset"
+		return m, nil
+	}
+	if !sel.ExistsOnDisk {
+		m.status = "cannot set agent-only key as default"
+		return m, nil
+	}
+	if err := m.settings.SetDefaultIdentity(sel.ID); err != nil {
+		m.status = "settings error: " + err.Error()
+		return m, nil
+	}
+	m.status = "default key set: " + sel.Name
+	return m, nil
 }
 
 // unloadAll drops every key from the agent (Keys pane only).
@@ -1111,7 +1186,7 @@ func (m Model) viewConfirm() string {
 func (m Model) helpLine() string {
 	common := "tab switch · r refresh · q quit"
 	if m.active == paneKeys {
-		return "enter load/unload · U unload all · n new key · d delete key · " + common
+		return "enter load/unload · s set/unset default · U unload all · n new key · d delete key · " + common
 	}
 	return "e edit · i keys · n new host · d delete host · " + common
 }
@@ -1119,6 +1194,10 @@ func (m Model) helpLine() string {
 func (m Model) viewKeys() string {
 	if len(m.ids) == 0 {
 		return dimStyle.Render("  no keys found\n")
+	}
+	var defaultID config.IdentityID
+	if m.settings != nil {
+		defaultID = m.settings.DefaultIdentity()
 	}
 	var b strings.Builder
 	for i, id := range m.ids {
@@ -1131,6 +1210,9 @@ func (m Model) viewKeys() string {
 			algo = "agent-only"
 		}
 		line := fmt.Sprintf("%s %-20s %-10s %s", badge, id.Name, algo, dimStyle.Render(id.Comment))
+		if id.ID == defaultID {
+			line += tabActive.Render("  ★ default")
+		}
 		b.WriteString(m.renderRow(paneKeys, i, line))
 	}
 	return b.String()

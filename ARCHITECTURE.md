@@ -98,7 +98,7 @@ TUI holds a snapshot. Mutations dispatched as `tea.Cmd` (async goroutine) → ca
 | 9 | Wildcard host (`Host *`) add/edit/delete + per-host key association | **write — surfaces wildcard blocks** |
 | 10 | Hot reload (fsnotify), reconcile | medium |
 | 11 | App config (~/.config/sshush), default identity | low |
-| 12 | Shell startup snippet generator (print only) | low |
+| 12 | `load-default` subcommand + shell startup snippet generator (print only) | low |
 | 13 | lipgloss styling pass | none |
 
 ### Milestone 9 detail
