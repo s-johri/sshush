@@ -5,6 +5,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +22,7 @@ import (
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
 	"github.com/s-johri/sshush/pkg/service"
+	"github.com/s-johri/sshush/pkg/watch"
 )
 
 type pane int
@@ -50,6 +53,24 @@ type editDoneMsg struct {
 
 // keygenDoneMsg reports the outcome of an interactive ssh-keygen run.
 type keygenDoneMsg struct{ err error }
+
+// fileWatcher reports coalesced filesystem changes under directories it is told
+// to watch. The real implementation is pkg/watch; the TUI depends on this
+// narrow interface so it can run without a watcher (and be tested with a fake).
+type fileWatcher interface {
+	Watch(dirs []string) error
+	Events() <-chan struct{}
+}
+
+// reloadMsg signals that watched files changed and the model should refresh.
+type reloadMsg struct{}
+
+// reloadMuteWindow is how long after a write made *by this app* to ignore the
+// resulting filesystem events, so self-induced changes don't show a spurious
+// "files changed" reload (the mutation already refreshed). The event arrives
+// ~one debounce after our write, so this is the debounce plus a small margin —
+// kept short so genuine external changes are missed for as little as possible.
+const reloadMuteWindow = watch.Debounce + 500*time.Millisecond
 
 // tickMsg drives the periodic check that expires the status line.
 type tickMsg struct{}
@@ -125,6 +146,11 @@ type Model struct {
 	// key picker (attach/detach identities to pendingHost)
 	pickerCursor int
 
+	// hot reload
+	watcher         fileWatcher
+	pendingReload   bool      // a change arrived while an overlay was open
+	muteReloadUntil time.Time // ignore reloads until this time (self-induced writes)
+
 	width, height int
 }
 
@@ -136,9 +162,34 @@ func New(svc service.Service) Model {
 	return Model{svc: svc, loading: true, input: ti}
 }
 
-// Init kicks off the first refresh and starts the status-expiry ticker.
+// WithWatcher attaches a filesystem watcher for hot reload. Optional: without
+// one, the model still works and refreshes only on explicit actions.
+func (m Model) WithWatcher(w fileWatcher) Model {
+	m.watcher = w
+	return m
+}
+
+// Init kicks off the first refresh, the status ticker, and (if present) the
+// file-watch listener.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.refresh, tick())
+	cmds := []tea.Cmd{m.refresh, tick()}
+	if c := m.waitForChange(); c != nil {
+		cmds = append(cmds, c)
+	}
+	return tea.Batch(cmds...)
+}
+
+// waitForChange blocks on the watcher until a change arrives, then yields a
+// reloadMsg. Returns nil when no watcher is attached.
+func (m Model) waitForChange() tea.Cmd {
+	w := m.watcher
+	if w == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		<-w.Events()
+		return reloadMsg{}
+	}
 }
 
 // refresh is a tea.Cmd: it loads a fresh snapshot off the UI goroutine.
@@ -170,7 +221,30 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.status != "" && time.Since(m.statusSetAt) >= statusTTL {
 			m.status = ""
 		}
+		// Apply a deferred reload once any overlay is closed.
+		if m.pendingReload && m.mode == modeNormal && !m.loading {
+			m.pendingReload = false
+			m.loading = true
+			return m, tea.Batch(tick(), m.refresh)
+		}
 		return m, tick()
+
+	case reloadMsg:
+		// Re-arm the listener regardless of what we do with this event.
+		next := m.waitForChange()
+		// Ignore events caused by our own recent writes.
+		if time.Now().Before(m.muteReloadUntil) {
+			return m, next
+		}
+		// Only refresh when idle so an open overlay or in-flight load is never
+		// clobbered.
+		if m.mode != modeNormal || m.loading {
+			m.pendingReload = true
+			return m, next
+		}
+		m.loading = true
+		m.status = "reloaded (files changed)"
+		return m, tea.Batch(next, m.refresh)
 
 	case refreshedMsg:
 		m.loading = false
@@ -198,6 +272,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = msg.verb
+		m.muteReloadUntil = time.Now().Add(reloadMuteWindow) // our write, not external
 		m.loading = true
 		return m, m.refresh
 
@@ -207,6 +282,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = "key generated"
+		m.muteReloadUntil = time.Now().Add(reloadMuteWindow)
 		m.loading = true
 		return m, m.refresh
 
@@ -801,7 +877,31 @@ func (m *Model) applySnapshot(snap *config.SshConfigModel) {
 	if len(snap.SourceFiles) > 0 {
 		m.srcFile = snap.SourceFiles[0]
 	}
+	m.rewatch(snap.SourceFiles)
 	m.clampCursors()
+}
+
+// rewatch points the file watcher at the directories of the config source files
+// plus ~/.ssh (key changes), so external edits trigger a reload. Best-effort.
+func (m *Model) rewatch(sourceFiles []string) {
+	if m.watcher == nil {
+		return
+	}
+	seen := map[string]bool{}
+	var dirs []string
+	add := func(d string) {
+		if d != "" && !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	for _, f := range sourceFiles {
+		add(filepath.Dir(f))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		add(filepath.Join(home, ".ssh"))
+	}
+	_ = m.watcher.Watch(dirs)
 }
 
 func (m *Model) clampCursors() {

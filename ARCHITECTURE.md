@@ -92,9 +92,9 @@ TUI holds a snapshot. Mutations dispatched as `tea.Cmd` (async goroutine) → ca
 | 3 | `pkg/agent` List + fingerprint match | none (read) |
 | 4 | `pkg/service` Refresh merges all three | none (read) |
 | 5 | TUI: read-only Keys + Hosts panes | none — **first useful build** |
-| 6 | Agent add/remove (switch keys) | low (reversible) |
-| 7 | Edit host field, Save w/ backup+confirm | **write — backup gated** |
-| 8 | Add/delete host, keygen, key delete | **write/destructive — confirm gated** |
+| 6 | Agent add/remove (switch keys) + unload-all; auto-expiring status | low (reversible) |
+| 7 | Edit/add/delete host directives, Save w/ backup+confirm | **write — backup gated** |
+| 8 | Add (wizard: basic + custom options) / delete host, keygen, key delete | **write/destructive — confirm gated** |
 | 9 | Wildcard host (`Host *`) add/edit/delete + per-host key association | **write — surfaces wildcard blocks** |
 | 10 | Hot reload (fsnotify), reconcile | medium |
 | 11 | App config (~/.config/sshush), default identity | low |

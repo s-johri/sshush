@@ -581,6 +581,104 @@ func TestWildcardHostShownAndWarned(t *testing.T) {
 	}
 }
 
+type fakeWatcher struct {
+	ch   chan struct{}
+	dirs [][]string
+}
+
+func (f *fakeWatcher) Events() <-chan struct{} { return f.ch }
+func (f *fakeWatcher) Watch(dirs []string) error {
+	f.dirs = append(f.dirs, dirs)
+	return nil
+}
+
+func TestReloadRefreshesWhenIdle(t *testing.T) {
+	fw := &fakeWatcher{ch: make(chan struct{}, 1)}
+	m := New(&fakeService{model: snapshot()}).WithWatcher(fw)
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	// applySnapshot should have pointed the watcher at the source dir + ~/.ssh.
+	if len(fw.dirs) == 0 {
+		t.Fatal("watcher dirs never configured")
+	}
+	last := fw.dirs[len(fw.dirs)-1]
+	if !contains(last, "/home/u/.ssh") {
+		t.Errorf("watched dirs missing config dir: %v", last)
+	}
+
+	out, cmd := m.Update(reloadMsg{})
+	m = out.(Model)
+	if !m.loading || cmd == nil {
+		t.Error("idle reload should trigger a refresh")
+	}
+	if !strings.Contains(m.status, "reloaded") {
+		t.Errorf("status = %q", m.status)
+	}
+}
+
+func TestReloadMutedAfterSelfWrite(t *testing.T) {
+	fw := &fakeWatcher{ch: make(chan struct{}, 1)}
+	m := New(&fakeService{model: snapshot()}).WithWatcher(fw)
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	// A completed self-write mutes reloads briefly.
+	m = feed(m, editDoneMsg{verb: "host saved"})
+	m.loading = false // pretend the follow-up refresh finished
+
+	out, cmd := m.Update(reloadMsg{}) // event from our own write
+	m = out.(Model)
+	if m.loading {
+		t.Error("self-induced reload should be ignored, not refresh")
+	}
+	if strings.Contains(m.status, "reloaded") {
+		t.Errorf("should not show external-reload status: %q", m.status)
+	}
+	if cmd == nil {
+		t.Error("listener must still be re-armed")
+	}
+
+	// Once the mute window passes, external changes reload normally again.
+	m.muteReloadUntil = time.Now().Add(-time.Second)
+	out, _ = m.Update(reloadMsg{})
+	m = out.(Model)
+	if !m.loading {
+		t.Error("after mute window, reload should refresh")
+	}
+}
+
+func TestReloadDeferredDuringOverlay(t *testing.T) {
+	fw := &fakeWatcher{ch: make(chan struct{}, 1)}
+	m := New(&fakeService{model: snapshot()}).WithWatcher(fw)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m.mode = modeEdit // pretend an overlay is open
+
+	out, _ := m.Update(reloadMsg{})
+	m = out.(Model)
+	if !m.pendingReload {
+		t.Error("reload during overlay should be deferred")
+	}
+	if m.loading {
+		t.Error("must not refresh while an overlay is open")
+	}
+
+	// Returning to normal and ticking flushes the deferred reload.
+	m.mode = modeNormal
+	out, cmd := m.Update(tickMsg{})
+	m = out.(Model)
+	if m.pendingReload || !m.loading || cmd == nil {
+		t.Error("tick should flush a pending reload once idle")
+	}
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRefreshErrorShown(t *testing.T) {
 	m := New(&fakeService{})
 	m = feed(m, refreshedMsg{err: errFake{}})

@@ -10,6 +10,7 @@ import (
 	"github.com/s-johri/sshush/pkg/keys"
 	"github.com/s-johri/sshush/pkg/service"
 	"github.com/s-johri/sshush/pkg/sshconfig"
+	"github.com/s-johri/sshush/pkg/watch"
 )
 
 func main() {
@@ -20,7 +21,14 @@ func main() {
 		agent.New(""),
 	)
 
-	p := tea.NewProgram(tui.New(svc), tea.WithAltScreen())
+	model := tui.New(svc)
+	// Hot reload is best-effort: if the watcher can't start, run without it.
+	if w, err := watch.New(); err == nil {
+		defer w.Close()
+		model = model.WithWatcher(w)
+	}
+
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "sshush: %v\n", err)
 		os.Exit(1)
