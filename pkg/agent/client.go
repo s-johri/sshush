@@ -91,11 +91,18 @@ func (c *Client) dial() (net.Conn, error) {
 	return conn, nil
 }
 
-// Add implements AgentClient by shelling out to ssh-add so the terminal can
-// prompt for a passphrase on encrypted keys. For interactive use inside a TUI,
-// prefer AddCommand with tea.ExecProcess so the program yields the terminal.
+// Add implements AgentClient by shelling out to ssh-add. It inherits the
+// process's terminal so ssh-add can prompt for a passphrase on an encrypted key
+// (without a tty, ssh-add falls back to ssh-askpass, which may not exist). Used
+// from non-TUI contexts such as `sshush load-default`. Inside a TUI, use
+// AddCommand with tea.ExecProcess so the program yields the terminal instead.
 func (c *Client) Add(path string) error {
-	return run(c.addCmd(path))
+	cmd := c.addCmd(path)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ssh-add: %w", err)
+	}
+	return nil
 }
 
 // Remove implements AgentClient (ssh-add -d <path>).
