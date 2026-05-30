@@ -68,8 +68,15 @@ func TestLoadWithInclude(t *testing.T) {
 		t.Errorf("db: port=%d user=%q", db.Port, db.User)
 	}
 
-	if _, ok := model.Hosts["*"]; ok {
-		t.Errorf("wildcard host '*' should not surface as a model host")
+	star, ok := model.Hosts["*"]
+	if !ok {
+		t.Fatalf("wildcard host '*' should surface; hosts=%v", hostIDs(model))
+	}
+	if !star.IsPattern {
+		t.Errorf("'*' host should be flagged IsPattern")
+	}
+	if star.Options["ServerAliveInterval"] != "60" {
+		t.Errorf("wildcard options not parsed: %v", star.Options)
 	}
 }
 
@@ -273,6 +280,54 @@ func TestDeleteHost(t *testing.T) {
 	}
 	if err := r.DeleteHost("ghost"); err == nil {
 		t.Error("deleting unknown host should error")
+	}
+}
+
+func TestHostIdentityAddRemove(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host web\n    HostName 1.2.3.4\n")
+
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.AddHostIdentity("web", "~/.ssh/id_ed25519"); err != nil {
+		t.Fatal(err)
+	}
+	want := "Host web\n    HostName 1.2.3.4\n    IdentityFile ~/.ssh/id_ed25519\n"
+	if got := r.files[0].cfg.String(); got != want {
+		t.Errorf("attach output:\n got %q\nwant %q", got, want)
+	}
+	// Adding the same path again is a no-op.
+	_ = r.AddHostIdentity("web", "~/.ssh/id_ed25519")
+	if got := r.files[0].cfg.String(); got != want {
+		t.Errorf("duplicate attach changed output: %q", got)
+	}
+	// Detach by identity id (basename of the path).
+	if err := r.RemoveHostIdentity("web", "id_ed25519"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.files[0].cfg.String(); got != "Host web\n    HostName 1.2.3.4\n" {
+		t.Errorf("detach output: %q", got)
+	}
+}
+
+func TestEditWildcardHost(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host *\n    ServerAliveInterval 60\n")
+
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	// findHost must match the wildcard block.
+	if err := r.SetHostField("*", "ServerAliveInterval", "120"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.files[0].cfg.String(); got != "Host *\n    ServerAliveInterval 120\n" {
+		t.Errorf("wildcard edit output: %q", got)
 	}
 }
 

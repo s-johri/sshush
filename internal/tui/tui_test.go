@@ -20,6 +20,8 @@ type fakeService struct {
 	generated    []keys.GenerateOpts
 	deletedKeys  []config.IdentityID
 	unloadedAll  int
+	attached     []string
+	detached     []string
 }
 
 func (f *fakeService) Refresh() (*config.SshConfigModel, error)   { return f.model, f.err }
@@ -34,7 +36,18 @@ func (f *fakeService) DeleteHostField(h config.HostID, field string) error {
 	f.deletes = append(f.deletes, string(h)+"."+field)
 	return nil
 }
-func (f *fakeService) AddHost(h config.Host) error    { f.addedHosts = append(f.addedHosts, h); return nil }
+func (f *fakeService) AttachKey(h config.HostID, id config.IdentityID) error {
+	f.attached = append(f.attached, string(h)+"/"+string(id))
+	return nil
+}
+func (f *fakeService) DetachKey(h config.HostID, id config.IdentityID) error {
+	f.detached = append(f.detached, string(h)+"/"+string(id))
+	return nil
+}
+func (f *fakeService) AddHost(h config.Host) error {
+	f.addedHosts = append(f.addedHosts, h)
+	return nil
+}
 func (f *fakeService) DeleteHost(h config.HostID) error {
 	f.deletedHosts = append(f.deletedHosts, h)
 	return nil
@@ -497,6 +510,74 @@ func TestStatusIsEphemeral(t *testing.T) {
 	m = feed(m, tickMsg{})
 	if m.status != "" {
 		t.Errorf("status not expired after TTL: %q", m.status)
+	}
+}
+
+func keyPickerSnap() *config.SshConfigModel {
+	return &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"id_a": {ID: "id_a", Name: "id_a", Path: "/k/id_a", ExistsOnDisk: true},
+			"id_b": {ID: "id_b", Name: "id_b", Path: "/k/id_b", ExistsOnDisk: true},
+		},
+		Hosts: map[config.HostID]config.Host{
+			"web": {ID: "web", Name: "web", Identities: []config.IdentityID{"id_a"}},
+		},
+	}
+}
+
+func TestKeyPickerAttachDetach(t *testing.T) {
+	svc := &fakeService{model: keyPickerSnap()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: keyPickerSnap()})
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+
+	m = feed(m, key("i"))
+	if m.mode != modeKeyPicker {
+		t.Fatalf("expected modeKeyPicker, got %d", m.mode)
+	}
+	// disk keys sorted: id_a (attached), id_b (not). Cursor 0 = id_a -> detach.
+	if !strings.Contains(m.View(), "✓") {
+		t.Error("picker should mark attached key")
+	}
+	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(Model)
+	cmd()
+	if len(svc.detached) != 1 || svc.detached[0] != "web/id_a" {
+		t.Errorf("enter on attached key should detach: %v", svc.detached)
+	}
+	if m.mode != modeKeyPicker {
+		t.Error("picker should stay open after a toggle")
+	}
+
+	// Move to id_b and attach.
+	m = feed(m, key("j"))
+	out, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(Model)
+	cmd()
+	if len(svc.attached) != 1 || svc.attached[0] != "web/id_b" {
+		t.Errorf("enter on unattached key should attach: %v", svc.attached)
+	}
+}
+
+func TestWildcardHostShownAndWarned(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Hosts: map[config.HostID]config.Host{
+			"*": {ID: "*", Name: "*", IsPattern: true,
+				Options: map[string]string{"ServerAliveInterval": "60"}},
+		},
+	}
+	svc := &fakeService{model: snap}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snap})
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+
+	if !strings.Contains(m.View(), "pattern defaults") {
+		t.Error("wildcard host should be listed with a pattern marker")
+	}
+	// Delete confirm should warn it is a wildcard.
+	m = feed(m, key("d"))
+	if !strings.Contains(m.View(), "wildcard block") {
+		t.Errorf("delete confirm should warn about wildcard:\n%s", m.View())
 	}
 }
 

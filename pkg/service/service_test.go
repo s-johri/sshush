@@ -45,6 +45,8 @@ type fakeConfig struct {
 	deletes      []config.HostID
 	added        []config.HostID
 	deletedHosts []config.HostID
+	attached     []config.HostID
+	detached     []config.HostID
 	saved        int
 }
 
@@ -57,9 +59,20 @@ func (f *fakeConfig) DeleteHostField(h config.HostID, k string) error {
 	f.deletes = append(f.deletes, h+"/"+config.HostID(k))
 	return nil
 }
-func (f *fakeConfig) AddHost(h config.Host) error    { f.added = append(f.added, h.ID); return nil }
-func (f *fakeConfig) DeleteHost(h config.HostID) error { f.deletedHosts = append(f.deletedHosts, h); return nil }
-func (f *fakeConfig) Save() error                     { f.saved++; return nil }
+func (f *fakeConfig) AddHostIdentity(h config.HostID, path string) error {
+	f.attached = append(f.attached, h+"/"+config.HostID(path))
+	return nil
+}
+func (f *fakeConfig) RemoveHostIdentity(h config.HostID, id config.IdentityID) error {
+	f.detached = append(f.detached, h+"/"+config.HostID(id))
+	return nil
+}
+func (f *fakeConfig) AddHost(h config.Host) error { f.added = append(f.added, h.ID); return nil }
+func (f *fakeConfig) DeleteHost(h config.HostID) error {
+	f.deletedHosts = append(f.deletedHosts, h)
+	return nil
+}
+func (f *fakeConfig) Save() error { f.saved++; return nil }
 
 type fakeAgent struct {
 	keys       []agent.AgentKey
@@ -185,6 +198,36 @@ func TestDeleteHostFieldSavesAndRefreshes(t *testing.T) {
 	}
 	if cfg.saved != 1 {
 		t.Errorf("Save called %d times, want 1", cfg.saved)
+	}
+}
+
+func TestAttachDetachKeyRouting(t *testing.T) {
+	cfg := &fakeConfig{model: &config.SshConfigModel{
+		Hosts: map[config.HostID]config.Host{"web": {ID: "web", Name: "web"}},
+	}}
+	scan := fakeScanner{ids: []config.Identity{
+		{ID: "id_ed", Path: "/k/id_ed", ExistsOnDisk: true},
+	}}
+	app := New(scan, cfg, &fakeAgent{})
+	if _, err := app.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.AttachKey("web", "id_ed"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.attached) != 1 || cfg.attached[0] != "web//k/id_ed" {
+		t.Errorf("attach not routed with key path: %v", cfg.attached)
+	}
+	if err := app.DetachKey("web", "id_ed"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.detached) != 1 || cfg.detached[0] != "web/id_ed" {
+		t.Errorf("detach not routed: %v", cfg.detached)
+	}
+	// Attaching an agent-only/unknown key fails (no disk path).
+	if err := app.AttachKey("web", "ghost"); err == nil {
+		t.Error("attaching unknown key should error")
 	}
 }
 

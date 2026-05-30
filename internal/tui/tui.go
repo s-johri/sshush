@@ -77,6 +77,7 @@ const (
 	modeNewKeyGen               // typing a new key file name
 	modeConfirmDelHost          // confirming whole-host removal
 	modeConfirmDelKey           // confirming key-file deletion (irreversible)
+	modeKeyPicker               // attaching/detaching keys to a host
 )
 
 // coreFields are always offered for editing; a host's existing option keys are
@@ -120,6 +121,9 @@ type Model struct {
 	hostStep    int
 	draftHost   config.Host
 	draftOptKey string // custom option name awaiting its value
+
+	// key picker (attach/detach identities to pendingHost)
+	pickerCursor int
 
 	width, height int
 }
@@ -231,6 +235,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleNewKeyGen(msg)
 	case modeConfirmDelHost, modeConfirmDelKey:
 		return m.handleDeleteConfirm(msg)
+	case modeKeyPicker:
+		return m.handlePicker(msg)
 	}
 
 	switch msg.String() {
@@ -255,6 +261,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.unloadAll()
 	case "e":
 		return m.beginEdit()
+	case "i":
+		return m.beginKeyPicker()
 	case "n":
 		return m.beginNew()
 	case "d":
@@ -634,6 +642,91 @@ func (m Model) selectedHost() (config.Host, bool) {
 	return m.hosts[m.cursor[paneHosts]], true
 }
 
+// hostByID returns the current model copy of a host (post-refresh).
+func (m Model) hostByID(id config.HostID) (config.Host, bool) {
+	for _, h := range m.hosts {
+		if h.ID == id {
+			return h, true
+		}
+	}
+	return config.Host{}, false
+}
+
+// diskKeys returns identities that have a key file on disk (attachable to hosts).
+func (m Model) diskKeys() []config.Identity {
+	var out []config.Identity
+	for _, id := range m.ids {
+		if id.ExistsOnDisk {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func hostHasIdentity(h config.Host, id config.IdentityID) bool {
+	for _, x := range h.Identities {
+		if x == id {
+			return true
+		}
+	}
+	return false
+}
+
+// beginKeyPicker opens the attach/detach overlay for the selected host.
+func (m Model) beginKeyPicker() (tea.Model, tea.Cmd) {
+	host, ok := m.selectedHost()
+	if !ok {
+		m.status = "no host selected"
+		return m, nil
+	}
+	if len(m.diskKeys()) == 0 {
+		m.status = "no on-disk keys to associate"
+		return m, nil
+	}
+	m.pendingHost = host.ID
+	m.pickerCursor = 0
+	m.mode = modeKeyPicker
+	m.status = ""
+	return m, nil
+}
+
+// handlePicker drives the attach/detach overlay. enter toggles association of
+// the highlighted key with the host; the overlay stays open for more changes.
+func (m Model) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	disk := m.diskKeys()
+	switch msg.String() {
+	case "esc", "q":
+		m.mode = modeNormal
+		return m, nil
+	case "up", "k":
+		if m.pickerCursor > 0 {
+			m.pickerCursor--
+		}
+		return m, nil
+	case "down", "j":
+		if m.pickerCursor < len(disk)-1 {
+			m.pickerCursor++
+		}
+		return m, nil
+	case "enter", " ":
+		if m.pickerCursor >= len(disk) {
+			return m, nil
+		}
+		host, ok := m.hostByID(m.pendingHost)
+		if !ok {
+			m.mode = modeNormal
+			return m, nil
+		}
+		sel := disk[m.pickerCursor]
+		h := m.pendingHost
+		if hostHasIdentity(host, sel.ID) {
+			return m, func() tea.Msg { return editDoneMsg{verb: "key detached", err: m.svc.DetachKey(h, sel.ID)} }
+		}
+		return m, func() tea.Msg { return editDoneMsg{verb: "key attached", err: m.svc.AttachKey(h, sel.ID)} }
+	}
+	return m, nil
+}
+
 // activeField is the directive being edited: a newly typed option name, else
 // the currently selected existing field.
 func (m Model) activeField() string {
@@ -767,6 +860,8 @@ func (m Model) View() string {
 		return m.viewDeleteConfirm(false)
 	case modeConfirmDelKey:
 		return m.viewDeleteConfirm(true)
+	case modeKeyPicker:
+		return m.viewPicker()
 	}
 
 	var b strings.Builder
@@ -812,6 +907,31 @@ func (m Model) viewNewKey() string {
 	return b.String()
 }
 
+// viewPicker renders the attach/detach overlay: disk keys with a ✓ for those
+// associated with the host via IdentityFile.
+func (m Model) viewPicker() string {
+	host, _ := m.hostByID(m.pendingHost)
+	disk := m.diskKeys()
+	var b strings.Builder
+	b.WriteString(tabActive.Render("Keys for host: "+string(m.pendingHost)) + "\n\n")
+	for i, id := range disk {
+		mark := dimStyle.Render("–")
+		if hostHasIdentity(host, id.ID) {
+			mark = loadedBadge.Render("✓")
+		}
+		line := fmt.Sprintf("%s %s", mark, id.Name)
+		if i == m.pickerCursor {
+			b.WriteString(rowActive.Render("▸ "+line) + "\n")
+		} else {
+			b.WriteString("  " + line + "\n")
+		}
+	}
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  ↑/↓ move · enter attach/detach · esc close"))
+	b.WriteString("\n")
+	return b.String()
+}
+
 // viewPrompt renders a single-line text prompt (new host / new key).
 func (m Model) viewPrompt(title, hint string) string {
 	var b strings.Builder
@@ -833,6 +953,9 @@ func (m Model) viewDeleteConfirm(key bool) string {
 	} else {
 		b.WriteString(errStyle.Render("Delete host") + "\n\n")
 		b.WriteString(fmt.Sprintf("  Remove host %s from the config\n", m.pendingHost))
+		if h, ok := m.hostByID(m.pendingHost); ok && h.IsPattern {
+			b.WriteString(errStyle.Render("  this is a wildcard block — removes defaults for every matching connection") + "\n")
+		}
 		b.WriteString(dimStyle.Render("  (a .bak backup of the config file is written first)") + "\n\n")
 	}
 	b.WriteString("  " + rowActive.Render("y") + " delete    " + rowActive.Render("n") + " cancel")
@@ -875,6 +998,9 @@ func (m Model) viewConfirm() string {
 		b.WriteString(tabActive.Render("Confirm write") + "\n\n")
 		b.WriteString(fmt.Sprintf("  Set %s of %s to %q\n", field, m.pendingHost, val))
 	}
+	if h, ok := m.hostByID(m.pendingHost); ok && h.IsPattern {
+		b.WriteString(errStyle.Render("  this is a wildcard block — affects every matching connection") + "\n")
+	}
 	b.WriteString(dimStyle.Render("  (a .bak backup of the config file is written first)") + "\n\n")
 	b.WriteString("  " + rowActive.Render("y") + " write    " + rowActive.Render("n") + " cancel")
 	b.WriteString("\n")
@@ -887,7 +1013,7 @@ func (m Model) helpLine() string {
 	if m.active == paneKeys {
 		return "enter load/unload · U unload all · n new key · d delete key · " + common
 	}
-	return "e edit · n new host · d delete host · " + common
+	return "e edit · i keys · n new host · d delete host · " + common
 }
 
 func (m Model) viewKeys() string {
@@ -922,6 +1048,16 @@ func (m Model) viewHosts() string {
 		}
 		if h.Port != 0 {
 			dest = fmt.Sprintf("%s:%d", dest, h.Port)
+		}
+		if h.IsPattern {
+			dest = "pattern defaults"
+		}
+		if n := len(h.Identities); n > 0 {
+			unit := "keys"
+			if n == 1 {
+				unit = "key"
+			}
+			dest = fmt.Sprintf("%s  [%d %s]", dest, n, unit)
 		}
 		line := fmt.Sprintf("%-20s %s", h.Name, dimStyle.Render(dest))
 		b.WriteString(m.renderRow(paneHosts, i, line))

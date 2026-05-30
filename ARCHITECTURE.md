@@ -95,9 +95,26 @@ TUI holds a snapshot. Mutations dispatched as `tea.Cmd` (async goroutine) → ca
 | 6 | Agent add/remove (switch keys) | low (reversible) |
 | 7 | Edit host field, Save w/ backup+confirm | **write — backup gated** |
 | 8 | Add/delete host, keygen, key delete | **write/destructive — confirm gated** |
-| 9 | Hot reload (fsnotify), reconcile | medium |
-| 10 | App config (~/.config/sshush), default identity | low |
-| 11 | Shell startup snippet generator (print only) | low |
-| 12 | lipgloss styling pass | none |
+| 9 | Wildcard host (`Host *`) add/edit/delete + per-host key association | **write — surfaces wildcard blocks** |
+| 10 | Hot reload (fsnotify), reconcile | medium |
+| 11 | App config (~/.config/sshush), default identity | low |
+| 12 | Shell startup snippet generator (print only) | low |
+| 13 | lipgloss styling pass | none |
+
+### Milestone 9 detail
+
+Two related gaps in the host model:
+
+- **Wildcard blocks**: `hostFromAST` currently drops any block whose patterns are
+  all wildcards (`*`, `?`, `!`), so `Host *` defaults are invisible and uneditable.
+  Surface wildcard hosts in the model (flag them, e.g. `Host.IsPattern`), list them
+  in the Hosts pane, and allow add/edit/delete. Edits route through the same
+  `SetHostField`/`DeleteHostField` path; `findHost` must match pattern blocks too.
+  Risk: editing `Host *` changes defaults for every connection — confirm copy
+  should make that explicit.
+- **Key association**: let a host reference specific identities. `Host.Identities`
+  already exists in the model (parsed from `IdentityFile`); add UI to attach/detach
+  a key to the selected host, writing `IdentityFile <path>` directives (supports
+  multiple). On the Keys pane, optionally show which hosts use each key.
 
 Tests ride alongside each pkg milestone, not deferred. Parse/write corruption = worst-case bug; round-trip test guards it.

@@ -25,6 +25,8 @@ type Service interface {
 	UnloadAllKeys() error
 	EditHost(h config.HostID, field, val string) error
 	DeleteHostField(h config.HostID, field string) error
+	AttachKey(h config.HostID, id config.IdentityID) error
+	DetachKey(h config.HostID, id config.IdentityID) error
 	AddHost(config.Host) error
 	DeleteHost(config.HostID) error
 	GenerateKey(keys.GenerateOpts) (config.Identity, error)
@@ -177,6 +179,35 @@ func (a *App) EditHost(h config.HostID, field, val string) error {
 // refreshes the cached snapshot.
 func (a *App) DeleteHostField(h config.HostID, field string) error {
 	if err := a.Config.DeleteHostField(h, field); err != nil {
+		return err
+	}
+	if err := a.Config.Save(); err != nil {
+		return err
+	}
+	_, err := a.Refresh()
+	return err
+}
+
+// AttachKey associates identity id with host h by writing an IdentityFile
+// directive pointing at the key's path, then persists and refreshes.
+func (a *App) AttachKey(h config.HostID, id config.IdentityID) error {
+	ident, err := a.diskIdentity(id)
+	if err != nil {
+		return err
+	}
+	if err := a.Config.AddHostIdentity(h, ident.Path); err != nil {
+		return err
+	}
+	if err := a.Config.Save(); err != nil {
+		return err
+	}
+	_, err = a.Refresh()
+	return err
+}
+
+// DetachKey removes identity id's IdentityFile directive from host h.
+func (a *App) DetachKey(h config.HostID, id config.IdentityID) error {
+	if err := a.Config.RemoveHostIdentity(h, id); err != nil {
 		return err
 	}
 	if err := a.Config.Save(); err != nil {

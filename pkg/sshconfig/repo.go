@@ -29,6 +29,8 @@ type ConfigRepo interface {
 	Load() (*config.SshConfigModel, error)
 	SetHostField(h config.HostID, key, val string) error
 	DeleteHostField(h config.HostID, key string) error
+	AddHostIdentity(h config.HostID, path string) error
+	RemoveHostIdentity(h config.HostID, id config.IdentityID) error
 	AddHost(config.Host) error
 	DeleteHost(config.HostID) error
 	Save() error
@@ -130,13 +132,19 @@ func (r *FileRepo) loadFile(path string, depth int, visited map[string]bool) err
 }
 
 // hostFromAST converts a parsed Host block into a model Host. Returns false for
-// blocks with no concrete (non-wildcard) pattern.
+// blocks with no patterns and for the parser's implicit global block (which
+// holds directives before the first Host and shares the "*" pattern with an
+// explicit "Host *"). Explicit wildcard blocks are surfaced with IsPattern set.
 func hostFromAST(h *sshcfg.Host) (config.Host, bool) {
+	if isImplicitHost(h) {
+		return config.Host{}, false
+	}
 	var names []string
+	isPattern := false
 	for _, p := range h.Patterns {
 		s := p.String()
-		if s == "*" || strings.ContainsAny(s, "*?!") {
-			continue
+		if strings.ContainsAny(s, "*?!") {
+			isPattern = true
 		}
 		names = append(names, s)
 	}
@@ -146,9 +154,10 @@ func hostFromAST(h *sshcfg.Host) (config.Host, bool) {
 	name := strings.Join(names, " ")
 
 	host := config.Host{
-		ID:      config.HostID(name),
-		Name:    name,
-		Options: map[string]string{},
+		ID:        config.HostID(name),
+		Name:      name,
+		IsPattern: isPattern,
+		Options:   map[string]string{},
 	}
 	for _, node := range h.Nodes {
 		kv, ok := node.(*sshcfg.KV)
@@ -171,6 +180,12 @@ func hostFromAST(h *sshcfg.Host) (config.Host, bool) {
 		}
 	}
 	return host, true
+}
+
+// isImplicitHost reports whether h is the parser's synthetic global block.
+// The flag is unexported; pinned to ssh_config v1.6.0 and guarded by tests.
+func isImplicitHost(h *sshcfg.Host) bool {
+	return reflect.ValueOf(h).Elem().FieldByName("implicit").Bool()
 }
 
 // identityIDFromPath derives an IdentityID from an IdentityFile value by taking
@@ -269,6 +284,45 @@ func (r *FileRepo) DeleteHostField(h config.HostID, key string) error {
 	}
 	for i, node := range host.Nodes {
 		if kv, ok := node.(*sshcfg.KV); ok && strings.EqualFold(kv.Key, key) {
+			host.Nodes = append(host.Nodes[:i], host.Nodes[i+1:]...)
+			r.dirty[lf.path] = true
+			return nil
+		}
+	}
+	return nil
+}
+
+// AddHostIdentity appends an IdentityFile directive to host h (IdentityFile may
+// appear multiple times). In-memory until Save.
+func (r *FileRepo) AddHostIdentity(h config.HostID, path string) error {
+	lf, host := r.findHost(h)
+	if host == nil {
+		return fmt.Errorf("unknown host %q", h)
+	}
+	// Skip if this exact path is already associated.
+	for _, node := range host.Nodes {
+		if kv, ok := node.(*sshcfg.KV); ok &&
+			strings.EqualFold(kv.Key, "IdentityFile") && strings.Trim(kv.Value, `"`) == path {
+			return nil
+		}
+	}
+	kv := &sshcfg.KV{Key: "IdentityFile", Value: path}
+	setKVIndent(kv, blockIndent(host))
+	host.Nodes = append(host.Nodes, kv)
+	r.dirty[lf.path] = true
+	return nil
+}
+
+// RemoveHostIdentity removes the IdentityFile directive whose path resolves to
+// identity id. No-op if not found.
+func (r *FileRepo) RemoveHostIdentity(h config.HostID, id config.IdentityID) error {
+	lf, host := r.findHost(h)
+	if host == nil {
+		return fmt.Errorf("unknown host %q", h)
+	}
+	for i, node := range host.Nodes {
+		kv, ok := node.(*sshcfg.KV)
+		if ok && strings.EqualFold(kv.Key, "IdentityFile") && identityIDFromPath(kv.Value) == id {
 			host.Nodes = append(host.Nodes[:i], host.Nodes[i+1:]...)
 			r.dirty[lf.path] = true
 			return nil
