@@ -35,6 +35,7 @@ type AgentClient interface {
 	List() ([]AgentKey, error)
 	Add(path string) error
 	Remove(path string) error
+	RemoveAll() error
 }
 
 // Client is the default AgentClient. Sock overrides $SSH_AUTH_SOCK when set.
@@ -100,6 +101,11 @@ func (c *Client) Add(path string) error {
 // Remove implements AgentClient (ssh-add -d <path>).
 func (c *Client) Remove(path string) error {
 	return run(c.removeCmd(path))
+}
+
+// RemoveAll drops every identity from the agent (ssh-add -D).
+func (c *Client) RemoveAll() error {
+	return run(c.cmd("-D"))
 }
 
 func (c *Client) addCmd(path string) *exec.Cmd    { return c.cmd(path) }

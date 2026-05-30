@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,6 +18,7 @@ import (
 	// All other IO goes through service.Service.
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/config"
+	"github.com/s-johri/sshush/pkg/keys"
 	"github.com/s-johri/sshush/pkg/service"
 )
 
@@ -40,26 +42,55 @@ type agentDoneMsg struct {
 	err  error
 }
 
-// editDoneMsg reports the outcome of a host write (edit or delete).
+// editDoneMsg reports the outcome of a service call that mutates config/keys.
 type editDoneMsg struct {
-	verb string // "saved" or "removed", for the status line
+	verb string // status verb: "saved", "removed", "added", "deleted"
 	err  error
+}
+
+// keygenDoneMsg reports the outcome of an interactive ssh-keygen run.
+type keygenDoneMsg struct{ err error }
+
+// tickMsg drives the periodic check that expires the status line.
+type tickMsg struct{}
+
+// statusTTL is how long a transient status line stays before auto-clearing.
+const statusTTL = 4 * time.Second
+
+// tick schedules the next status-expiry check.
+func tick() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
 // editMode tracks the host-editing overlay state.
 type editMode int
 
 const (
-	modeNormal        editMode = iota
-	modeNewKey                 // typing a new option name
-	modeEdit                   // typing a value
-	modeConfirm                // confirming a write
-	modeConfirmDelete          // confirming a directive removal
+	modeNormal         editMode = iota
+	modeNewKey                  // typing a new option name (within edit)
+	modeEdit                    // typing a value
+	modeConfirm                 // confirming a write
+	modeConfirmDelete           // confirming a directive removal
+	modeNewHost                 // typing a new host alias / basic field
+	modeNewHostOptKey           // new-host wizard: typing a custom option name
+	modeNewHostOptVal           // new-host wizard: typing a custom option value
+	modeNewKeyGen               // typing a new key file name
+	modeConfirmDelHost          // confirming whole-host removal
+	modeConfirmDelKey           // confirming key-file deletion (irreversible)
 )
 
 // coreFields are always offered for editing; a host's existing option keys are
 // appended to these when the edit overlay opens.
 var coreFields = []string{"HostName", "User", "Port"}
+
+// hostSteps drives the new-host wizard: an alias (required) then optional basic
+// fields. Empty answers are skipped.
+var hostSteps = []struct{ field, hint string }{
+	{"alias", "host alias (e.g. prod-web) — required"},
+	{"HostName", "hostname / IP (optional, enter to skip)"},
+	{"User", "user (optional, enter to skip)"},
+	{"Port", "port (optional number, enter to skip)"},
+}
 
 // Model is the BubbleTea model for sshush.
 type Model struct {
@@ -71,9 +102,10 @@ type Model struct {
 	hosts   []config.Host     // sorted for stable display
 	srcFile string
 
-	loading bool
-	err     error
-	status  string // transient feedback (e.g. last agent action)
+	loading     bool
+	err         error
+	status      string    // transient feedback (e.g. last agent action)
+	statusSetAt time.Time // when status last changed; status expires after statusTTL
 
 	// host edit overlay
 	mode        editMode
@@ -82,6 +114,12 @@ type Model struct {
 	fieldIdx    int      // index into editFields
 	newKey      string   // option name being added (modeNewKey/modeEdit)
 	pendingHost config.HostID
+	pendingKey  config.IdentityID // key targeted for deletion
+
+	// new-host wizard
+	hostStep    int
+	draftHost   config.Host
+	draftOptKey string // custom option name awaiting its value
 
 	width, height int
 }
@@ -94,9 +132,9 @@ func New(svc service.Service) Model {
 	return Model{svc: svc, loading: true, input: ti}
 }
 
-// Init kicks off the first refresh.
+// Init kicks off the first refresh and starts the status-expiry ticker.
 func (m Model) Init() tea.Cmd {
-	return m.refresh
+	return tea.Batch(m.refresh, tick())
 }
 
 // refresh is a tea.Cmd: it loads a fresh snapshot off the UI goroutine.
@@ -105,12 +143,30 @@ func (m Model) refresh() tea.Msg {
 	return refreshedMsg{model: model, err: err}
 }
 
-// Update handles messages and key input.
+// Update wraps the core handler to timestamp status changes, so the ticker can
+// expire the status line without nesting commands.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	prev := m.status
+	next, cmd := m.update(msg)
+	mm := next.(Model)
+	if mm.status != prev {
+		mm.statusSetAt = time.Now()
+	}
+	return mm, cmd
+}
+
+// update is the core message handler.
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+
+	case tickMsg:
+		if m.status != "" && time.Since(m.statusSetAt) >= statusTTL {
+			m.status = ""
+		}
+		return m, tick()
 
 	case refreshedMsg:
 		m.loading = false
@@ -127,17 +183,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "agent error: " + msg.err.Error()
 			return m, nil
 		}
-		m.status = "key " + msg.verb
+		m.status = msg.verb
 		// Re-sync so the loaded badge reflects the new agent state.
 		m.loading = true
 		return m, m.refresh
 
 	case editDoneMsg:
 		if msg.err != nil {
-			m.status = "edit error: " + msg.err.Error()
+			m.status = "error: " + msg.err.Error()
 			return m, nil
 		}
-		m.status = "host " + msg.verb + " (backup written)"
+		m.status = msg.verb
+		m.loading = true
+		return m, m.refresh
+
+	case keygenDoneMsg:
+		if msg.err != nil {
+			m.status = "ssh-keygen error: " + msg.err.Error()
+			return m, nil
+		}
+		m.status = "key generated"
 		m.loading = true
 		return m, m.refresh
 
@@ -156,6 +221,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEditKey(msg)
 	case modeConfirm, modeConfirmDelete:
 		return m.handleConfirmKey(msg)
+	case modeNewHost:
+		return m.handleNewHost(msg)
+	case modeNewHostOptKey:
+		return m.handleNewHostOptKey(msg)
+	case modeNewHostOptVal:
+		return m.handleNewHostOptVal(msg)
+	case modeNewKeyGen:
+		return m.handleNewKeyGen(msg)
+	case modeConfirmDelHost, modeConfirmDelKey:
+		return m.handleDeleteConfirm(msg)
 	}
 
 	switch msg.String() {
@@ -176,13 +251,213 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter", " ":
 		return m.toggleSelectedKey()
+	case "U":
+		return m.unloadAll()
 	case "e":
 		return m.beginEdit()
+	case "n":
+		return m.beginNew()
+	case "d":
+		return m.beginDelete()
 	case "r":
 		m.loading = true
 		return m, m.refresh
 	}
 	return m, nil
+}
+
+// beginNew opens a creation flow: a new host on the Hosts pane, a new key on
+// the Keys pane.
+func (m Model) beginNew() (tea.Model, tea.Cmd) {
+	m.status = ""
+	m.input.SetValue("")
+	m.input.Focus()
+	if m.active == paneHosts {
+		m.mode = modeNewHost
+		m.hostStep = 0
+		m.draftHost = config.Host{}
+	} else {
+		m.mode = modeNewKeyGen
+	}
+	return m, textinput.Blink
+}
+
+// beginDelete opens a confirm gate to delete the selected host or key.
+func (m Model) beginDelete() (tea.Model, tea.Cmd) {
+	if m.active == paneHosts {
+		host, ok := m.selectedHost()
+		if !ok {
+			m.status = "no host to delete"
+			return m, nil
+		}
+		m.pendingHost = host.ID
+		m.mode = modeConfirmDelHost
+		return m, nil
+	}
+	// Keys pane: only on-disk keys have files to delete.
+	if len(m.ids) == 0 {
+		return m, nil
+	}
+	sel := m.ids[m.cursor[paneKeys]]
+	if !sel.ExistsOnDisk || sel.Path == "" {
+		m.status = "cannot delete agent-only key (no file on disk)"
+		return m, nil
+	}
+	m.pendingKey = sel.ID
+	m.mode = modeConfirmDelKey
+	return m, nil
+}
+
+// handleNewHost walks the new-host wizard: alias then optional basic fields,
+// skipping empties. The final step dispatches AddHost.
+func (m Model) handleNewHost(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "esc" {
+		return m.cancelOverlay("cancelled")
+	}
+	if msg.String() != "enter" {
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
+
+	val := strings.TrimSpace(m.input.Value())
+	switch hostSteps[m.hostStep].field {
+	case "alias":
+		if val == "" {
+			m.status = "host alias cannot be empty"
+			return m, nil
+		}
+		m.draftHost.ID = config.HostID(val)
+		m.draftHost.Name = val
+	case "HostName":
+		if val != "" {
+			m.draftHost.Hostname = val
+		}
+	case "User":
+		if val != "" {
+			m.draftHost.User = val
+		}
+	case "Port":
+		if val != "" {
+			p, err := strconv.Atoi(val)
+			if err != nil {
+				m.status = "port must be a number"
+				return m, nil
+			}
+			m.draftHost.Port = p
+		}
+	}
+
+	if m.hostStep == len(hostSteps)-1 {
+		// Basic fields done; move on to optional custom options.
+		m.mode = modeNewHostOptKey
+		m.input.SetValue("")
+		return m, nil
+	}
+	m.hostStep++
+	m.input.SetValue("")
+	return m, nil
+}
+
+// handleNewHostOptKey collects a custom option name; a blank name finishes the
+// wizard and creates the host.
+func (m Model) handleNewHostOptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		return m.cancelOverlay("cancelled")
+	case "enter":
+		key := strings.TrimSpace(m.input.Value())
+		if key == "" {
+			return m.createDraftHost()
+		}
+		m.draftOptKey = key
+		m.mode = modeNewHostOptVal
+		m.input.SetValue("")
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// handleNewHostOptVal stores a custom option value, then loops back for more.
+func (m Model) handleNewHostOptVal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		return m.cancelOverlay("cancelled")
+	case "enter":
+		val := strings.TrimSpace(m.input.Value())
+		if val == "" {
+			m.status = "value cannot be empty"
+			return m, nil
+		}
+		if m.draftHost.Options == nil {
+			m.draftHost.Options = map[string]string{}
+		}
+		m.draftHost.Options[m.draftOptKey] = val
+		m.status = m.draftOptKey + " added"
+		m.draftOptKey = ""
+		m.mode = modeNewHostOptKey
+		m.input.SetValue("")
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// createDraftHost dispatches AddHost for the accumulated draft.
+func (m Model) createDraftHost() (tea.Model, tea.Cmd) {
+	host := m.draftHost
+	m.mode = modeNormal
+	m.input.Blur()
+	m.status = "creating host…"
+	return m, func() tea.Msg { return editDoneMsg{verb: "host added", err: m.svc.AddHost(host)} }
+}
+
+// handleNewKeyGen collects a key file name and runs ssh-keygen interactively
+// (via ExecProcess) so it can prompt for a passphrase.
+func (m Model) handleNewKeyGen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		return m.cancelOverlay("cancelled")
+	case "enter":
+		name := strings.TrimSpace(m.input.Value())
+		if name == "" {
+			m.status = "key name cannot be empty"
+			return m, nil
+		}
+		m.mode = modeNormal
+		m.input.Blur()
+		m.status = "running ssh-keygen…"
+		cmd, _, err := keys.GenerateCommand(keys.GenerateOpts{
+			Name: name, Algorithm: config.AlgED25519, Comment: name,
+		})
+		if err != nil {
+			m.status = "keygen error: " + err.Error()
+			return m, nil
+		}
+		return m, tea.ExecProcess(cmd, func(err error) tea.Msg { return keygenDoneMsg{err: err} })
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// handleDeleteConfirm gates host/key deletion: only "y" proceeds.
+func (m Model) handleDeleteConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	mode := m.mode
+	if msg.String() != "y" && msg.String() != "Y" {
+		return m.cancelOverlay("deletion cancelled")
+	}
+	m.mode = modeNormal
+	m.status = "deleting…"
+	if mode == modeConfirmDelHost {
+		h := m.pendingHost
+		return m, func() tea.Msg { return editDoneMsg{verb: "host removed", err: m.svc.DeleteHost(h)} }
+	}
+	id := m.pendingKey
+	return m, func() tea.Msg { return editDoneMsg{verb: "key deleted", err: m.svc.DeleteKey(id)} }
 }
 
 // beginEdit opens the edit overlay on the selected host. Only directives the
@@ -341,6 +616,17 @@ func (m Model) deleteCmd(h config.HostID, field string) tea.Cmd {
 	return func() tea.Msg { return editDoneMsg{verb: "removed", err: m.svc.DeleteHostField(h, field)} }
 }
 
+// unloadAll drops every key from the agent (Keys pane only).
+func (m Model) unloadAll() (tea.Model, tea.Cmd) {
+	if m.active != paneKeys {
+		return m, nil
+	}
+	m.status = "unloading all keys…"
+	return m, func() tea.Msg {
+		return agentDoneMsg{verb: "all keys unloaded", err: m.svc.UnloadAllKeys()}
+	}
+}
+
 func (m Model) selectedHost() (config.Host, bool) {
 	if len(m.hosts) == 0 {
 		return config.Host{}, false
@@ -394,9 +680,9 @@ func (m Model) toggleSelectedKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	verb, cmd := "loaded", agent.AddCommand(sel.Path)
+	verb, cmd := "key loaded", agent.AddCommand(sel.Path)
 	if sel.LoadedInAgent {
-		verb, cmd = "unloaded", agent.RemoveCommand(sel.Path)
+		verb, cmd = "key unloaded", agent.RemoveCommand(sel.Path)
 	}
 	m.status = "running ssh-add…"
 	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
@@ -466,6 +752,21 @@ func (m Model) View() string {
 		return m.viewEdit()
 	case modeConfirm, modeConfirmDelete:
 		return m.viewConfirm()
+	case modeNewHost:
+		step := hostSteps[m.hostStep]
+		title := fmt.Sprintf("New host (%d/%d)", m.hostStep+1, len(hostSteps))
+		return m.viewPrompt(title, step.field+" — "+step.hint)
+	case modeNewHostOptKey:
+		return m.viewPrompt("New host: add option",
+			"option name (e.g. ForwardAgent) — enter blank to finish")
+	case modeNewHostOptVal:
+		return m.viewPrompt("New host: add option", m.draftOptKey+" value")
+	case modeNewKeyGen:
+		return m.viewPrompt("Generate key", "file name (e.g. id_ed25519) — ed25519, may prompt passphrase")
+	case modeConfirmDelHost:
+		return m.viewDeleteConfirm(false)
+	case modeConfirmDelKey:
+		return m.viewDeleteConfirm(true)
 	}
 
 	var b strings.Builder
@@ -507,6 +808,34 @@ func (m Model) viewNewKey() string {
 	b.WriteString("  option name (e.g. ForwardAgent)\n")
 	b.WriteString("  " + m.input.View() + "\n\n")
 	b.WriteString(dimStyle.Render("  enter next · esc cancel"))
+	b.WriteString("\n")
+	return b.String()
+}
+
+// viewPrompt renders a single-line text prompt (new host / new key).
+func (m Model) viewPrompt(title, hint string) string {
+	var b strings.Builder
+	b.WriteString(tabActive.Render(title) + "\n\n")
+	b.WriteString("  " + hint + "\n")
+	b.WriteString("  " + m.input.View() + "\n\n")
+	b.WriteString(dimStyle.Render("  enter confirm · esc cancel"))
+	b.WriteString("\n")
+	return b.String()
+}
+
+// viewDeleteConfirm renders a y/n gate; key deletion is flagged irreversible.
+func (m Model) viewDeleteConfirm(key bool) string {
+	var b strings.Builder
+	if key {
+		b.WriteString(errStyle.Render("Delete key files — IRREVERSIBLE") + "\n\n")
+		b.WriteString(fmt.Sprintf("  Permanently delete %s and its .pub from disk\n", m.pendingKey))
+		b.WriteString(errStyle.Render("  the private key cannot be recovered") + "\n\n")
+	} else {
+		b.WriteString(errStyle.Render("Delete host") + "\n\n")
+		b.WriteString(fmt.Sprintf("  Remove host %s from the config\n", m.pendingHost))
+		b.WriteString(dimStyle.Render("  (a .bak backup of the config file is written first)") + "\n\n")
+	}
+	b.WriteString("  " + rowActive.Render("y") + " delete    " + rowActive.Render("n") + " cancel")
 	b.WriteString("\n")
 	return b.String()
 }
@@ -554,11 +883,11 @@ func (m Model) viewConfirm() string {
 
 // helpLine is the footer hint, tailored to the active pane.
 func (m Model) helpLine() string {
-	common := "↑/↓ move · tab switch · r refresh · q quit"
+	common := "tab switch · r refresh · q quit"
 	if m.active == paneKeys {
-		return "enter load/unload · " + common
+		return "enter load/unload · U unload all · n new key · d delete key · " + common
 	}
-	return "e edit host · " + common
+	return "e edit · n new host · d delete host · " + common
 }
 
 func (m Model) viewKeys() string {

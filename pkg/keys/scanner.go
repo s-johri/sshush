@@ -17,9 +17,11 @@ import (
 var ErrNotImplemented = errors.New("not implemented")
 
 // KeyScanner walks an SSH directory and pairs public/private keys into
-// identities, detecting algorithm and comment.
+// identities, and manages key files on disk (generation and deletion).
 type KeyScanner interface {
 	Scan() ([]config.Identity, error)
+	Generate(GenerateOpts) (config.Identity, error)
+	Delete(privPath string) error
 }
 
 // DiskScanner scans a directory on disk (default ~/.ssh).

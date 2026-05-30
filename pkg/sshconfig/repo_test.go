@@ -208,6 +208,74 @@ func TestDeleteHostField(t *testing.T) {
 	}
 }
 
+func TestAddHost(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host old\n    User x\n")
+
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	h := config.Host{
+		ID: "new", Name: "new",
+		Hostname: "1.2.3.4", User: "deploy", Port: 2200,
+	}
+	if err := r.AddHost(h); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "Host old\n    User x\nHost new\n    HostName 1.2.3.4\n    User deploy\n    Port 2200\n\n"
+	if got := r.files[0].cfg.String(); got != want {
+		t.Errorf("add host output:\n got %q\nwant %q", got, want)
+	}
+
+	// Duplicate rejected.
+	if err := r.AddHost(h); err == nil {
+		t.Error("adding duplicate host should error")
+	}
+}
+
+func TestAddHostToMissingConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config") // does not exist yet
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.AddHost(config.Host{ID: "web", Name: "web", User: "me"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "Host web\n    User me\n\n" {
+		t.Errorf("created config = %q", got)
+	}
+}
+
+func TestDeleteHost(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host a\n    User x\nHost b\n    User y\n")
+
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DeleteHost("a"); err != nil {
+		t.Fatal(err)
+	}
+	want := "Host b\n    User y\n"
+	if got := r.files[0].cfg.String(); got != want {
+		t.Errorf("delete host output:\n got %q\nwant %q", got, want)
+	}
+	if err := r.DeleteHost("ghost"); err == nil {
+		t.Error("deleting unknown host should error")
+	}
+}
+
 func TestSetHostFieldUnknown(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config")

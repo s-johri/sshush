@@ -5,7 +5,22 @@ import (
 
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/config"
+	"github.com/s-johri/sshush/pkg/keys"
 )
+
+// recordScanner records Generate/Delete calls for routing assertions.
+type recordScanner struct {
+	ids       []config.Identity
+	generated []keys.GenerateOpts
+	deleted   []string
+}
+
+func (r *recordScanner) Scan() ([]config.Identity, error) { return r.ids, nil }
+func (r *recordScanner) Generate(o keys.GenerateOpts) (config.Identity, error) {
+	r.generated = append(r.generated, o)
+	return config.Identity{ID: config.IdentityID(o.Name), Name: o.Name}, nil
+}
+func (r *recordScanner) Delete(p string) error { r.deleted = append(r.deleted, p); return nil }
 
 // compile-time: App satisfies Service.
 var _ Service = (*App)(nil)
@@ -18,13 +33,19 @@ type fakeScanner struct {
 }
 
 func (f fakeScanner) Scan() ([]config.Identity, error) { return f.ids, f.err }
+func (f fakeScanner) Generate(keys.GenerateOpts) (config.Identity, error) {
+	return config.Identity{}, nil
+}
+func (f fakeScanner) Delete(string) error { return nil }
 
 type fakeConfig struct {
-	model   *config.SshConfigModel
-	err     error
-	edits   []config.HostID
-	deletes []config.HostID
-	saved   int
+	model        *config.SshConfigModel
+	err          error
+	edits        []config.HostID
+	deletes      []config.HostID
+	added        []config.HostID
+	deletedHosts []config.HostID
+	saved        int
 }
 
 func (f *fakeConfig) Load() (*config.SshConfigModel, error) { return f.model, f.err }
@@ -36,20 +57,22 @@ func (f *fakeConfig) DeleteHostField(h config.HostID, k string) error {
 	f.deletes = append(f.deletes, h+"/"+config.HostID(k))
 	return nil
 }
-func (f *fakeConfig) AddHost(config.Host) error     { return nil }
-func (f *fakeConfig) DeleteHost(config.HostID) error { return nil }
-func (f *fakeConfig) Save() error                   { f.saved++; return nil }
+func (f *fakeConfig) AddHost(h config.Host) error    { f.added = append(f.added, h.ID); return nil }
+func (f *fakeConfig) DeleteHost(h config.HostID) error { f.deletedHosts = append(f.deletedHosts, h); return nil }
+func (f *fakeConfig) Save() error                     { f.saved++; return nil }
 
 type fakeAgent struct {
-	keys    []agent.AgentKey
-	err     error
-	added   []string
-	removed []string
+	keys       []agent.AgentKey
+	err        error
+	added      []string
+	removed    []string
+	removedAll int
 }
 
 func (f *fakeAgent) List() ([]agent.AgentKey, error) { return f.keys, f.err }
 func (f *fakeAgent) Add(p string) error              { f.added = append(f.added, p); return nil }
 func (f *fakeAgent) Remove(p string) error           { f.removed = append(f.removed, p); return nil }
+func (f *fakeAgent) RemoveAll() error                { f.removedAll++; return nil }
 
 func TestRefreshMerge(t *testing.T) {
 	cfg := &fakeConfig{model: &config.SshConfigModel{
@@ -162,6 +185,92 @@ func TestDeleteHostFieldSavesAndRefreshes(t *testing.T) {
 	}
 	if cfg.saved != 1 {
 		t.Errorf("Save called %d times, want 1", cfg.saved)
+	}
+}
+
+func TestHostAddDeleteRouting(t *testing.T) {
+	cfg := &fakeConfig{model: &config.SshConfigModel{
+		Hosts: map[config.HostID]config.Host{"web": {ID: "web", Name: "web"}},
+	}}
+	app := New(fakeScanner{}, cfg, &fakeAgent{})
+
+	if err := app.AddHost(config.Host{ID: "db", Name: "db"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.DeleteHost("web"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.added) != 1 || cfg.added[0] != "db" {
+		t.Errorf("add not routed: %v", cfg.added)
+	}
+	if len(cfg.deletedHosts) != 1 || cfg.deletedHosts[0] != "web" {
+		t.Errorf("delete not routed: %v", cfg.deletedHosts)
+	}
+	if cfg.saved != 2 {
+		t.Errorf("Save called %d times, want 2", cfg.saved)
+	}
+}
+
+func TestKeyGenerateDeleteRouting(t *testing.T) {
+	scan := &recordScanner{ids: []config.Identity{
+		{ID: "k", Path: "/keys/k", ExistsOnDisk: true},
+	}}
+	cfg := &fakeConfig{model: &config.SshConfigModel{}}
+	app := New(scan, cfg, &fakeAgent{})
+
+	if _, err := app.GenerateKey(keys.GenerateOpts{Name: "newkey", Algorithm: config.AlgED25519}); err != nil {
+		t.Fatal(err)
+	}
+	if len(scan.generated) != 1 || scan.generated[0].Name != "newkey" {
+		t.Errorf("generate not routed: %v", scan.generated)
+	}
+
+	// Refresh populated the snapshot from scan.ids; "k" is deletable.
+	if err := app.DeleteKey("k"); err != nil {
+		t.Fatal(err)
+	}
+	if len(scan.deleted) != 1 || scan.deleted[0] != "/keys/k" {
+		t.Errorf("delete not routed to path: %v", scan.deleted)
+	}
+	// Unknown / agent-only keys cannot be deleted.
+	if err := app.DeleteKey("ghost"); err == nil {
+		t.Error("deleting unknown key should error")
+	}
+}
+
+func TestUnloadAllKeys(t *testing.T) {
+	ag := &fakeAgent{}
+	app := New(fakeScanner{}, &fakeConfig{model: &config.SshConfigModel{}}, ag)
+	if err := app.UnloadAllKeys(); err != nil {
+		t.Fatal(err)
+	}
+	if ag.removedAll != 1 {
+		t.Errorf("RemoveAll called %d times, want 1", ag.removedAll)
+	}
+}
+
+func TestDeleteKeyUnloadsFromAgentFirst(t *testing.T) {
+	scan := &recordScanner{ids: []config.Identity{
+		{ID: "k", Path: "/keys/k", Fingerprint: "FP", ExistsOnDisk: true},
+	}}
+	ag := &fakeAgent{keys: []agent.AgentKey{{Fingerprint: "FP"}}} // matches => loaded
+	app := New(scan, &fakeConfig{model: &config.SshConfigModel{}}, ag)
+
+	if _, err := app.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	if !app.model.Identities["k"].LoadedInAgent {
+		t.Fatal("precondition: key should be loaded in agent")
+	}
+
+	if err := app.DeleteKey("k"); err != nil {
+		t.Fatal(err)
+	}
+	if len(ag.removed) != 1 || ag.removed[0] != "/keys/k" {
+		t.Errorf("key not unloaded from agent before delete: %v", ag.removed)
+	}
+	if len(scan.deleted) != 1 || scan.deleted[0] != "/keys/k" {
+		t.Errorf("key files not deleted: %v", scan.deleted)
 	}
 }
 

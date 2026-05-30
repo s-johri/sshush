@@ -22,10 +22,13 @@ type Service interface {
 	Refresh() (*config.SshConfigModel, error)
 	AddKeyToAgent(config.IdentityID) error
 	RemoveKeyFromAgent(config.IdentityID) error
+	UnloadAllKeys() error
 	EditHost(h config.HostID, field, val string) error
 	DeleteHostField(h config.HostID, field string) error
 	AddHost(config.Host) error
 	DeleteHost(config.HostID) error
+	GenerateKey(keys.GenerateOpts) (config.Identity, error)
+	DeleteKey(config.IdentityID) error
 }
 
 // App is the default Service, wiring the three repositories together.
@@ -137,6 +140,11 @@ func (a *App) RemoveKeyFromAgent(id config.IdentityID) error {
 	return a.Agent.Remove(ident.Path)
 }
 
+// UnloadAllKeys drops every identity from the agent in one call.
+func (a *App) UnloadAllKeys() error {
+	return a.Agent.RemoveAll()
+}
+
 // diskIdentity returns a cached identity that has a usable on-disk key path.
 func (a *App) diskIdentity(id config.IdentityID) (config.Identity, error) {
 	if a.model == nil {
@@ -178,8 +186,57 @@ func (a *App) DeleteHostField(h config.HostID, field string) error {
 	return err
 }
 
-// AddHost implements Service.
-func (a *App) AddHost(h config.Host) error { return ErrNotImplemented }
+// AddHost appends a new host, persists (with backup), and refreshes.
+func (a *App) AddHost(h config.Host) error {
+	if err := a.Config.AddHost(h); err != nil {
+		return err
+	}
+	if err := a.Config.Save(); err != nil {
+		return err
+	}
+	_, err := a.Refresh()
+	return err
+}
 
-// DeleteHost implements Service.
-func (a *App) DeleteHost(h config.HostID) error { return ErrNotImplemented }
+// DeleteHost removes a host, persists (with backup), and refreshes.
+func (a *App) DeleteHost(h config.HostID) error {
+	if err := a.Config.DeleteHost(h); err != nil {
+		return err
+	}
+	if err := a.Config.Save(); err != nil {
+		return err
+	}
+	_, err := a.Refresh()
+	return err
+}
+
+// GenerateKey creates a new key pair on disk and refreshes the snapshot.
+func (a *App) GenerateKey(opts keys.GenerateOpts) (config.Identity, error) {
+	id, err := a.Keys.Generate(opts)
+	if err != nil {
+		return config.Identity{}, err
+	}
+	if _, err := a.Refresh(); err != nil {
+		return id, err
+	}
+	return id, nil
+}
+
+// DeleteKey removes an identity's key files from disk and refreshes. If the key
+// is loaded in the agent it is unloaded first (ssh-add -d reads the public key
+// file, which must still exist). Agent removal is best-effort so a flaky agent
+// never blocks the file deletion. The identity must exist on disk.
+func (a *App) DeleteKey(id config.IdentityID) error {
+	ident, err := a.diskIdentity(id)
+	if err != nil {
+		return err
+	}
+	if ident.LoadedInAgent {
+		_ = a.Agent.Remove(ident.Path) // best-effort, before files are gone
+	}
+	if err := a.Keys.Delete(ident.Path); err != nil {
+		return err
+	}
+	_, err = a.Refresh()
+	return err
+}

@@ -3,21 +3,29 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/s-johri/sshush/pkg/config"
+	"github.com/s-johri/sshush/pkg/keys"
 )
 
 type fakeService struct {
-	model   *config.SshConfigModel
-	err     error
-	edits   []string
-	deletes []string
+	model        *config.SshConfigModel
+	err          error
+	edits        []string
+	deletes      []string
+	addedHosts   []config.Host
+	deletedHosts []config.HostID
+	generated    []keys.GenerateOpts
+	deletedKeys  []config.IdentityID
+	unloadedAll  int
 }
 
 func (f *fakeService) Refresh() (*config.SshConfigModel, error)   { return f.model, f.err }
 func (f *fakeService) AddKeyToAgent(config.IdentityID) error      { return nil }
 func (f *fakeService) RemoveKeyFromAgent(config.IdentityID) error { return nil }
+func (f *fakeService) UnloadAllKeys() error                       { f.unloadedAll++; return nil }
 func (f *fakeService) EditHost(h config.HostID, field, val string) error {
 	f.edits = append(f.edits, string(h)+"."+field+"="+val)
 	return nil
@@ -26,8 +34,19 @@ func (f *fakeService) DeleteHostField(h config.HostID, field string) error {
 	f.deletes = append(f.deletes, string(h)+"."+field)
 	return nil
 }
-func (f *fakeService) AddHost(config.Host) error     { return nil }
-func (f *fakeService) DeleteHost(config.HostID) error { return nil }
+func (f *fakeService) AddHost(h config.Host) error    { f.addedHosts = append(f.addedHosts, h); return nil }
+func (f *fakeService) DeleteHost(h config.HostID) error {
+	f.deletedHosts = append(f.deletedHosts, h)
+	return nil
+}
+func (f *fakeService) GenerateKey(o keys.GenerateOpts) (config.Identity, error) {
+	f.generated = append(f.generated, o)
+	return config.Identity{ID: config.IdentityID(o.Name), Name: o.Name}, nil
+}
+func (f *fakeService) DeleteKey(id config.IdentityID) error {
+	f.deletedKeys = append(f.deletedKeys, id)
+	return nil
+}
 
 func snapshot() *config.SshConfigModel {
 	return &config.SshConfigModel{
@@ -236,8 +255,248 @@ func TestHelpLinePerPane(t *testing.T) {
 	if strings.Contains(v, "load/unload") {
 		t.Error("hosts pane help should NOT mention load/unload")
 	}
-	if !strings.Contains(v, "edit host") {
-		t.Error("hosts pane help should mention edit host")
+	if !strings.Contains(v, "e edit") {
+		t.Error("hosts pane help should mention edit")
+	}
+}
+
+func TestNewHostFlow(t *testing.T) {
+	svc := &fakeService{model: snapshot()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+
+	m = feed(m, key("n"))
+	if m.mode != modeNewHost {
+		t.Fatalf("expected modeNewHost, got %d", m.mode)
+	}
+	// step 0: alias
+	for _, r := range "db" {
+		m = feed(m, key(string(r)))
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> HostName
+	// step 1: HostName
+	for _, r := range "10.0.0.1" {
+		m = feed(m, key(string(r)))
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> User
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // skip User -> Port
+	// step 3: Port
+	for _, r := range "2200" {
+		m = feed(m, key(string(r)))
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // basic fields done -> options loop
+	if m.mode != modeNewHostOptKey {
+		t.Fatalf("expected options loop, got mode %d", m.mode)
+	}
+	// blank option name finishes the wizard
+	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(Model)
+	if cmd == nil {
+		t.Fatal("blank option should dispatch AddHost")
+	}
+	cmd()
+	if len(svc.addedHosts) != 1 {
+		t.Fatalf("host not added: %v", svc.addedHosts)
+	}
+	h := svc.addedHosts[0]
+	if h.Name != "db" || h.Hostname != "10.0.0.1" || h.Port != 2200 || h.User != "" {
+		t.Errorf("wizard collected wrong host: %+v", h)
+	}
+}
+
+func TestNewHostWithCustomOption(t *testing.T) {
+	svc := &fakeService{model: snapshot()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+	m = feed(m, key("n"))
+
+	for _, r := range "web" { // alias
+		m = feed(m, key(string(r)))
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> HostName
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // skip -> User
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // skip -> Port
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // skip -> options loop
+
+	for _, r := range "ForwardAgent" {
+		m = feed(m, key(string(r)))
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // name -> value
+	if m.mode != modeNewHostOptVal {
+		t.Fatalf("expected option value mode, got %d", m.mode)
+	}
+	for _, r := range "yes" {
+		m = feed(m, key(string(r)))
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // value stored -> back to option name
+	if m.mode != modeNewHostOptKey {
+		t.Fatalf("expected to loop back for another option, got %d", m.mode)
+	}
+	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // blank -> finish
+	m = out.(Model)
+	cmd()
+
+	if len(svc.addedHosts) != 1 {
+		t.Fatalf("host not added: %v", svc.addedHosts)
+	}
+	if got := svc.addedHosts[0].Options["ForwardAgent"]; got != "yes" {
+		t.Errorf("custom option not collected: %v", svc.addedHosts[0].Options)
+	}
+}
+
+func TestNewHostInvalidPort(t *testing.T) {
+	svc := &fakeService{model: snapshot()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = feed(m, key("n"))
+	for _, r := range "db" {
+		m = feed(m, key(string(r)))
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> HostName
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> User
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> Port
+	for _, r := range "abc" {
+		m = feed(m, key(string(r)))
+	}
+	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(Model)
+	if cmd != nil || m.mode != modeNewHost {
+		t.Error("invalid port should not dispatch; should stay on Port step")
+	}
+	if !strings.Contains(m.status, "port must be a number") {
+		t.Errorf("status = %q", m.status)
+	}
+}
+
+func TestDeleteHostFlow(t *testing.T) {
+	svc := &fakeService{model: snapshot()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+
+	m = feed(m, key("d"))
+	if m.mode != modeConfirmDelHost {
+		t.Fatalf("expected modeConfirmDelHost, got %d", m.mode)
+	}
+	out, cmd := m.Update(key("y"))
+	m = out.(Model)
+	cmd()
+	if len(svc.deletedHosts) != 1 || svc.deletedHosts[0] != "web" {
+		t.Errorf("host not deleted: %v", svc.deletedHosts)
+	}
+}
+
+func diskKeySnap() *config.SshConfigModel {
+	return &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"id_ed": {ID: "id_ed", Name: "id_ed", Path: "/k/id_ed", ExistsOnDisk: true},
+		},
+	}
+}
+
+func TestDeleteKeyFlowConfirm(t *testing.T) {
+	svc := &fakeService{model: diskKeySnap()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: diskKeySnap()}) // Keys pane is default
+
+	m = feed(m, key("d"))
+	if m.mode != modeConfirmDelKey {
+		t.Fatalf("expected modeConfirmDelKey, got %d", m.mode)
+	}
+	if !strings.Contains(m.View(), "IRREVERSIBLE") {
+		t.Error("key delete confirm should warn it is irreversible")
+	}
+	out, cmd := m.Update(key("y"))
+	m = out.(Model)
+	cmd()
+	if len(svc.deletedKeys) != 1 || svc.deletedKeys[0] != "id_ed" {
+		t.Errorf("key not deleted: %v", svc.deletedKeys)
+	}
+}
+
+func TestDeleteAgentOnlyKeyRejected(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"orphan": {ID: "orphan", Name: "orphan", LoadedInAgent: true, ExistsOnDisk: false},
+		},
+	}
+	svc := &fakeService{model: snap}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snap})
+
+	out, cmd := m.Update(key("d"))
+	m = out.(Model)
+	if m.mode != modeNormal || cmd != nil {
+		t.Error("agent-only key delete should be rejected, not confirmed")
+	}
+	if !strings.Contains(m.status, "agent-only") {
+		t.Errorf("status = %q", m.status)
+	}
+}
+
+func TestNewKeyGenDispatches(t *testing.T) {
+	svc := &fakeService{model: snapshot()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()}) // Keys pane
+
+	m = feed(m, key("n"))
+	if m.mode != modeNewKeyGen {
+		t.Fatalf("expected modeNewKeyGen, got %d", m.mode)
+	}
+	for _, r := range "id_new" {
+		m = feed(m, key(string(r)))
+	}
+	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(Model)
+	if cmd == nil {
+		t.Error("key generation should dispatch an ExecProcess command")
+	}
+	if m.mode != modeNormal {
+		t.Errorf("mode should reset after dispatch, got %d", m.mode)
+	}
+}
+
+func TestUnloadAllDispatches(t *testing.T) {
+	svc := &fakeService{model: diskKeySnap()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: diskKeySnap()}) // Keys pane
+
+	_, cmd := m.unloadAll()
+	if cmd == nil {
+		t.Fatal("unloadAll should dispatch")
+	}
+	msg, ok := cmd().(agentDoneMsg)
+	if !ok || msg.verb != "all keys unloaded" {
+		t.Fatalf("unexpected msg: %#v", msg)
+	}
+	if svc.unloadedAll != 1 {
+		t.Errorf("UnloadAllKeys called %d times, want 1", svc.unloadedAll)
+	}
+}
+
+func TestStatusIsEphemeral(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	m = feed(m, agentDoneMsg{verb: "hello"})
+	if m.status != "hello" {
+		t.Fatalf("status=%q", m.status)
+	}
+
+	// A tick before the TTL elapses must keep the status.
+	m = feed(m, tickMsg{})
+	if m.status != "hello" {
+		t.Error("status cleared before its TTL")
+	}
+
+	// Once the TTL has elapsed, a tick clears it.
+	m.statusSetAt = time.Now().Add(-2 * statusTTL)
+	m = feed(m, tickMsg{})
+	if m.status != "" {
+		t.Errorf("status not expired after TTL: %q", m.status)
 	}
 }
 

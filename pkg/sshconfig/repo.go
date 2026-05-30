@@ -277,14 +277,88 @@ func (r *FileRepo) DeleteHostField(h config.HostID, key string) error {
 	return nil
 }
 
-// AddHost implements ConfigRepo. (Milestone 8.)
+// AddHost appends a new Host block to the main config file. The block carries
+// the host's set fields (HostName/User/Port) and any Options, indented four
+// spaces, followed by a blank line. In-memory until Save.
 func (r *FileRepo) AddHost(h config.Host) error {
-	return ErrNotImplemented
+	if strings.TrimSpace(h.Name) == "" {
+		return errors.New("host name is required")
+	}
+	main, err := r.ensureMainFile()
+	if err != nil {
+		return err
+	}
+	if _, existing := r.findHost(h.ID); existing != nil {
+		return fmt.Errorf("host %q already exists", h.ID)
+	}
+
+	var pats []*sshcfg.Pattern
+	for _, name := range strings.Fields(h.Name) {
+		p, err := sshcfg.NewPattern(name)
+		if err != nil {
+			return fmt.Errorf("invalid host pattern %q: %w", name, err)
+		}
+		pats = append(pats, p)
+	}
+
+	host := &sshcfg.Host{Patterns: pats}
+	if h.Hostname != "" {
+		host.Nodes = append(host.Nodes, newKV("HostName", h.Hostname))
+	}
+	if h.User != "" {
+		host.Nodes = append(host.Nodes, newKV("User", h.User))
+	}
+	if h.Port != 0 {
+		host.Nodes = append(host.Nodes, newKV("Port", strconv.Itoa(h.Port)))
+	}
+	for k, v := range h.Options {
+		host.Nodes = append(host.Nodes, newKV(k, v))
+	}
+	host.Nodes = append(host.Nodes, &sshcfg.Empty{}) // trailing blank line
+
+	main.cfg.Hosts = append(main.cfg.Hosts, host)
+	r.dirty[main.path] = true
+	return nil
 }
 
-// DeleteHost implements ConfigRepo. (Milestone 8.)
+// DeleteHost removes a host block from whichever file defines it.
 func (r *FileRepo) DeleteHost(h config.HostID) error {
-	return ErrNotImplemented
+	for _, lf := range r.files {
+		for i, host := range lf.cfg.Hosts {
+			if mh, ok := hostFromAST(host); ok && mh.ID == h {
+				lf.cfg.Hosts = append(lf.cfg.Hosts[:i], lf.cfg.Hosts[i+1:]...)
+				r.dirty[lf.path] = true
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("unknown host %q", h)
+}
+
+// ensureMainFile returns the main loadedFile, creating an empty one (and its
+// in-memory Config) if the config file did not exist at load time.
+func (r *FileRepo) ensureMainFile() (*loadedFile, error) {
+	if len(r.files) > 0 {
+		return r.files[0], nil
+	}
+	path, err := r.resolvePath()
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := sshcfg.DecodeBytes(nil)
+	if err != nil {
+		return nil, err
+	}
+	lf := &loadedFile{path: path, raw: nil, cfg: cfg}
+	r.files = append(r.files, lf)
+	return lf, nil
+}
+
+// newKV builds a host directive indented four spaces (config convention).
+func newKV(key, val string) *sshcfg.KV {
+	kv := &sshcfg.KV{Key: key, Value: val}
+	setKVIndent(kv, 4)
+	return kv
 }
 
 // Save writes every dirty file back to disk. Before the first write of a file
