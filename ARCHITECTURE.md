@@ -102,8 +102,36 @@ TUI holds a snapshot. Mutations dispatched as `tea.Cmd` (async goroutine) → ca
 | 13 | lipgloss styling pass: bordered panes, grouped help, key↔host links | none |
 | 14 | README + installation instructions | none (docs) |
 | 15 | Self-updating binary via GitHub releases | medium |
+| 🏷 | **v0.1.0** — first tagged release: full TUI feature set + self-update | — |
 | 16 | Configurable SSH dir / config path (override `~/.ssh` defaults) | low |
 | 17 | Key generation with selectable algorithm (ed25519/rsa/ecdsa) + bits | low |
+| 🏷 | **v0.2.0** — configurable paths + multi-algorithm keygen | — |
+
+### Road to v1.0.0
+
+Everything below gates `v1.0.0`: usability at scale, correctness on real-world
+configs, safety nets, and distribution. Releases are tagged as features land so
+users get value before 1.0; the API/config surface only freezes at the RC.
+
+| # | Deliverable | Risk |
+|---|-------------|------|
+| 18 | Scrollable / paginated panes (viewport) for long key & host lists | low |
+| 19 | Search / filter within Keys and Hosts panes | low |
+| 🏷 | **v0.3.0** — scrolling + search | — |
+| 20 | Help overlay (`?`) + `NO_COLOR`, narrow-terminal, non-TTY handling | low |
+| 21 | Styling / polish pass — refine spacing, alignment, color, micro-interactions | low |
+| 22 | Custom themes — user-configurable color palette | low |
+| 🏷 | **v0.4.0** — help overlay + polish + theming | — |
+| 23 | `Match` block + broader directive support (read/display, edit-safe) | medium |
+| 🏷 | **v0.5.0** — Match/advanced directives | — |
+| 24 | Restore-from-backup (undo last write) command/action | low |
+| 25 | Integration tests (real agent/keygen e2e) + CI matrix (linux/macOS) | low |
+| 🏷 | **v0.6.0** — undo + e2e/CI hardening | — |
+| 26 | Packaging: Homebrew tap, AUR, shell completions, man page | low |
+| 27 | v1.0 stabilization: error-handling audit, config schema freeze, docs/screenshots, CHANGELOG | low |
+| 🏷 | **v0.9.0** — release candidate (feature-complete, schema frozen) | — |
+| — | soak period: bug-fix-only patch releases (v0.9.x) from real-world use | — |
+| 🏷 | **v1.0.0** — stable release (tag + announce) | — |
 
 ### Milestone 9 detail
 
@@ -176,5 +204,99 @@ The new-key flow currently hardcodes ed25519. The backend already supports more:
 - **Wire-through**: pass the chosen `Algorithm`/`Bits` into
   `keys.GenerateCommand` (interactive, via `tea.ExecProcess`).
   Risk: none beyond existing keygen.
+
+### Milestone 18 detail
+
+Lists currently render every row; long key/host sets overflow the pane box.
+Add a viewport per pane (`bubbles/viewport` or manual windowing): track a scroll
+offset, keep the cursor visible, page with `pgup`/`pgdn`, show a scroll
+indicator. `m.height` already plumbs through.
+
+### Milestone 19 detail
+
+A `/`-activated filter that narrows the active pane to matching rows
+(substring/fuzzy on name, host alias, hostname, comment). Filtering is a view
+concern over the existing sorted slices; `esc` clears. Pairs with M18 scrolling.
+
+### Milestone 20 detail
+
+- **Help overlay**: `?` opens a full keybinding reference (the grouped footer is
+  a summary; this is the complete list per mode).
+- **Color/term handling**: honor `NO_COLOR`; degrade on narrow terminals
+  (truncate columns, hide non-essential tags) and when stdout is not a TTY.
+
+### Milestone 21 detail
+
+A second styling pass once the surface is feature-complete (scrolling, search,
+help all in): tighten spacing/padding and column alignment, refine color
+relationships and contrast, polish overlay/card framing, and unify
+glyph/iconography. Pure presentation — no behavior change. Lands before theming
+(M22) so the default palette it tunes becomes the baseline themes override.
+
+Plus an **opt-in motion system** — playful, arcade-style juice:
+
+- **Off by default.** A `[motion]` setting in `config.toml` (and an in-app
+  toggle) enables it; `enabled = false` keeps the UI completely static. Always
+  forced off when `NO_COLOR`/non-TTY, or when the terminal can't keep up.
+- **Intensity levels** (e.g. `subtle` / `normal` / `arcade`) scale amplitude,
+  frequency, and which effects run, so users dial it from a faint shimmer to full
+  retro chaos.
+- **Effects**: a brief color flash on successful writes / key load-unload;
+  optional screen-shake on destructive actions or errors; a live "breathing"
+  shimmer/pulse on the hovered row and on loaded keys (`●`); animated transitions
+  for status and pane switches.
+- **Architecture**: drive animations off a frame ticker (`tea.Tick`, ~30–60ms)
+  that's only scheduled while an effect is active (no idle CPU burn); represent
+  effects as small time-bounded state (start time, duration, kind) layered over
+  the existing render — never blocking input or writes. Reuse this same frame
+  loop, not a second one.
+
+Risk: presentation only, but guard performance (cap active effects, stop the
+ticker when idle) and respect the off switch unconditionally.
+
+### Milestone 22 detail
+
+Let users theme the UI. The styling already centralizes colors in named palette
+constants (`colPrimary`, `colAccent`, …) — lift them into a `Theme` struct built
+from those defaults, and let `config.toml` override any entry (hex or 256-color
+index) under a `[theme]` table. Ship a couple of presets (e.g. default, mono,
+high-contrast) selectable by name; unknown/partial themes fall back per-field to
+defaults. Honors M20's `NO_COLOR` (theme ignored when color is off).
+
+### Milestone 23 detail
+
+Real configs use `Match` blocks and directives sshush doesn't model. Today
+`Match` blocks round-trip on write (untouched) but aren't surfaced. Surface them
+read-only first (display, flag non-editable), then allow edits where the AST
+round-trips. Audit common directives (`ProxyJump`, `IdentitiesOnly`,
+`AddKeysToAgent`) — they flow through `Options`, but verify display.
+
+### Milestone 24 detail
+
+Every write backs up to `<path>.bak` before the first change of a session (M7).
+Expose an undo: restore `<path>` from `<path>.bak` (confirm-gated), so a bad edit
+is one keystroke to revert. Surface in the TUI and as a `sshush restore`
+subcommand.
+
+### Milestone 25 detail
+
+Unit tests are thorough; add e2e coverage behind a build tag: spin a real
+`ssh-agent`, generate a throwaway key, exercise load/unload/delete and a config
+edit against a temp `~/.ssh`. CI matrix (ubuntu + macOS) runs the full suite incl.
+e2e, plus the existing `gofmt`/`go vet` gates.
+
+### Milestone 26 detail
+
+Distribution: a Homebrew tap (goreleaser publishes the formula), an AUR
+`PKGBUILD`, shell completions (bash/zsh/fish from the subcommand set), and a man
+page. Mostly goreleaser config + a tap repo.
+
+### Milestone 27 detail
+
+Pre-1.0 hardening: audit every error path for graceful degradation (no panics on
+malformed config, missing agent, unreadable keys, permission errors); freeze the
+`config.toml` schema (document it, forward-compatible parsing); add
+screenshots/asciinema to the README; start a `CHANGELOG.md`. The RC (`v0.9.0`)
+ships after this; `v1.0.0` follows a soak period of bug-fix-only patches.
 
 Tests ride alongside each pkg milestone, not deferred. Parse/write corruption = worst-case bug; round-trip test guards it.
