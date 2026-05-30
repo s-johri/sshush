@@ -1,0 +1,41 @@
+version: 2
+
+project_name: sshush
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: sshush
+    main: ./cmd/sshush
+    binary: sshush
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: sshush
+    formats:
+      - tar.gz
+    # Names include OS/arch so `sshush update` (go-selfupdate) can match the
+    # asset for the running platform.
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: s-johri
+    name: sshush
+
+changelog:
+  use: github

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	selfupdate "github.com/creativeprojects/go-selfupdate"
 	"github.com/s-johri/sshush/internal/tui"
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/appconfig"
@@ -14,6 +16,13 @@ import (
 	"github.com/s-johri/sshush/pkg/sshconfig"
 	"github.com/s-johri/sshush/pkg/watch"
 )
+
+// version is the build version, overridden at release time via
+// -ldflags "-X main.version=vX.Y.Z". Unreleased builds report "dev".
+var version = "dev"
+
+// repoSlug is the GitHub repository self-update checks for releases.
+const repoSlug = "s-johri/sshush"
 
 func main() {
 	if len(os.Args) > 1 {
@@ -27,6 +36,15 @@ func main() {
 		case "shell-init":
 			fmt.Print(shellSnippet)
 			return
+		case "version", "--version", "-v":
+			fmt.Printf("sshush %s\n", version)
+			return
+		case "update":
+			if err := selfUpdate(context.Background()); err != nil {
+				fmt.Fprintf(os.Stderr, "sshush: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "-h", "--help", "help":
 			fmt.Print(usage)
 			return
@@ -36,6 +54,36 @@ func main() {
 		}
 	}
 	runTUI()
+}
+
+// selfUpdate checks GitHub for a newer release and replaces this binary in
+// place. It refuses to run for "dev" builds (no version to compare against) and
+// is a no-op when already current.
+func selfUpdate(ctx context.Context) error {
+	if version == "dev" {
+		return fmt.Errorf("self-update is only available for released builds (this is %q); install a tagged release", version)
+	}
+	rel, found, err := selfupdate.DetectLatest(ctx, selfupdate.ParseSlug(repoSlug))
+	if err != nil {
+		return fmt.Errorf("checking latest release: %w", err)
+	}
+	if !found {
+		return fmt.Errorf("no release found for %s", repoSlug)
+	}
+	if rel.LessOrEqual(version) {
+		fmt.Printf("already up to date (%s)\n", version)
+		return nil
+	}
+	exe, err := selfupdate.ExecutablePath()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("updating %s -> %s …\n", version, rel.Version())
+	if err := selfupdate.UpdateTo(ctx, rel.AssetURL, rel.AssetName, exe); err != nil {
+		return fmt.Errorf("applying update: %w", err)
+	}
+	fmt.Printf("updated to %s\n", rel.Version())
+	return nil
 }
 
 func newService() service.Service {
@@ -106,5 +154,7 @@ Usage:
   sshush              launch the interactive TUI
   sshush load-default load the configured default identity into the agent
   sshush shell-init   print a shell snippet to load the default on shell start
+  sshush update       update sshush to the latest release
+  sshush version      print the version
   sshush help         show this help
 `

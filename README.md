@@ -36,7 +36,18 @@ edit your config without leaving the terminal.
 
 ## Install
 
-### Build from source (recommended for now)
+### Prebuilt binary
+
+Download the archive for your OS/arch from the
+[latest release](https://github.com/s-johri/sshush/releases/latest), extract it,
+and put `sshush` on your `PATH`. Once installed from a release, update in place:
+
+```bash
+sshush update    # fetches the latest release and replaces the binary
+sshush version   # show the installed version
+```
+
+### Build from source
 
 ```bash
 git clone https://github.com/s-johri/sshush.git
