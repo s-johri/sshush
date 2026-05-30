@@ -103,6 +103,7 @@ TUI holds a snapshot. Mutations dispatched as `tea.Cmd` (async goroutine) → ca
 | 14 | README + installation instructions | none (docs) |
 | 15 | Self-updating binary via GitHub releases | medium |
 | 16 | Configurable SSH dir / config path (override `~/.ssh` defaults) | low |
+| 17 | Key generation with selectable algorithm (ed25519/rsa/ecdsa) + bits | low |
 
 ### Milestone 14 detail
 
@@ -145,6 +146,20 @@ is user-settable except the agent socket via `$SSH_AUTH_SOCK`.
   directory so a relocated config's includes still resolve. Likewise the
   `IdentityFile`→`IdentityID` basename mapping is dir-agnostic and is fine.
   Risk: read paths only; no new destructive surface.
+
+### Milestone 17 detail
+
+The new-key flow currently hardcodes ed25519. The backend already supports more:
+`keys.GenerateOpts` carries `Algorithm` and `Bits`, and `keygenArgs` emits
+`-t <algo>` (+ `-b <bits>` for non-ed25519). Only the TUI needs to expose it.
+
+- **Wizard step**: before the filename prompt, add an algorithm picker
+  (ed25519 / rsa / ecdsa; dsa intentionally omitted as legacy). For rsa, prompt
+  bits (default 3072 or 4096); ecdsa uses a fixed curve set (256/384/521); ed25519
+  takes no bits.
+- **Wire-through**: pass the chosen `Algorithm`/`Bits` into
+  `keys.GenerateCommand` (interactive, via `tea.ExecProcess`).
+  Risk: none beyond existing keygen.
 
 ### Milestone 9 detail
 
