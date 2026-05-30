@@ -90,7 +90,7 @@ func TestSnapshotSortedAndRendered(t *testing.T) {
 	}
 
 	view := m.View()
-	if !strings.Contains(view, "alpha") || !strings.Contains(view, "✓") {
+	if !strings.Contains(view, "alpha") || !strings.Contains(view, "●") {
 		t.Errorf("keys view missing loaded key/badge:\n%s", view)
 	}
 }
@@ -536,7 +536,7 @@ func TestKeyPickerAttachDetach(t *testing.T) {
 		t.Fatalf("expected modeKeyPicker, got %d", m.mode)
 	}
 	// disk keys sorted: id_a (attached), id_b (not). Cursor 0 = id_a -> detach.
-	if !strings.Contains(m.View(), "✓") {
+	if !strings.Contains(m.View(), "●") {
 		t.Error("picker should mark attached key")
 	}
 	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -767,6 +767,32 @@ func TestAutoLoadSkipsWhenAlreadyLoaded(t *testing.T) {
 	}
 	if !m.autoLoaded {
 		t.Error("autoLoaded should still be marked to avoid retrying")
+	}
+}
+
+func TestKeysShowAssociatedHosts(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"id_a": {ID: "id_a", Name: "id_a", ExistsOnDisk: true},
+			"id_b": {ID: "id_b", Name: "id_b", ExistsOnDisk: true},
+		},
+		Hosts: map[config.HostID]config.Host{
+			"prod": {ID: "prod", Name: "prod", Identities: []config.IdentityID{"id_a"}},
+			"web":  {ID: "web", Name: "web", Identities: []config.IdentityID{"id_a"}},
+		},
+	}
+	m := New(&fakeService{model: snap})
+	m = feed(m, refreshedMsg{model: snap})
+
+	view := m.View()
+	// id_a is used by prod and web; both should appear on the keys pane.
+	if !strings.Contains(view, "prod") || !strings.Contains(view, "web") {
+		t.Errorf("keys pane should list hosts using each key:\n%s", view)
+	}
+	// reverse map sanity
+	used := m.hostsByKey()
+	if len(used["id_a"]) != 2 || len(used["id_b"]) != 0 {
+		t.Errorf("hostsByKey wrong: %v", used)
 	}
 }
 

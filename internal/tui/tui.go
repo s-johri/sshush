@@ -1003,73 +1003,115 @@ func (m Model) rowCountFor(p pane) int {
 // --- styles (basic; polish pass is a later milestone) ---
 
 var (
-	tabActive   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-	tabInactive = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	rowActive   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("159"))
-	loadedBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	colPrimary = lipgloss.Color("212") // pink — accents, active tab
+	colAccent  = lipgloss.Color("159") // light cyan — selection text
+	colGreen   = lipgloss.Color("42")  // loaded badge
+	colDim     = lipgloss.Color("244") // muted text
+	colErr     = lipgloss.Color("203") // errors / destructive
+	colGold    = lipgloss.Color("220") // default-key star
+	colBorder  = lipgloss.Color("240") // box borders
+	colSelBg   = lipgloss.Color("236") // selected-row background
+
+	appTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(colPrimary)
+	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(colPrimary)
+	tabSelected   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(colPrimary).Padding(0, 1)
+	tabUnselected = lipgloss.NewStyle().Foreground(colDim).Padding(0, 1)
+	headerStyle   = lipgloss.NewStyle().Foreground(colDim).Underline(true)
+	selectedRow   = lipgloss.NewStyle().Bold(true).Foreground(colAccent).Background(colSelBg)
+	loadedBadge   = lipgloss.NewStyle().Foreground(colGreen)
+	dimStyle      = lipgloss.NewStyle().Foreground(colDim)
+	errStyle      = lipgloss.NewStyle().Bold(true).Foreground(colErr)
+	starStyle     = lipgloss.NewStyle().Foreground(colGold)
+	keyCap        = lipgloss.NewStyle().Bold(true).Foreground(colGold)
+	statusStyle   = lipgloss.NewStyle().Foreground(colAccent)
+	boxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colBorder).Padding(0, 1)
+	helpKey       = lipgloss.NewStyle().Bold(true).Foreground(colAccent)
+	helpLabel     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("245"))
+	hostTagStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("109")) // muted teal — hosts using a key
 )
+
+// tabActive is kept as the overlay/title accent style for readability.
+var tabActive = titleStyle
 
 // View renders the current pane or an active overlay.
 func (m Model) View() string {
 	switch m.mode {
 	case modeNewKey:
-		return m.viewNewKey()
+		return m.card(m.viewNewKey())
 	case modeEdit:
-		return m.viewEdit()
+		return m.card(m.viewEdit())
 	case modeConfirm, modeConfirmDelete:
-		return m.viewConfirm()
+		return m.card(m.viewConfirm())
 	case modeNewHost:
 		step := hostSteps[m.hostStep]
 		title := fmt.Sprintf("New host (%d/%d)", m.hostStep+1, len(hostSteps))
-		return m.viewPrompt(title, step.field+" — "+step.hint)
+		return m.card(m.viewPrompt(title, step.field+" — "+step.hint))
 	case modeNewHostOptKey:
-		return m.viewPrompt("New host: add option",
-			"option name (e.g. ForwardAgent) — enter blank to finish")
+		return m.card(m.viewPrompt("New host: add option",
+			"option name (e.g. ForwardAgent) — enter blank to finish"))
 	case modeNewHostOptVal:
-		return m.viewPrompt("New host: add option", m.draftOptKey+" value")
+		return m.card(m.viewPrompt("New host: add option", m.draftOptKey+" value"))
 	case modeNewKeyGen:
-		return m.viewPrompt("Generate key", "file name (e.g. id_ed25519) — ed25519, may prompt passphrase")
+		return m.card(m.viewPrompt("Generate key", "file name (e.g. id_ed25519) — ed25519, may prompt passphrase"))
 	case modeConfirmDelHost:
-		return m.viewDeleteConfirm(false)
+		return m.card(m.viewDeleteConfirm(false))
 	case modeConfirmDelKey:
-		return m.viewDeleteConfirm(true)
+		return m.card(m.viewDeleteConfirm(true))
 	case modeKeyPicker:
-		return m.viewPicker()
+		return m.card(m.viewPicker())
 	}
 
-	var b strings.Builder
+	header := appTitleStyle.Render("sshush") + "   " + m.renderTabs()
 
-	keysTab, hostsTab := "Keys", "Hosts"
-	if m.active == paneKeys {
-		b.WriteString(tabActive.Render("[ "+keysTab+" ]") + " " + tabInactive.Render(hostsTab))
-	} else {
-		b.WriteString(tabInactive.Render(keysTab) + " " + tabActive.Render("[ "+hostsTab+" ]"))
-	}
-	b.WriteString("\n\n")
-
+	var body string
 	switch {
 	case m.loading:
-		b.WriteString(dimStyle.Render("  loading…\n"))
+		body = dimStyle.Render("loading…")
 	case m.err != nil:
-		b.WriteString(errStyle.Render("  error: "+m.err.Error()) + "\n")
+		body = errStyle.Render("error: " + m.err.Error())
 	case m.active == paneKeys:
-		b.WriteString(m.viewKeys())
+		body = m.viewKeys()
 	default:
-		b.WriteString(m.viewHosts())
+		body = m.viewHosts()
 	}
 
-	b.WriteString("\n")
+	var f strings.Builder
+	f.WriteString(header + "\n")
+	f.WriteString(m.box(body) + "\n")
 	if m.status != "" {
-		b.WriteString("  " + m.status + "\n")
+		f.WriteString(statusStyle.Render("  "+m.status) + "\n")
 	}
-	b.WriteString(dimStyle.Render("  " + m.helpLine()))
+	f.WriteString(m.renderHelp() + "\n")
 	if m.srcFile != "" {
-		b.WriteString(dimStyle.Render("   " + m.srcFile))
+		f.WriteString(dimStyle.Render("  "+m.srcFile) + "\n")
 	}
-	b.WriteString("\n")
-	return b.String()
+	return f.String()
+}
+
+// renderTabs draws the Keys/Hosts tab bar with the active tab highlighted.
+func (m Model) renderTabs() string {
+	keys, hosts := tabUnselected.Render("Keys"), tabUnselected.Render("Hosts")
+	if m.active == paneKeys {
+		keys = tabSelected.Render("Keys")
+	} else {
+		hosts = tabSelected.Render("Hosts")
+	}
+	return keys + " " + hosts
+}
+
+// box wraps pane content in a rounded border, sized to the terminal width when
+// known.
+func (m Model) box(content string) string {
+	s := boxStyle
+	if m.width > 4 {
+		s = s.Width(m.width - 2)
+	}
+	return s.Render(strings.TrimRight(content, "\n"))
+}
+
+// card wraps an overlay in a rounded border, separated from the top edge.
+func (m Model) card(content string) string {
+	return "\n" + boxStyle.Render(strings.TrimRight(content, "\n")) + "\n"
 }
 
 func (m Model) viewNewKey() string {
@@ -1090,15 +1132,16 @@ func (m Model) viewPicker() string {
 	var b strings.Builder
 	b.WriteString(tabActive.Render("Keys for host: "+string(m.pendingHost)) + "\n\n")
 	for i, id := range disk {
-		mark := dimStyle.Render("–")
-		if hostHasIdentity(host, id.ID) {
-			mark = loadedBadge.Render("✓")
+		attached := hostHasIdentity(host, id.ID)
+		glyph := glyphUnloaded
+		glyphStyle := dimStyle
+		if attached {
+			glyph, glyphStyle = glyphLoaded, loadedBadge
 		}
-		line := fmt.Sprintf("%s %s", mark, id.Name)
 		if i == m.pickerCursor {
-			b.WriteString(rowActive.Render("▸ "+line) + "\n")
+			b.WriteString(selectedRow.Render("▸ "+glyph+" "+id.Name) + "\n")
 		} else {
-			b.WriteString("  " + line + "\n")
+			b.WriteString("  " + glyphStyle.Render(glyph) + " " + id.Name + "\n")
 		}
 	}
 	b.WriteString("\n")
@@ -1133,7 +1176,7 @@ func (m Model) viewDeleteConfirm(key bool) string {
 		}
 		b.WriteString(dimStyle.Render("  (a .bak backup of the config file is written first)") + "\n\n")
 	}
-	b.WriteString("  " + rowActive.Render("y") + " delete    " + rowActive.Render("n") + " cancel")
+	b.WriteString("  " + keyCap.Render("y") + " delete    " + keyCap.Render("n") + " cancel")
 	b.WriteString("\n")
 	return b.String()
 }
@@ -1177,52 +1220,116 @@ func (m Model) viewConfirm() string {
 		b.WriteString(errStyle.Render("  this is a wildcard block — affects every matching connection") + "\n")
 	}
 	b.WriteString(dimStyle.Render("  (a .bak backup of the config file is written first)") + "\n\n")
-	b.WriteString("  " + rowActive.Render("y") + " write    " + rowActive.Render("n") + " cancel")
+	b.WriteString("  " + keyCap.Render("y") + " write    " + keyCap.Render("n") + " cancel")
 	b.WriteString("\n")
 	return b.String()
 }
 
 // helpLine is the footer hint, tailored to the active pane.
-func (m Model) helpLine() string {
-	common := "tab switch · r refresh · q quit"
-	if m.active == paneKeys {
-		return "enter load/unload · s set/unset default · U unload all · n new key · d delete key · " + common
-	}
-	return "e edit · i keys · n new host · d delete host · " + common
+type helpItem struct{ key, desc string }
+type helpGroup struct {
+	label string
+	items []helpItem
 }
+
+// helpGroups returns the keybinding hints for the active pane, grouped into
+// labeled categories for a less cluttered footer.
+func (m Model) helpGroups() []helpGroup {
+	view := helpGroup{"view", []helpItem{{"tab", "panes"}, {"r", "refresh"}, {"q", "quit"}}}
+	if m.active == paneKeys {
+		return []helpGroup{
+			{"agent", []helpItem{{"↵", "load/unload"}, {"U", "unload all"}, {"s", "default"}}},
+			{"keys", []helpItem{{"n", "new"}, {"d", "delete"}}},
+			view,
+		}
+	}
+	return []helpGroup{
+		{"hosts", []helpItem{{"e", "edit"}, {"i", "keys"}, {"n", "new"}, {"d", "delete"}}},
+		view,
+	}
+}
+
+// renderHelp lays the grouped hints out one category per line: a padded label,
+// then "key desc" pairs.
+func (m Model) renderHelp() string {
+	sep := dimStyle.Render(" · ")
+	var lines []string
+	for _, g := range m.helpGroups() {
+		parts := make([]string, len(g.items))
+		for i, it := range g.items {
+			parts[i] = helpKey.Render(it.key) + " " + dimStyle.Render(it.desc)
+		}
+		label := helpLabel.Render(fmt.Sprintf("%-6s", g.label))
+		lines = append(lines, "  "+label+strings.Join(parts, sep))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// loadGlyph is a filled circle for keys present in the agent, a hollow one for
+// keys that are not.
+const (
+	glyphLoaded   = "●"
+	glyphUnloaded = "○"
+)
 
 func (m Model) viewKeys() string {
 	if len(m.ids) == 0 {
-		return dimStyle.Render("  no keys found\n")
+		return dimStyle.Render("no keys found")
 	}
 	var defaultID config.IdentityID
 	if m.settings != nil {
 		defaultID = m.settings.DefaultIdentity()
 	}
-	var b strings.Builder
+	usedBy := m.hostsByKey()
+	lines := []string{headerStyle.Render(fmt.Sprintf("  %1s %-20s %-11s %s", " ", "name", "algo", "comment / hosts"))}
 	for i, id := range m.ids {
-		badge := dimStyle.Render("–")
+		glyph := glyphUnloaded
+		glyphStyle := dimStyle
 		if id.LoadedInAgent {
-			badge = loadedBadge.Render("✓")
+			glyph, glyphStyle = glyphLoaded, loadedBadge
 		}
 		algo := string(id.Algorithm)
 		if !id.ExistsOnDisk {
 			algo = "agent-only"
 		}
-		line := fmt.Sprintf("%s %-20s %-10s %s", badge, id.Name, algo, dimStyle.Render(id.Comment))
-		if id.ID == defaultID {
-			line += tabActive.Render("  ★ default")
+		nameCol := fmt.Sprintf("%-20s", id.Name)
+		algoCol := fmt.Sprintf("%-11s", algo)
+
+		// plain: one uncolored string, so the selected-row background fills it.
+		plain := fmt.Sprintf("%s %s %s %s", glyph, nameCol, algoCol, id.Comment)
+		// styled: per-segment colors for the non-selected rows.
+		styled := glyphStyle.Render(glyph) + " " + nameCol + " " + algoCol + " " + dimStyle.Render(id.Comment)
+		if hosts := usedBy[id.ID]; len(hosts) > 0 {
+			tag := "↪ " + strings.Join(hosts, ", ")
+			plain += "  " + tag
+			styled += "  " + hostTagStyle.Render(tag)
 		}
-		b.WriteString(m.renderRow(paneKeys, i, line))
+		if id.ID == defaultID {
+			plain += "  ★ default"
+			styled += "  " + starStyle.Render("★ default")
+		}
+		lines = append(lines, m.listRow(paneKeys, i, plain, styled))
 	}
-	return b.String()
+	return strings.Join(lines, "\n")
+}
+
+// hostsByKey maps each identity to the names of hosts that reference it via
+// IdentityFile. Host order follows m.hosts (already sorted), keeping it stable.
+func (m Model) hostsByKey() map[config.IdentityID][]string {
+	used := map[config.IdentityID][]string{}
+	for _, h := range m.hosts {
+		for _, id := range h.Identities {
+			used[id] = append(used[id], h.Name)
+		}
+	}
+	return used
 }
 
 func (m Model) viewHosts() string {
 	if len(m.hosts) == 0 {
-		return dimStyle.Render("  no hosts found\n")
+		return dimStyle.Render("no hosts found")
 	}
-	var b strings.Builder
+	lines := []string{headerStyle.Render(fmt.Sprintf("  %-20s %s", "host", "destination"))}
 	for i, h := range m.hosts {
 		dest := h.Hostname
 		if h.User != "" {
@@ -1241,17 +1348,24 @@ func (m Model) viewHosts() string {
 			}
 			dest = fmt.Sprintf("%s  [%d %s]", dest, n, unit)
 		}
-		line := fmt.Sprintf("%-20s %s", h.Name, dimStyle.Render(dest))
-		b.WriteString(m.renderRow(paneHosts, i, line))
+		nameCol := fmt.Sprintf("%-20s", h.Name)
+		plain := nameCol + " " + dest
+		styled := nameCol + " " + dimStyle.Render(dest)
+		lines = append(lines, m.listRow(paneHosts, i, plain, styled))
 	}
-	return b.String()
+	return strings.Join(lines, "\n")
 }
 
-// renderRow draws one list row, marking the active pane's cursor row.
-func (m Model) renderRow(p pane, i int, content string) string {
-	cursor := "  "
+// listRow renders one list row (no trailing newline). The active pane's cursor
+// row uses the plain text with a full-width highlight (embedding pre-styled
+// spans would reset the background mid-row); other rows use the styled text.
+func (m Model) listRow(p pane, i int, plain, styled string) string {
 	if p == m.active && i == m.cursor[p] {
-		return rowActive.Render("▸ "+content) + "\n"
+		s := selectedRow
+		if m.width > 4 {
+			s = s.Width(m.width - 4) // inner width: minus border + padding
+		}
+		return s.Render("▸ " + plain)
 	}
-	return cursor + content + "\n"
+	return "  " + styled
 }
