@@ -71,6 +71,8 @@ Prebuilt release binaries are planned (see ARCHITECTURE.md, milestone 15).
 sshush              # launch the interactive TUI
 sshush load-default # load the configured default identity into the agent
 sshush shell-init   # print a shell snippet to load the default on shell start
+sshush update       # update to the latest release
+sshush version      # print the installed version
 sshush help         # show help
 ```
 
