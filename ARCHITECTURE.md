@@ -102,6 +102,7 @@ TUI holds a snapshot. Mutations dispatched as `tea.Cmd` (async goroutine) → ca
 | 13 | lipgloss styling pass: bordered panes, grouped help, key↔host links | none |
 | 14 | README + installation instructions | none (docs) |
 | 15 | Self-updating binary via GitHub releases | medium |
+| 16 | Configurable SSH dir / config path (override `~/.ssh` defaults) | low |
 
 ### Milestone 14 detail
 
@@ -124,6 +125,26 @@ Ship versioned releases and let the binary update itself:
   binary in place (e.g. `minio/selfupdate` or `creativeprojects/go-selfupdate`).
   Risk: replacing the executable + signature/checksum verification — gate clearly,
   no auto-update without consent.
+
+### Milestone 16 detail
+
+Let users point sshush at a non-default SSH directory / config file. The
+constructors already accept overrides (`keys.New(dir)`, `sshconfig.New(path)`,
+`agent.New(sock)`); today `cmd/sshush` always passes `""` (defaults), so nothing
+is user-settable except the agent socket via `$SSH_AUTH_SOCK`.
+
+- **Source of truth**: add `ssh_dir` and `config_path` to
+  `~/.config/sshush/config.toml` (appconfig). Optionally also accept
+  `SSHUSH_SSH_DIR` / `SSHUSH_CONFIG` env vars or CLI flags; precedence
+  flag > env > config file > default.
+- **Wire-through**: `cmd/sshush` reads them and passes to `keys.New` /
+  `sshconfig.New`; the TUI's hot-reload `rewatch` must watch the configured dir
+  instead of hardcoded `~/.ssh`.
+- **Include resolution fix**: `resolveInclude` currently resolves relative
+  `Include` globs and `~` against `~/.ssh`; make it honor the configured SSH
+  directory so a relocated config's includes still resolve. Likewise the
+  `IdentityFile`→`IdentityID` basename mapping is dir-agnostic and is fine.
+  Risk: read paths only; no new destructive surface.
 
 ### Milestone 9 detail
 
