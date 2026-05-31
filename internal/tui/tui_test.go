@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/s-johri/sshush/pkg/clip"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
@@ -925,21 +926,29 @@ func TestPageAndEndKeys(t *testing.T) {
 // height (which would scroll the header off the top), with and without a status.
 func TestLayoutFitsHeight(t *testing.T) {
 	snap := manyKeysSnap(100)
-	for _, h := range []int{10, 18, 24, 40} {
-		m := New(&fakeService{model: snap})
-		m = feed(m, tea.WindowSizeMsg{Width: 80, Height: h})
-		m = feed(m, refreshedMsg{model: snap})
-		for _, withStatus := range []bool{false, true} {
-			if withStatus {
-				m = feed(m, agentDoneMsg{verb: "a status message"})
-				m.loading = false
-			}
-			lines := strings.Count(m.View(), "\n") + 1
-			if lines > h {
-				t.Errorf("height=%d status=%v: view has %d lines (> height)", h, withStatus, lines)
-			}
-			if !strings.Contains(m.View(), "Keys") {
-				t.Errorf("height=%d status=%v: header/tabs missing", h, withStatus)
+	for _, w := range []int{80, 120} { // narrow (single) and wide (two-column)
+		for _, h := range []int{10, 18, 24, 40} {
+			m := New(&fakeService{model: snap})
+			m = feed(m, tea.WindowSizeMsg{Width: w, Height: h})
+			m = feed(m, refreshedMsg{model: snap})
+			for _, withStatus := range []bool{false, true} {
+				if withStatus {
+					m = feed(m, agentDoneMsg{verb: "a status message"})
+					m.loading = false
+				}
+				v := m.View()
+				if lines := strings.Count(v, "\n") + 1; lines > h {
+					t.Errorf("w=%d h=%d status=%v: view has %d lines (> height)", w, h, withStatus, lines)
+				}
+				if !strings.Contains(v, "Keys") {
+					t.Errorf("w=%d h=%d: header/tabs missing", w, h)
+				}
+				for _, line := range strings.Split(v, "\n") {
+					if lw := lipgloss.Width(line); lw > w {
+						t.Errorf("w=%d: line width %d exceeds width", w, lw)
+						break
+					}
+				}
 			}
 		}
 	}
@@ -1379,6 +1388,62 @@ func TestHelpFitsAndScrolls(t *testing.T) {
 	m = feed(m, key("x"))
 	if m.mode != modeNormal {
 		t.Error("non-scroll key should close help")
+	}
+}
+
+func TestTwoColumnWhenWide(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"keyonly": {ID: "keyonly", Name: "keyonly", ExistsOnDisk: true},
+		},
+		Hosts: map[config.HostID]config.Host{
+			"hostonly": {ID: "hostonly", Name: "hostonly", Hostname: "h.example"},
+		},
+	}
+	// Wide: both panes visible at once.
+	m := New(&fakeService{model: snap})
+	m = feed(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = feed(m, refreshedMsg{model: snap})
+	if !m.wide() {
+		t.Fatal("120 cols should be wide")
+	}
+	v := m.View()
+	if !strings.Contains(v, "keyonly") || !strings.Contains(v, "hostonly") {
+		t.Errorf("wide layout should show both panes:\n%s", v)
+	}
+
+	// Narrow: only the active pane (keys) — host content hidden.
+	m = New(&fakeService{model: snap})
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = feed(m, refreshedMsg{model: snap})
+	if m.wide() {
+		t.Fatal("80 cols should be narrow")
+	}
+	v = m.View()
+	if !strings.Contains(v, "keyonly") || strings.Contains(v, "hostonly") {
+		t.Errorf("narrow layout should show only the active pane:\n%s", v)
+	}
+}
+
+func TestRowTruncationInColumn(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"k": {ID: "k", Name: "k", ExistsOnDisk: true,
+				Comment: "this is a very long comment that will overflow a narrow column for sure"},
+		},
+	}
+	m := New(&fakeService{model: snap})
+	m = feed(m, tea.WindowSizeMsg{Width: 100, Height: 20}) // wide → ~46-col columns
+	m = feed(m, refreshedMsg{model: snap})
+	v := m.View()
+	if !strings.Contains(v, "…") {
+		t.Errorf("long row should be truncated with an ellipsis:\n%s", v)
+	}
+	// No rendered line should exceed the terminal width.
+	for _, line := range strings.Split(v, "\n") {
+		if w := lipgloss.Width(line); w > 100 {
+			t.Errorf("line width %d exceeds 100: %q", w, line)
+		}
 	}
 }
 

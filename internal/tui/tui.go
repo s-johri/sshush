@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	// agent is imported only to build the ssh-add command handed to
 	// tea.ExecProcess, which yields the terminal so a passphrase prompt works.
 	// All other IO goes through service.Service.
@@ -1794,18 +1795,18 @@ func (m Model) View() string {
 	var body string
 	switch {
 	case m.loading:
-		body = dimStyle.Render("loading…")
+		body = m.box(dimStyle.Render("loading…"))
 	case m.err != nil:
-		body = errStyle.Render("error: " + m.err.Error())
-	case m.active == paneKeys:
-		body = m.viewKeys()
+		body = m.box(errStyle.Render("error: " + m.err.Error()))
+	case m.wide():
+		body = m.twoColumnBody() // both panes side by side
 	default:
-		body = m.viewHosts()
+		body = m.box(strings.Join(m.paneLines(m.active, m.boxInner()), "\n"))
 	}
 
 	var f strings.Builder
 	f.WriteString(header + "\n")
-	f.WriteString(m.box(body) + "\n")
+	f.WriteString(body + "\n")
 	if m.filtering {
 		f.WriteString("  " + helpKey.Render("/") + " " + m.filterInput.View() + "\n")
 	} else if q := m.filterQuery(); q != "" {
@@ -1835,6 +1836,19 @@ func (m Model) renderTabs() string {
 	return keys + " " + hosts
 }
 
+// wide reports whether the terminal is wide enough to show both panes at once.
+func (m Model) wide() bool { return m.width >= 100 }
+
+// boxInner is the content width inside the single full-width pane box. The box
+// uses Width(m.width-2) (lipgloss Width includes padding), so the text area is
+// that minus the 2-col padding.
+func (m Model) boxInner() int {
+	if m.width <= 6 {
+		return 0 // unknown/tiny: callers treat <=0 as "don't truncate"
+	}
+	return m.width - 4
+}
+
 // box wraps pane content in a rounded border, sized to the terminal width when
 // known.
 func (m Model) box(content string) string {
@@ -1843,6 +1857,46 @@ func (m Model) box(content string) string {
 		s = s.Width(m.width - 2)
 	}
 	return s.Render(strings.TrimRight(content, "\n"))
+}
+
+// twoColumnBody renders Keys and Hosts side by side, each in its own box (the
+// active pane's border is highlighted). Columns are padded to equal height.
+func (m Model) twoColumnBody() string {
+	// Budget: total minus a 1-col gap and each box's 2-col border.
+	avail := m.width - 5
+	leftOuter := avail / 2
+	rightOuter := avail - leftOuter
+	lk := m.paneLines(paneKeys, leftOuter-2) // -2: lipgloss Width includes padding
+	lh := m.paneLines(paneHosts, rightOuter-2)
+	for len(lk) < len(lh) {
+		lk = append(lk, "")
+	}
+	for len(lh) < len(lk) {
+		lh = append(lh, "")
+	}
+	left := m.paneBox(paneKeys, leftOuter, strings.Join(lk, "\n"))
+	right := m.paneBox(paneHosts, rightOuter, strings.Join(lh, "\n"))
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
+}
+
+// paneBox boxes one pane's content, highlighting the border when it is active.
+func (m Model) paneBox(p pane, outerW int, content string) string {
+	s := boxStyle.Width(outerW)
+	if p == m.active {
+		s = s.BorderForeground(colPrimary)
+	} else {
+		s = s.BorderForeground(colBorder)
+	}
+	return s.Render(content)
+}
+
+// fit truncates a (possibly ANSI-styled) string to width w with an ellipsis.
+// w<=0 means width is unknown — leave it untouched.
+func fit(s string, w int) string {
+	if w <= 0 {
+		return s
+	}
+	return ansi.Truncate(s, w, "…")
 }
 
 // card wraps an overlay in a rounded border, separated from the top edge.
@@ -2269,16 +2323,25 @@ const (
 	glyphUnloaded = "○"
 )
 
-func (m Model) viewKeys() string {
+// paneLines renders a pane's content (header, windowed rows, scroll indicator)
+// as display lines, with rows truncated to innerWidth.
+func (m Model) paneLines(p pane, w int) []string {
+	if p == paneKeys {
+		return m.keysLines(w)
+	}
+	return m.hostsLines(w)
+}
+
+func (m Model) keysLines(w int) []string {
 	vis := m.visibleIDs()
 	if len(m.ids) == 0 {
-		return dimStyle.Render("no keys found")
+		return []string{dimStyle.Render("no keys found")}
 	}
 	if len(vis) == 0 {
-		return dimStyle.Render("no keys match " + strconv.Quote(m.filterQuery()))
+		return []string{dimStyle.Render("no keys match " + strconv.Quote(m.filterQuery()))}
 	}
 	usedBy := m.hostsByKey()
-	lines := []string{headerStyle.Render(fmt.Sprintf("  %1s %-20s %-11s %s", " ", "name", "algo", "comment / hosts"))}
+	lines := []string{fit(headerStyle.Render(fmt.Sprintf("  %1s %-20s %-11s %s", " ", "name", "algo", "comment / hosts")), w)}
 	start, end := m.window(paneKeys)
 	for i := start; i < end; i++ {
 		id := vis[i]
@@ -2307,12 +2370,12 @@ func (m Model) viewKeys() string {
 			plain += "  ★ default"
 			styled += "  " + starStyle.Render("★ default")
 		}
-		lines = append(lines, m.listRow(paneKeys, i, plain, styled))
+		lines = append(lines, m.listRow(paneKeys, i, plain, styled, w))
 	}
 	if ind := m.scrollIndicator(paneKeys); ind != "" {
-		lines = append(lines, ind)
+		lines = append(lines, fit(ind, w))
 	}
-	return strings.Join(lines, "\n")
+	return lines
 }
 
 // hostsByKey maps each identity to the names of hosts that reference it via
@@ -2327,15 +2390,15 @@ func (m Model) hostsByKey() map[config.IdentityID][]string {
 	return used
 }
 
-func (m Model) viewHosts() string {
+func (m Model) hostsLines(w int) []string {
 	vis := m.visibleHosts()
 	if len(m.hosts) == 0 {
-		return dimStyle.Render("no hosts found")
+		return []string{dimStyle.Render("no hosts found")}
 	}
 	if len(vis) == 0 {
-		return dimStyle.Render("no hosts match " + strconv.Quote(m.filterQuery()))
+		return []string{dimStyle.Render("no hosts match " + strconv.Quote(m.filterQuery()))}
 	}
-	lines := []string{headerStyle.Render(fmt.Sprintf("  %-20s %s", "host", "destination"))}
+	lines := []string{fit(headerStyle.Render(fmt.Sprintf("  %-20s %s", "host", "destination")), w)}
 	start, end := m.window(paneHosts)
 	for i := start; i < end; i++ {
 		h := vis[i]
@@ -2359,24 +2422,29 @@ func (m Model) viewHosts() string {
 		nameCol := fmt.Sprintf("%-20s", h.Name)
 		plain := nameCol + " " + dest
 		styled := nameCol + " " + dimStyle.Render(dest)
-		lines = append(lines, m.listRow(paneHosts, i, plain, styled))
+		lines = append(lines, m.listRow(paneHosts, i, plain, styled, w))
 	}
 	if ind := m.scrollIndicator(paneHosts); ind != "" {
-		lines = append(lines, ind)
+		lines = append(lines, fit(ind, w))
 	}
-	return strings.Join(lines, "\n")
+	return lines
 }
 
-// listRow renders one list row (no trailing newline). The active pane's cursor
+// listRow renders one list row, truncated to width w. The active pane's cursor
 // row uses the plain text with a full-width highlight (embedding pre-styled
 // spans would reset the background mid-row); other rows use the styled text.
-func (m Model) listRow(p pane, i int, plain, styled string) string {
+// The inactive pane's cursor still gets a dim marker so its position is visible.
+func (m Model) listRow(p pane, i int, plain, styled string, w int) string {
 	if p == m.active && i == m.cursor[p] {
 		s := selectedRow
-		if m.width > 4 {
-			s = s.Width(m.width - 4) // inner width: minus border + padding
+		if w > 0 {
+			s = s.Width(w)
 		}
-		return s.Render("▸ " + plain)
+		return s.Render(fit("▸ "+plain, w))
 	}
-	return "  " + styled
+	prefix := "  "
+	if i == m.cursor[p] {
+		prefix = dimStyle.Render("▸ ") // inactive pane cursor
+	}
+	return prefix + fit(styled, w-2)
 }
