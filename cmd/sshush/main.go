@@ -7,7 +7,10 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	selfupdate "github.com/creativeprojects/go-selfupdate"
+	"github.com/mattn/go-isatty"
+	"github.com/muesli/termenv"
 	"github.com/s-johri/sshush/internal/tui"
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/appconfig"
@@ -102,6 +105,16 @@ func newService(sshDir, configPath string) service.Service {
 }
 
 func runTUI() {
+	// The interactive UI needs a real terminal; subcommands above don't.
+	if !isatty.IsTerminal(os.Stdout.Fd()) {
+		fmt.Fprintln(os.Stderr, "sshush: a terminal is required for the interactive UI (try `sshush help`)")
+		os.Exit(1)
+	}
+	// Honor NO_COLOR explicitly (in addition to termenv's own detection).
+	if os.Getenv("NO_COLOR") != "" {
+		lipgloss.SetColorProfile(termenv.Ascii)
+	}
+
 	// App settings (default identity, SSH dir/config overrides). Best-effort.
 	settings := appconfig.New("")
 	_, _ = settings.Load()

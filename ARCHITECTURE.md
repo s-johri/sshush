@@ -216,6 +216,7 @@ the existing windows above (not a separate phase).
 |---|---------|------|--------|
 | 44 | Loud / "make some noise" mode | arcade-style SFX (Pokémon/Mario energy) on load/switch/error/connect. Independent on/off toggle, but **only active when motion ≠ off**; intensity rides alongside motion. Audio via a small embedded-asset player (e.g. `beep`/`oto`); fully optional, silent by default | v1.5.0 |
 | 45 | Stripped build + `sshush update --stripped` | a build tag that excludes the sound assets (smaller binary, Loud mode disabled); `update --stripped` fetches that variant. goreleaser produces both | v1.5.0 |
+| 46 | Slim the binary: replace the self-update dependency | **measured: `go-selfupdate` adds ~3.7 MB (9.0 → 5.3 MB, ~41%)** by pulling in three forge SDKs (go-github/v74 + GitLab client + Gitea SDK). sshush only ships to GitHub — swap to `minio/selfupdate` + a single stdlib `GET api.github.com/.../releases/latest`. Keeps `sshush update`; zips drop ~3.4 → ~2 MB. (`-s -w` already applied; UPX cut another ~60% but breaks macOS Gatekeeper, so linux/windows only) | TBD |
 
 ### Bigger bets (separate track)
 

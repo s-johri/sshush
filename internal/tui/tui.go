@@ -139,6 +139,7 @@ const (
 	modePerms                   // reviewing/fixing permission issues
 	modeKnownHosts              // browsing/removing known_hosts entries
 	modeCopy                    // choosing what to copy to the clipboard
+	modeHelp                    // full keybinding reference overlay
 )
 
 // coreFields are always offered for editing; a host's existing option keys are
@@ -227,6 +228,9 @@ type Model struct {
 
 	// clipboard copy menu
 	copyOpts []copyOption
+
+	// help overlay scroll offset (when it's taller than the terminal)
+	helpScroll int
 
 	// hot reload
 	watcher         fileWatcher
@@ -550,6 +554,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleKnownHostsKey(msg)
 	case modeCopy:
 		return m.handleCopyKey(msg)
+	case modeHelp:
+		return m.handleHelpKey(msg)
 	}
 
 	// The filter input (when focused) captures keys before pane navigation.
@@ -627,6 +633,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.beginKnownHosts()
 	case "c":
 		return m.beginCopy()
+	case "?":
+		m.mode = modeHelp
+		m.helpScroll = 0
+		return m, nil
 	case "r":
 		m.loading = true
 		return m, m.refresh
@@ -1775,6 +1785,8 @@ func (m Model) View() string {
 		return m.card(m.viewKnownHosts())
 	case modeCopy:
 		return m.card(m.viewCopy())
+	case modeHelp:
+		return m.card(m.viewHelp())
 	}
 
 	header := appTitleStyle.Render("sshush") + "   " + m.renderTabs()
@@ -1921,6 +1933,136 @@ func (m Model) viewKeyBits() string {
 	}
 	b.WriteString("\n" + dimStyle.Render("  ↑/↓ move · enter select · esc cancel") + "\n")
 	return b.String()
+}
+
+// helpSection is one titled block of key/description rows in the help overlay.
+type helpSection struct {
+	title string
+	items []helpItem
+}
+
+var helpReference = []helpSection{
+	{"Navigation", []helpItem{
+		{"↑/↓ k/j", "move"},
+		{"PgUp/PgDn", "page (also ctrl+u/ctrl+d)"},
+		{"g / G", "top / bottom"},
+		{"tab ←/→", "switch panes (also h/l)"},
+		{"/", "filter the active pane (esc clears)"},
+		{"r", "refresh"},
+		{"? ", "this help"},
+		{"q / ctrl+c", "quit"},
+	}},
+	{"Keys pane", []helpItem{
+		{"enter/space", "load / unload key in the agent"},
+		{"c", "copy public key / fingerprint"},
+		{"s", "toggle key in/out of startup defaults"},
+		{"U", "unload all keys from the agent"},
+		{"n", "generate a new key"},
+		{"d", "delete the key files (irreversible)"},
+	}},
+	{"Hosts pane", []helpItem{
+		{"enter", "ssh into the host"},
+		{"c", "copy ssh command"},
+		{"e", "edit host directives"},
+		{"i", "attach / detach keys"},
+		{"n", "add a host (wizard)"},
+		{"d", "delete the host"},
+	}},
+	{"Tools", []helpItem{
+		{"P", "audit & fix file permissions"},
+		{"K", "browse / remove known_hosts entries"},
+	}},
+	{"In overlays", []helpItem{
+		{"esc", "cancel / close"},
+		{"y / n", "confirm / decline a write"},
+		{"tab", "next field (edit) / next algorithm (new key)"},
+		{"ctrl+o", "add option (host edit)"},
+		{"ctrl+d", "delete directive (host edit)"},
+	}},
+}
+
+// sectionLines renders a help section to display lines (title + rows + blank).
+func sectionLines(sec helpSection) []string {
+	ls := []string{helpLabel.Render(sec.title)}
+	for _, it := range sec.items {
+		ls = append(ls, "  "+helpKey.Render(fmt.Sprintf("%-12s", it.key))+" "+dimStyle.Render(it.desc))
+	}
+	return append(ls, "")
+}
+
+// helpLines builds the single-column reference body.
+func (m Model) helpLines() []string {
+	var out []string
+	for _, s := range helpReference {
+		out = append(out, sectionLines(s)...)
+	}
+	return out
+}
+
+// viewHelp renders the reference, windowed to the terminal height when it would
+// otherwise overflow (scroll with ↑/↓).
+func (m Model) viewHelp() string {
+	lines := m.helpLines()
+
+	// Rows available for the body inside the card: terminal height minus the
+	// card's top/bottom margin (2) + borders (2) + title, blank, and footer (3).
+	cap := len(lines)
+	if m.height > 0 {
+		if c := m.height - 8; c > 1 {
+			cap = c
+		} else {
+			cap = 1
+		}
+	}
+	start := m.helpScroll
+	if start > len(lines)-cap {
+		start = len(lines) - cap
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + cap
+	if end > len(lines) {
+		end = len(lines)
+	}
+
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("sshush — keybindings") + "\n\n")
+	b.WriteString(strings.Join(lines[start:end], "\n"))
+	b.WriteString("\n\n")
+	if start > 0 || end < len(lines) {
+		b.WriteString(dimStyle.Render(fmt.Sprintf("  %d–%d of %d · ↑/↓ scroll · any other key close",
+			start+1, end, len(lines))))
+	} else {
+		b.WriteString(dimStyle.Render("  press any key to close"))
+	}
+	return b.String()
+}
+
+// handleHelpKey scrolls the help overlay; any non-scroll key closes it.
+func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.helpScroll > 0 {
+			m.helpScroll--
+		}
+	case "down", "j":
+		m.helpScroll++ // clamped in viewHelp
+	case "pgup", "ctrl+u":
+		m.helpScroll -= 5
+		if m.helpScroll < 0 {
+			m.helpScroll = 0
+		}
+	case "pgdown", "ctrl+d":
+		m.helpScroll += 5
+	default:
+		m.mode = modeNormal
+		return m, nil
+	}
+	if n := len(m.helpLines()); m.helpScroll > n {
+		m.helpScroll = n // loose upper bound; viewHelp does exact clamping
+	}
+	return m, nil
 }
 
 // viewCopy renders the clipboard copy menu.
@@ -2074,7 +2216,7 @@ type helpGroup struct {
 // helpGroups returns the keybinding hints for the active pane, grouped into
 // labeled categories for a less cluttered footer.
 func (m Model) helpGroups() []helpGroup {
-	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"P", "perms"}, {"K", "known_hosts"}, {"tab", "panes"}, {"r", "refresh"}, {"q", "quit"}}}
+	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"P", "perms"}, {"K", "known_hosts"}, {"?", "help"}, {"tab", "panes"}, {"q", "quit"}}}
 	if m.active == paneKeys {
 		return []helpGroup{
 			{"agent", []helpItem{{"↵", "load/unload"}, {"U", "unload all"}, {"s", "default"}}},

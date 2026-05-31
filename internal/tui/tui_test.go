@@ -1325,6 +1325,63 @@ func TestSshCommand(t *testing.T) {
 	}
 }
 
+func TestHelpOverlay(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	m = feed(m, key("?"))
+	if m.mode != modeHelp {
+		t.Fatalf("? should open help, got mode %d", m.mode)
+	}
+	v := m.View()
+	for _, want := range []string{"keybindings", "Navigation", "Keys pane", "Hosts pane", "known_hosts"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("help missing %q:\n%s", want, v)
+		}
+	}
+	// Any key closes it.
+	m = feed(m, key("x"))
+	if m.mode != modeNormal {
+		t.Errorf("a key should close help, got mode %d", m.mode)
+	}
+}
+
+func TestHelpFitsAndScrolls(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, tea.WindowSizeMsg{Width: 72, Height: 14}) // shorter than the help
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("?"))
+
+	// Rendered output must never exceed the terminal height (no clipping).
+	for _, n := range []int{0, 3, 100} { // top, mid, past-bottom
+		mm := m
+		for i := 0; i < n; i++ {
+			out, _ := mm.Update(tea.KeyMsg{Type: tea.KeyDown})
+			mm = out.(Model)
+		}
+		if lines := strings.Count(mm.View(), "\n") + 1; lines > 14 {
+			t.Errorf("scroll=%d: help is %d lines, exceeds height 14", n, lines)
+		}
+		if !strings.Contains(mm.View(), "scroll") {
+			t.Errorf("scroll=%d: overflowing help should show a scroll hint", n)
+		}
+	}
+
+	// Scrolling down reveals later sections.
+	for i := 0; i < 100; i++ {
+		out, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = out.(Model)
+	}
+	if !strings.Contains(m.View(), "delete directive") {
+		t.Errorf("scrolling to the bottom should reveal the last rows:\n%s", m.View())
+	}
+	// A non-scroll key still closes.
+	m = feed(m, key("x"))
+	if m.mode != modeNormal {
+		t.Error("non-scroll key should close help")
+	}
+}
+
 func TestRefreshErrorShown(t *testing.T) {
 	m := New(&fakeService{})
 	m = feed(m, refreshedMsg{err: errFake{}})
