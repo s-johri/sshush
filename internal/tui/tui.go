@@ -20,6 +20,7 @@ import (
 	// tea.ExecProcess, which yields the terminal so a passphrase prompt works.
 	// All other IO goes through service.Service.
 	"github.com/s-johri/sshush/pkg/agent"
+	"github.com/s-johri/sshush/pkg/clip"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
 	"github.com/s-johri/sshush/pkg/knownhosts"
@@ -61,6 +62,19 @@ type keygenDoneMsg struct{ err error }
 // has ended.
 type connectDoneMsg struct {
 	alias string
+	err   error
+}
+
+// copyOption is one entry in the clipboard copy menu.
+type copyOption struct {
+	key     string // hotkey to pick it
+	label   string
+	content string
+}
+
+// clipDoneMsg reports the outcome of a clipboard write.
+type clipDoneMsg struct {
+	label string
 	err   error
 }
 
@@ -123,6 +137,7 @@ const (
 	modeKeyPicker               // attaching/detaching keys to a host
 	modePerms                   // reviewing/fixing permission issues
 	modeKnownHosts              // browsing/removing known_hosts entries
+	modeCopy                    // choosing what to copy to the clipboard
 )
 
 // coreFields are always offered for editing; a host's existing option keys are
@@ -208,6 +223,9 @@ type Model struct {
 	khCursor  int
 	khScroll  int
 	khConfirm bool // confirming removal of the selected entry
+
+	// clipboard copy menu
+	copyOpts []copyOption
 
 	// hot reload
 	watcher         fileWatcher
@@ -481,6 +499,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		return m, m.refresh
 
+	case clipDoneMsg:
+		if msg.err != nil {
+			m.status = "clipboard unavailable (install xclip/wl-clipboard): " + msg.err.Error()
+		} else {
+			m.status = "copied " + msg.label
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -521,6 +547,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePermsKey(msg)
 	case modeKnownHosts:
 		return m.handleKnownHostsKey(msg)
+	case modeCopy:
+		return m.handleCopyKey(msg)
 	}
 
 	// The filter input (when focused) captures keys before pane navigation.
@@ -596,9 +624,78 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.beginPermsAudit()
 	case "K":
 		return m.beginKnownHosts()
+	case "c":
+		return m.beginCopy()
 	case "r":
 		m.loading = true
 		return m, m.refresh
+	}
+	return m, nil
+}
+
+// sshCommand builds a shareable ssh invocation for a host: explicit when a
+// hostname is known, else `ssh <alias>` (relying on the user's config).
+func sshCommand(h config.Host) string {
+	if h.Hostname == "" {
+		return "ssh " + firstAlias(h.Name)
+	}
+	cmd := "ssh "
+	if h.User != "" {
+		cmd += h.User + "@"
+	}
+	cmd += h.Hostname
+	if h.Port != 0 {
+		cmd += fmt.Sprintf(" -p %d", h.Port)
+	}
+	return cmd
+}
+
+// beginCopy opens the clipboard copy menu with the options for the active pane.
+func (m Model) beginCopy() (tea.Model, tea.Cmd) {
+	var opts []copyOption
+	if m.active == paneKeys {
+		sel, ok := m.selectedKey()
+		if !ok {
+			m.status = "no key selected"
+			return m, nil
+		}
+		if sel.PublicKey != "" {
+			opts = append(opts, copyOption{"p", "public key", sel.PublicKey})
+		}
+		if sel.Fingerprint != "" {
+			opts = append(opts, copyOption{"f", "fingerprint", sel.Fingerprint})
+		}
+	} else {
+		sel, ok := m.selectedHost()
+		if !ok {
+			m.status = "no host selected"
+			return m, nil
+		}
+		opts = append(opts, copyOption{"s", "ssh command", sshCommand(sel)})
+	}
+	if len(opts) == 0 {
+		m.status = "nothing to copy"
+		return m, nil
+	}
+	m.copyOpts = opts
+	m.mode = modeCopy
+	m.status = ""
+	return m, nil
+}
+
+// handleCopyKey picks a copy option by its hotkey and dispatches the copy.
+func (m Model) handleCopyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "c":
+		m.mode = modeNormal
+		return m, nil
+	}
+	for _, o := range m.copyOpts {
+		if msg.String() == o.key {
+			label, content := o.label, o.content
+			m.mode = modeNormal
+			return m, func() tea.Msg { return clipDoneMsg{label: label, err: clip.Write(content)} }
+		}
 	}
 	return m, nil
 }
@@ -1669,6 +1766,8 @@ func (m Model) View() string {
 		return m.card(m.viewPerms())
 	case modeKnownHosts:
 		return m.card(m.viewKnownHosts())
+	case modeCopy:
+		return m.card(m.viewCopy())
 	}
 
 	header := appTitleStyle.Render("sshush") + "   " + m.renderTabs()
@@ -1817,6 +1916,21 @@ func (m Model) viewKeyBits() string {
 	return b.String()
 }
 
+// viewCopy renders the clipboard copy menu.
+func (m Model) viewCopy() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("Copy to clipboard") + "\n\n")
+	for _, o := range m.copyOpts {
+		preview := o.content
+		if len(preview) > 48 {
+			preview = preview[:48] + "…"
+		}
+		b.WriteString("  " + keyCap.Render(o.key) + "  " + o.label + "  " + dimStyle.Render(preview) + "\n")
+	}
+	b.WriteString("\n" + dimStyle.Render("  press a letter · esc cancel") + "\n")
+	return b.String()
+}
+
 // viewKnownHosts renders the known_hosts browser with a removal confirm gate.
 func (m Model) viewKnownHosts() string {
 	var b strings.Builder
@@ -1957,12 +2071,12 @@ func (m Model) helpGroups() []helpGroup {
 	if m.active == paneKeys {
 		return []helpGroup{
 			{"agent", []helpItem{{"↵", "load/unload"}, {"U", "unload all"}, {"s", "default"}}},
-			{"keys", []helpItem{{"n", "new"}, {"d", "delete"}}},
+			{"keys", []helpItem{{"c", "copy"}, {"n", "new"}, {"d", "delete"}}},
 			view,
 		}
 	}
 	return []helpGroup{
-		{"hosts", []helpItem{{"↵", "connect"}, {"e", "edit"}, {"i", "keys"}, {"n", "new"}, {"d", "delete"}}},
+		{"hosts", []helpItem{{"↵", "connect"}, {"c", "copy"}, {"e", "edit"}, {"i", "keys"}, {"n", "new"}, {"d", "delete"}}},
 		view,
 	}
 }

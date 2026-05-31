@@ -21,6 +21,10 @@ type Identity struct {
 	Algorithm     KeyAlgorithm
 	Comment       string
 
+	// PublicKey is the public key's authorized_keys line (the .pub contents),
+	// for copying to the clipboard. Empty for agent-only identities.
+	PublicKey string
+
 	// Fingerprint is the SHA256 fingerprint of the public key (e.g. "SHA256:...").
 	// Computed from the key on disk and used to match against agent-loaded keys.
 	Fingerprint string

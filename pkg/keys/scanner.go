@@ -89,6 +89,7 @@ func (s *DiskScanner) Scan() ([]config.Identity, error) {
 			PublicKeyPath: pubPath,
 			Algorithm:     algorithmFor(pub.Type()),
 			Comment:       comment,
+			PublicKey:     strings.TrimSpace(string(data)),
 			Fingerprint:   ssh.FingerprintSHA256(pub),
 			ExistsOnDisk:  statErr == nil,
 		})

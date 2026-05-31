@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/s-johri/sshush/pkg/clip"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
 	"github.com/s-johri/sshush/pkg/knownhosts"
@@ -1256,6 +1257,66 @@ func TestKnownHostsCancelDelete(t *testing.T) {
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEsc}) // close
 	if m.mode != modeNormal {
 		t.Error("esc should close the overlay")
+	}
+}
+
+func TestCopyKeyPublicAndFingerprint(t *testing.T) {
+	var copied string
+	restore := clip.SetWriter(func(s string) error { copied = s; return nil })
+	defer restore()
+
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"id_ed": {ID: "id_ed", Name: "id_ed", ExistsOnDisk: true,
+				PublicKey: "ssh-ed25519 AAAAC3Nz me@host", Fingerprint: "SHA256:abc"},
+		},
+	}
+	m := New(&fakeService{model: snap})
+	m = feed(m, refreshedMsg{model: snap})
+
+	m = feed(m, key("c"))
+	if m.mode != modeCopy {
+		t.Fatalf("expected modeCopy, got %d", m.mode)
+	}
+	v := m.View()
+	if !strings.Contains(v, "public key") || !strings.Contains(v, "fingerprint") {
+		t.Errorf("copy menu missing options:\n%s", v)
+	}
+	out, cmd := m.Update(key("p"))
+	m = out.(Model)
+	m = feed(m, cmd()) // executes the copy + delivers clipDoneMsg
+	if copied != "ssh-ed25519 AAAAC3Nz me@host" {
+		t.Errorf("copied %q", copied)
+	}
+	if !strings.Contains(m.status, "copied public key") {
+		t.Errorf("status = %q", m.status)
+	}
+}
+
+func TestCopyHostSshCommand(t *testing.T) {
+	var copied string
+	restore := clip.SetWriter(func(s string) error { copied = s; return nil })
+	defer restore()
+
+	m := New(&fakeService{model: snapshot()}) // host web: deploy@example.com:22
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+
+	m = feed(m, key("c"))
+	out, cmd := m.Update(key("s"))
+	m = out.(Model)
+	cmd()
+	if copied != "ssh deploy@example.com -p 22" {
+		t.Errorf("copied %q", copied)
+	}
+}
+
+func TestSshCommand(t *testing.T) {
+	if got := sshCommand(config.Host{Name: "web", Hostname: "h", User: "u", Port: 2222}); got != "ssh u@h -p 2222" {
+		t.Errorf("explicit = %q", got)
+	}
+	if got := sshCommand(config.Host{Name: "alias only"}); got != "ssh alias" {
+		t.Errorf("alias fallback = %q", got)
 	}
 }
 
