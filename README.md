@@ -124,7 +124,9 @@ sshush shell-init >> ~/.bashrc   # or ~/.zshrc
 ```
 
 The snippet only runs if `sshush` is on your `PATH`, and `load-default` is a
-no-op when the key is already loaded — cheap and safe to run on every shell.
+no-op when the keys are already loaded — cheap and safe to run on every shell.
+`shell-init` warns (on stderr) if the snippet is already in a shell rc, so you
+don't add it twice; the TUI also nudges you to install it when you set a default.
 
 ## Configuration
 

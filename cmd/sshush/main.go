@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	selfupdate "github.com/creativeprojects/go-selfupdate"
@@ -13,6 +14,7 @@ import (
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
 	"github.com/s-johri/sshush/pkg/service"
+	"github.com/s-johri/sshush/pkg/shellinit"
 	"github.com/s-johri/sshush/pkg/sshconfig"
 	"github.com/s-johri/sshush/pkg/watch"
 )
@@ -34,7 +36,11 @@ func main() {
 			}
 			return
 		case "shell-init":
-			fmt.Print(shellSnippet)
+			if files, any := shellinit.Installed(); any {
+				fmt.Fprintf(os.Stderr, "sshush: snippet already present in %s — appending again will duplicate it\n",
+					strings.Join(files, ", "))
+			}
+			fmt.Print(shellinit.Snippet)
 			return
 		case "version", "--version", "-v":
 			fmt.Printf("sshush %s\n", version)
@@ -148,13 +154,6 @@ func applyDefaults(ids []config.IdentityID, svc service.Service) error {
 	}
 	return nil
 }
-
-const shellSnippet = `# sshush: load the default SSH identity into the agent on shell start.
-# Add to your ~/.bashrc or ~/.zshrc, or run: eval "$(sshush shell-init)"
-if command -v sshush >/dev/null 2>&1; then
-  sshush load-default 2>/dev/null
-fi
-`
 
 const usage = `sshush — interactive SSH key and host manager
 

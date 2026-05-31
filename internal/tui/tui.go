@@ -26,6 +26,7 @@ import (
 	"github.com/s-johri/sshush/pkg/knownhosts"
 	"github.com/s-johri/sshush/pkg/perms"
 	"github.com/s-johri/sshush/pkg/service"
+	"github.com/s-johri/sshush/pkg/shellinit"
 	"github.com/s-johri/sshush/pkg/watch"
 )
 
@@ -1321,6 +1322,9 @@ func (m Model) setDefaultKey() (tea.Model, tea.Cmd) {
 	}
 	if added {
 		m.status = "added default: " + sel.Name
+		if _, any := shellinit.Installed(); !any {
+			m.status += " · tip: sshush shell-init >> ~/.bashrc to load on shell start"
+		}
 	} else {
 		m.status = "removed default: " + sel.Name
 	}
