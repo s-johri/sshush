@@ -475,6 +475,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ctrl+c always quits, even from an overlay or the filter input.
+	if msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+
 	// Overlay modes capture input first.
 	switch m.mode {
 	case modeNewKey:
@@ -522,6 +527,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "tab", "left", "right", "h", "l":
 		m.active = (m.active + 1) % numPanes
+		m.clampCursor(m.active) // a global filter may shrink the new pane's list
+		m.ensureVisible(m.active)
 		return m, nil
 	case "up", "k":
 		if m.cursor[m.active] > 0 {
@@ -546,7 +553,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensureVisible(m.active)
 		return m, nil
 	case "end", "G":
-		m.cursor[m.active] = m.rowCount() - 1
+		if n := m.rowCount(); n > 0 {
+			m.cursor[m.active] = n - 1
+		}
 		m.ensureVisible(m.active)
 		return m, nil
 	case "enter", " ":
@@ -1392,13 +1401,17 @@ func (m Model) scrollIndicator(p pane) string {
 
 func (m *Model) clampCursors() {
 	for p := pane(0); p < numPanes; p++ {
-		max := m.rowCountFor(p)
-		if m.cursor[p] >= max {
-			m.cursor[p] = max - 1
-		}
-		if m.cursor[p] < 0 {
-			m.cursor[p] = 0
-		}
+		m.clampCursor(p)
+	}
+}
+
+// clampCursor keeps pane p's cursor within [0, rowCount).
+func (m *Model) clampCursor(p pane) {
+	if max := m.rowCountFor(p); m.cursor[p] >= max {
+		m.cursor[p] = max - 1
+	}
+	if m.cursor[p] < 0 {
+		m.cursor[p] = 0
 	}
 }
 

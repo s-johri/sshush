@@ -1048,6 +1048,77 @@ func TestFirstAlias(t *testing.T) {
 	}
 }
 
+func keysAndHostsSnap() *config.SshConfigModel {
+	ids := map[config.IdentityID]config.Identity{}
+	for _, n := range []string{"a", "b", "c"} {
+		ids[config.IdentityID(n)] = config.Identity{ID: config.IdentityID(n), Name: n, ExistsOnDisk: true}
+	}
+	hosts := map[config.HostID]config.Host{}
+	for _, n := range []string{"web0", "web1", "web2", "web3", "prod"} {
+		hosts[config.HostID(n)] = config.Host{ID: config.HostID(n), Name: n}
+	}
+	return &config.SshConfigModel{Identities: ids, Hosts: hosts}
+}
+
+func TestPaneSwitchClampsCursorUnderFilter(t *testing.T) {
+	snap := keysAndHostsSnap()
+	m := New(&fakeService{model: snap})
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = feed(m, refreshedMsg{model: snap})
+
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // -> Hosts
+	m = feed(m, key("G"))                     // cursor at prod (index 4 of 5)
+	if m.cursor[paneHosts] != 4 {
+		t.Fatalf("setup: hosts cursor = %d, want 4", m.cursor[paneHosts])
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // -> Keys
+
+	// Apply a global filter that leaves only 4 hosts (web0..web3).
+	m = feed(m, key("/"))
+	for _, r := range "web" {
+		m = feed(m, key(string(r)))
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // apply, exit filter input
+
+	// Switching back to Hosts must clamp the now-out-of-range cursor.
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.cursor[paneHosts]; got != 3 {
+		t.Errorf("hosts cursor after switch = %d, want 3 (clamped)", got)
+	}
+	if h, ok := m.selectedHost(); !ok || h.Name != "web3" {
+		t.Errorf("selectedHost = %v,%v, want web3", h, ok)
+	}
+}
+
+func TestCtrlCQuitsFromFilter(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("/")) // focus filter input
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c should dispatch quit even while filtering")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("ctrl+c should produce tea.QuitMsg, got %T", cmd())
+	}
+}
+
+func TestEndKeyOnEmptyList(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, refreshedMsg{model: snapshot()})
+	// Filter to zero matches, then jump to end.
+	m = feed(m, key("/"))
+	for _, r := range "zzzzz" {
+		m = feed(m, key(string(r)))
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = feed(m, key("G"))
+	if m.cursor[paneKeys] != 0 {
+		t.Errorf("end on empty list left cursor at %d, want 0", m.cursor[paneKeys])
+	}
+}
+
 func TestRefreshErrorShown(t *testing.T) {
 	m := New(&fakeService{})
 	m = feed(m, refreshedMsg{err: errFake{}})

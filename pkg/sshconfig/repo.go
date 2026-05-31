@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -375,8 +376,8 @@ func (r *FileRepo) AddHost(h config.Host) error {
 	if h.Port != 0 {
 		host.Nodes = append(host.Nodes, newKV("Port", strconv.Itoa(h.Port)))
 	}
-	for k, v := range h.Options {
-		host.Nodes = append(host.Nodes, newKV(k, v))
+	for _, k := range sortedKeys(h.Options) { // deterministic option order
+		host.Nodes = append(host.Nodes, newKV(k, h.Options[k]))
 	}
 	host.Nodes = append(host.Nodes, &sshcfg.Empty{}) // trailing blank line
 
@@ -416,6 +417,16 @@ func (r *FileRepo) ensureMainFile() (*loadedFile, error) {
 	lf := &loadedFile{path: path, raw: nil, cfg: cfg}
 	r.files = append(r.files, lf)
 	return lf, nil
+}
+
+// sortedKeys returns a map's keys in sorted order for deterministic output.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // newKV builds a host directive indented four spaces (config convention).
