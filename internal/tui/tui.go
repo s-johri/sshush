@@ -1999,21 +1999,32 @@ func (m Model) helpLines() []string {
 	return out
 }
 
+// helpCapacity is how many body rows fit in the help card for the terminal
+// height. Rows available = height minus the card's top/bottom margin (2) +
+// borders (2) + title, blank, and footer (3). Large when height is unknown.
+func (m Model) helpCapacity() int {
+	if m.height <= 0 {
+		return 1 << 30
+	}
+	if c := m.height - 8; c > 1 {
+		return c
+	}
+	return 1
+}
+
+// helpMaxScroll is the furthest the help body can scroll.
+func (m Model) helpMaxScroll() int {
+	if n := len(m.helpLines()) - m.helpCapacity(); n > 0 {
+		return n
+	}
+	return 0
+}
+
 // viewHelp renders the reference, windowed to the terminal height when it would
 // otherwise overflow (scroll with ↑/↓).
 func (m Model) viewHelp() string {
 	lines := m.helpLines()
-
-	// Rows available for the body inside the card: terminal height minus the
-	// card's top/bottom margin (2) + borders (2) + title, blank, and footer (3).
-	cap := len(lines)
-	if m.height > 0 {
-		if c := m.height - 8; c > 1 {
-			cap = c
-		} else {
-			cap = 1
-		}
-	}
+	cap := m.helpCapacity()
 	start := m.helpScroll
 	if start > len(lines)-cap {
 		start = len(lines) - cap
@@ -2059,8 +2070,13 @@ func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeNormal
 		return m, nil
 	}
-	if n := len(m.helpLines()); m.helpScroll > n {
-		m.helpScroll = n // loose upper bound; viewHelp does exact clamping
+	// Clamp to the real range so scrolling back up responds immediately at the
+	// bottom (no overshoot/lag).
+	if maxScroll := m.helpMaxScroll(); m.helpScroll > maxScroll {
+		m.helpScroll = maxScroll
+	}
+	if m.helpScroll < 0 {
+		m.helpScroll = 0
 	}
 	return m, nil
 }
