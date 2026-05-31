@@ -47,6 +47,9 @@ type loadedFile struct {
 // FileRepo is a ConfigRepo backed by an on-disk config file plus its Includes.
 type FileRepo struct {
 	Path string // path to user config; empty means ~/.ssh/config
+	// SshDir is the directory that relative Include directives and ~ resolve
+	// against (per OpenSSH, ~/.ssh). Empty means ~/.ssh.
+	SshDir string
 
 	files    []*loadedFile   // parse order: main file first, then includes
 	dirty    map[string]bool // files mutated since load, keyed by path
@@ -122,7 +125,7 @@ func (r *FileRepo) loadFile(path string, depth int, visited map[string]bool) err
 	r.files = append(r.files, &loadedFile{path: path, raw: raw, cfg: cfg})
 
 	for _, inc := range includeTargets(raw) {
-		for _, target := range resolveInclude(inc) {
+		for _, target := range r.resolveInclude(inc) {
 			if err := r.loadFile(target, depth+1, visited); err != nil {
 				return err
 			}
@@ -218,7 +221,7 @@ func includeTargets(raw []byte) []string {
 
 // resolveInclude expands ~ and globs and resolves relative paths against ~/.ssh,
 // returning matched file paths.
-func resolveInclude(arg string) []string {
+func (r *FileRepo) resolveInclude(arg string) []string {
 	arg = strings.Trim(arg, `"`)
 	if strings.HasPrefix(arg, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -226,9 +229,7 @@ func resolveInclude(arg string) []string {
 		}
 	}
 	if !filepath.IsAbs(arg) {
-		if home, err := os.UserHomeDir(); err == nil {
-			arg = filepath.Join(home, ".ssh", arg)
-		}
+		arg = filepath.Join(r.sshBaseDir(), arg)
 	}
 	matches, err := filepath.Glob(arg)
 	if err != nil || matches == nil {
@@ -237,16 +238,25 @@ func resolveInclude(arg string) []string {
 	return matches
 }
 
-// resolvePath returns r.Path or ~/.ssh/config when empty.
+// sshBaseDir is the directory relative Includes resolve against: r.SshDir, else
+// ~/.ssh.
+func (r *FileRepo) sshBaseDir() string {
+	if r.SshDir != "" {
+		return r.SshDir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".ssh"
+	}
+	return filepath.Join(home, ".ssh")
+}
+
+// resolvePath returns r.Path, else <SshDir>/config (SshDir defaulting to ~/.ssh).
 func (r *FileRepo) resolvePath() (string, error) {
 	if r.Path != "" {
 		return r.Path, nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".ssh", "config"), nil
+	return filepath.Join(r.sshBaseDir(), "config"), nil
 }
 
 // SetHostField sets key=val on host h, updating the existing directive in place

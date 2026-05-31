@@ -163,7 +163,8 @@ type Model struct {
 
 	// app settings / default identity
 	settings   appSettings
-	autoLoaded bool // startup auto-load of the default identity has run
+	autoLoaded bool   // startup auto-load of the default identity has run
+	sshDir     string // configured SSH dir to watch (empty => ~/.ssh)
 
 	width, height int
 }
@@ -186,6 +187,13 @@ func (m Model) WithWatcher(w fileWatcher) Model {
 // WithSettings attaches persisted app settings (default identity). Optional.
 func (m Model) WithSettings(s appSettings) Model {
 	m.settings = s
+	return m
+}
+
+// WithSshDir sets the SSH directory the hot-reload watcher should observe (in
+// addition to the config source dirs). Empty means ~/.ssh.
+func (m Model) WithSshDir(dir string) Model {
+	m.sshDir = dir
 	return m
 }
 
@@ -973,7 +981,9 @@ func (m *Model) rewatch(sourceFiles []string) {
 	for _, f := range sourceFiles {
 		add(filepath.Dir(f))
 	}
-	if home, err := os.UserHomeDir(); err == nil {
+	if m.sshDir != "" {
+		add(m.sshDir)
+	} else if home, err := os.UserHomeDir(); err == nil {
 		add(filepath.Join(home, ".ssh"))
 	}
 	_ = m.watcher.Watch(dirs)

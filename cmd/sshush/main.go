@@ -86,19 +86,22 @@ func selfUpdate(ctx context.Context) error {
 	return nil
 }
 
-func newService() service.Service {
-	// Empty paths/socket => defaults: ~/.ssh, ~/.ssh/config, $SSH_AUTH_SOCK.
-	return service.New(keys.New(""), sshconfig.New(""), agent.New(""))
+// newService builds the service against the configured SSH directory and config
+// path. Empty values fall back to ~/.ssh and ~/.ssh/config; the socket always
+// comes from $SSH_AUTH_SOCK.
+func newService(sshDir, configPath string) service.Service {
+	repo := sshconfig.New(configPath)
+	repo.SshDir = sshDir
+	return service.New(keys.New(sshDir), repo, agent.New(""))
 }
 
 func runTUI() {
-	model := tui.New(newService())
-
-	// App settings (default identity). Best-effort: run without on error.
+	// App settings (default identity, SSH dir/config overrides). Best-effort.
 	settings := appconfig.New("")
-	if _, err := settings.Load(); err == nil {
-		model = model.WithSettings(settings)
-	}
+	_, _ = settings.Load()
+
+	model := tui.New(newService(settings.SshDir(), settings.ConfigPath()))
+	model = model.WithSettings(settings).WithSshDir(settings.SshDir())
 
 	// Hot reload is best-effort: if the watcher can't start, run without it.
 	if w, err := watch.New(); err == nil {
@@ -120,7 +123,8 @@ func loadDefault() error {
 	if _, err := settings.Load(); err != nil {
 		return err
 	}
-	return applyDefault(settings.AutoLoad(), settings.DefaultIdentity(), newService())
+	svc := newService(settings.SshDir(), settings.ConfigPath())
+	return applyDefault(settings.AutoLoad(), settings.DefaultIdentity(), svc)
 }
 
 // applyDefault loads identity id into the agent via svc. It is a no-op when

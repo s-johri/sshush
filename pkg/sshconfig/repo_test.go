@@ -112,6 +112,43 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
+// TestIncludeHonorsSshDir verifies a relative Include resolves against the
+// configured SshDir, not a hardcoded ~/.ssh, and that a config-less SshDir
+// resolves the default config path under it.
+func TestIncludeHonorsSshDir(t *testing.T) {
+	sshDir := t.TempDir()
+	cfgDir := t.TempDir() // config lives somewhere else entirely
+	writeFile(t, filepath.Join(sshDir, "extra.conf"), "Host db\n    User postgres\n")
+	writeFile(t, filepath.Join(cfgDir, "config"), "Include extra.conf\nHost web\n    User deploy\n")
+
+	r := New(filepath.Join(cfgDir, "config"))
+	r.SshDir = sshDir
+	model, err := r.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := model.Hosts["db"]; !ok {
+		t.Errorf("relative Include not resolved against SshDir; hosts=%v", hostIDs(model))
+	}
+	if _, ok := model.Hosts["web"]; !ok {
+		t.Errorf("main host missing")
+	}
+}
+
+func TestEmptyPathUsesSshDirConfig(t *testing.T) {
+	sshDir := t.TempDir()
+	writeFile(t, filepath.Join(sshDir, "config"), "Host x\n    User u\n")
+	r := New("") // no explicit path
+	r.SshDir = sshDir
+	model, err := r.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := model.Hosts["x"]; !ok {
+		t.Errorf("empty Path should load <SshDir>/config; hosts=%v", hostIDs(model))
+	}
+}
+
 func TestLoadMissingMain(t *testing.T) {
 	model, err := New(filepath.Join(t.TempDir(), "nope")).Load()
 	if err != nil {

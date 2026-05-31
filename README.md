@@ -128,9 +128,21 @@ sshush stores its own settings (separate from `~/.ssh/config`) at
 ```toml
 default_identity = "id_ed25519"
 auto_load = true
+
+# Optional: point sshush at a non-default SSH location.
+# ssh_dir resolves relative Includes and ~ in the config; config_path defaults
+# to <ssh_dir>/config when only ssh_dir is set.
+ssh_dir = "~/.ssh"
+config_path = "~/.ssh/config"
 ```
 
-These are managed from the TUI; you normally don't edit this file by hand.
+`default_identity`/`auto_load` are managed from the TUI. The path overrides can
+also come from the environment (which takes precedence):
+
+```bash
+export SSHUSH_SSH_DIR=~/work/.ssh
+export SSHUSH_CONFIG=~/work/.ssh/config
+```
 
 ## How it works
 

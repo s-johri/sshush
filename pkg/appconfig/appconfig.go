@@ -7,6 +7,7 @@ package appconfig
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/s-johri/sshush/pkg/config"
@@ -18,6 +19,12 @@ type Config struct {
 	DefaultIdentity string `toml:"default_identity"`
 	// AutoLoad controls whether DefaultIdentity is loaded on startup.
 	AutoLoad bool `toml:"auto_load"`
+
+	// SshDir overrides the directory scanned for keys (default ~/.ssh). Relative
+	// Include directives and ~ in the config resolve against it.
+	SshDir string `toml:"ssh_dir"`
+	// ConfigPath overrides the SSH config file (default <ssh_dir>/config).
+	ConfigPath string `toml:"config_path"`
 }
 
 // Store reads and writes the settings file.
@@ -55,6 +62,41 @@ func (s *Store) DefaultIdentity() config.IdentityID {
 
 // AutoLoad reports whether the default identity should load on startup.
 func (s *Store) AutoLoad() bool { return s.cfg.AutoLoad }
+
+// SshDir returns the configured SSH directory, or "" to use the default (~/.ssh).
+// Precedence: $SSHUSH_SSH_DIR > config file > default. ~ is expanded.
+func (s *Store) SshDir() string {
+	if v := os.Getenv("SSHUSH_SSH_DIR"); v != "" {
+		return expandHome(v)
+	}
+	return expandHome(s.cfg.SshDir)
+}
+
+// ConfigPath returns the configured SSH config file, or "" for the default
+// (<SshDir>/config, itself defaulting to ~/.ssh/config). Precedence:
+// $SSHUSH_CONFIG > config file > <SshDir>/config when only SshDir is set.
+func (s *Store) ConfigPath() string {
+	if v := os.Getenv("SSHUSH_CONFIG"); v != "" {
+		return expandHome(v)
+	}
+	if s.cfg.ConfigPath != "" {
+		return expandHome(s.cfg.ConfigPath)
+	}
+	if dir := s.SshDir(); dir != "" {
+		return filepath.Join(dir, "config")
+	}
+	return ""
+}
+
+// expandHome expands a leading ~ to the user's home directory.
+func expandHome(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(p[1:], "/"))
+		}
+	}
+	return p
+}
 
 // SetDefaultIdentity sets the default key (enabling auto-load) and persists it.
 func (s *Store) SetDefaultIdentity(id config.IdentityID) error {
