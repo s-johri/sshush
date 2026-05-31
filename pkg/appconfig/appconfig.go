@@ -29,6 +29,15 @@ type Config struct {
 	SshDir string `toml:"ssh_dir,omitempty"`
 	// ConfigPath overrides the SSH config file (default <ssh_dir>/config).
 	ConfigPath string `toml:"config_path,omitempty"`
+
+	// Motion controls the opt-in animation/juice system.
+	Motion MotionConfig `toml:"motion"`
+}
+
+// MotionConfig is the [motion] table: off by default.
+type MotionConfig struct {
+	Enabled   bool   `toml:"enabled"`
+	Intensity string `toml:"intensity"` // subtle | normal | arcade
 }
 
 // Store reads and writes the settings file.
@@ -139,6 +148,26 @@ func (s *Store) ToggleDefault(id config.IdentityID) (bool, error) {
 // ClearDefaults removes all default identities.
 func (s *Store) ClearDefaults() error {
 	s.cfg.DefaultIdentities = nil
+	return s.save()
+}
+
+// MotionEnabled reports whether the motion/animation system is on (off default).
+func (s *Store) MotionEnabled() bool { return s.cfg.Motion.Enabled }
+
+// MotionIntensity is the motion level: subtle | normal | arcade (default normal).
+func (s *Store) MotionIntensity() string {
+	if s.cfg.Motion.Intensity == "" {
+		return "normal"
+	}
+	return s.cfg.Motion.Intensity
+}
+
+// SetMotion enables/disables motion at a given intensity and persists.
+func (s *Store) SetMotion(enabled bool, intensity string) error {
+	s.cfg.Motion.Enabled = enabled
+	if intensity != "" {
+		s.cfg.Motion.Intensity = intensity
+	}
 	return s.save()
 }
 

@@ -735,8 +735,25 @@ func contains(ss []string, want string) bool {
 }
 
 type fakeSettings struct {
-	defaults []config.IdentityID
-	toggles  []config.IdentityID
+	defaults    []config.IdentityID
+	toggles     []config.IdentityID
+	motionOn    bool
+	motionLevel string
+}
+
+func (f *fakeSettings) MotionEnabled() bool { return f.motionOn }
+func (f *fakeSettings) MotionIntensity() string {
+	if f.motionLevel == "" {
+		return "normal"
+	}
+	return f.motionLevel
+}
+func (f *fakeSettings) SetMotion(on bool, intensity string) error {
+	f.motionOn = on
+	if intensity != "" {
+		f.motionLevel = intensity
+	}
+	return nil
 }
 
 func (f *fakeSettings) DefaultIdentities() []config.IdentityID { return f.defaults }
@@ -1444,6 +1461,81 @@ func TestRowTruncationInColumn(t *testing.T) {
 		if w := lipgloss.Width(line); w > 100 {
 			t.Errorf("line width %d exceeds 100: %q", w, line)
 		}
+	}
+}
+
+func TestMotionOffNoEffect(t *testing.T) {
+	m := New(&fakeService{model: snapshot()}).WithSettings(&fakeSettings{}) // motion off
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, agentDoneMsg{verb: "key loaded"})
+	if m.fxActive() {
+		t.Error("no effect should play when motion is disabled")
+	}
+}
+
+func TestMotionFlashOnAction(t *testing.T) {
+	fs := &fakeSettings{motionOn: true}
+	m := New(&fakeService{model: snapshot()}).WithSettings(fs)
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	out, cmd := m.Update(agentDoneMsg{verb: "key loaded"})
+	m = out.(Model)
+	if !m.fx.flashGood || !m.fxActive() {
+		t.Errorf("success should flash good; fx=%+v", m.fx)
+	}
+	if cmd == nil {
+		t.Error("a frame ticker should be scheduled")
+	}
+
+	// An error flashes bad and shakes.
+	out, _ = m.Update(agentDoneMsg{verb: "x", err: errFake{}})
+	m = out.(Model)
+	if !m.fx.flashBad || m.fx.shakeAmp == 0 {
+		t.Errorf("error should flash bad + shake; fx=%+v", m.fx)
+	}
+}
+
+func TestMotionIntensityScalesShake(t *testing.T) {
+	for _, c := range []struct {
+		level string
+		amp   int
+	}{{"subtle", 2}, {"normal", 4}, {"arcade", 7}} {
+		fs := &fakeSettings{motionOn: true, motionLevel: c.level}
+		m := New(&fakeService{model: snapshot()}).WithSettings(fs)
+		out, _ := m.Update(agentDoneMsg{verb: "x", err: errFake{}}) // error → shakes
+		m = out.(Model)
+		if m.fx.shakeAmp != c.amp {
+			t.Errorf("%s: shakeAmp=%d, want %d", c.level, m.fx.shakeAmp, c.amp)
+		}
+	}
+}
+
+func TestMotionFrameExpires(t *testing.T) {
+	fs := &fakeSettings{motionOn: true}
+	m := New(&fakeService{model: snapshot()}).WithSettings(fs)
+	m.fx = activeFX{shakeAmp: 3, start: time.Now().Add(-time.Second), dur: 200 * time.Millisecond} // already expired
+	out, cmd := m.Update(frameMsg{})
+	m = out.(Model)
+	if m.fx.any() {
+		t.Error("expired effect should be cleared")
+	}
+	if cmd != nil {
+		t.Error("no more frames once the effect ends")
+	}
+}
+
+func TestToggleMotionPersists(t *testing.T) {
+	fs := &fakeSettings{}
+	m := New(&fakeService{model: snapshot()}).WithSettings(fs)
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	m = feed(m, key("m"))
+	if !fs.motionOn || !strings.Contains(m.status, "motion on") {
+		t.Errorf("m should enable motion; on=%v status=%q", fs.motionOn, m.status)
+	}
+	m = feed(m, key("m"))
+	if fs.motionOn || !strings.Contains(m.status, "motion off") {
+		t.Errorf("second m should disable; on=%v status=%q", fs.motionOn, m.status)
 	}
 }
 

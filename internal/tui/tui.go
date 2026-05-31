@@ -5,6 +5,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,6 +97,9 @@ type appSettings interface {
 	IsDefault(config.IdentityID) bool
 	AutoLoad() bool
 	ToggleDefault(config.IdentityID) (bool, error)
+	MotionEnabled() bool
+	MotionIntensity() string
+	SetMotion(enabled bool, intensity string) error
 }
 
 // reloadMsg signals that watched files changed and the model should refresh.
@@ -107,6 +111,103 @@ type reloadMsg struct{}
 // ~one debounce after our write, so this is the debounce plus a small margin —
 // kept short so genuine external changes are missed for as little as possible.
 const reloadMuteWindow = watch.Debounce + 500*time.Millisecond
+
+// --- motion (opt-in animation system) ---
+
+// activeFX is a time-bounded visual effect layered over the render. A flash
+// (good/bad) and a screen-shake can run together, both driven by one normalized
+// progress so the motion feels cohesive. Zero value = nothing playing.
+type activeFX struct {
+	flashGood bool
+	flashBad  bool
+	shakeAmp  int // peak horizontal shake in columns; 0 = no shake
+	start     time.Time
+	dur       time.Duration
+}
+
+func (f activeFX) any() bool {
+	return f.flashGood || f.flashBad || f.shakeAmp > 0
+}
+
+// frameRate is fast (≈60fps) so the shake reads as snappy, not laggy.
+const frameRate = 16 * time.Millisecond
+
+// frameMsg drives animation frames; only scheduled while an effect is active so
+// there is no idle CPU cost.
+type frameMsg struct{}
+
+func frameTick() tea.Cmd {
+	return tea.Tick(frameRate, func(time.Time) tea.Msg { return frameMsg{} })
+}
+
+// motionOn reports whether the motion system is enabled.
+func (m Model) motionOn() bool { return m.settings != nil && m.settings.MotionEnabled() }
+
+// fxActive reports whether an effect is currently playing.
+func (m Model) fxActive() bool { return m.fx.any() && time.Since(m.fx.start) < m.fx.dur }
+
+// fxProgress is the effect's normalized elapsed time in [0,1].
+func (m Model) fxProgress() float64 {
+	p := float64(time.Since(m.fx.start)) / float64(m.fx.dur)
+	if p < 0 {
+		return 0
+	}
+	if p > 1 {
+		return 1
+	}
+	return p
+}
+
+// fxParams returns the (duration, shake-amplitude) for the current intensity.
+// Short and distinct so levels are obvious; the 16ms frame keeps it snappy.
+func (m Model) fxParams() (time.Duration, int) {
+	switch m.settings.MotionIntensity() {
+	case "subtle":
+		return 180 * time.Millisecond, 2
+	case "arcade":
+		return 420 * time.Millisecond, 7
+	default: // normal
+		return 260 * time.Millisecond, 4
+	}
+}
+
+// play starts a flash (+ optional shake) if motion is on, returning the frame
+// ticker. forceShake adds a shake even at non-arcade levels (destructive ops);
+// arcade always shakes.
+func (m *Model) play(good, forceShake bool) tea.Cmd {
+	if !m.motionOn() {
+		return nil
+	}
+	dur, amp := m.fxParams()
+	shake := 0
+	if forceShake || m.settings.MotionIntensity() == "arcade" || !good {
+		shake = amp
+	}
+	m.fx = activeFX{flashGood: good, flashBad: !good, shakeAmp: shake, start: time.Now(), dur: dur}
+	return frameTick()
+}
+
+// applyShake jitters the whole frame horizontally with a punchy envelope: the
+// amplitude starts high and decays fast (ease-out²), oscillating at high
+// frequency, so it hits hard then settles — not a slow linear wobble.
+func (m Model) applyShake(s string) string {
+	if m.fx.shakeAmp <= 0 {
+		return s
+	}
+	decay := 1 - m.fxProgress()
+	decay *= decay // (1-p)² — punchy ease-out
+	osc := math.Abs(math.Sin(time.Since(m.fx.start).Seconds() * 38 * math.Pi))
+	off := int(math.Round(float64(m.fx.shakeAmp) * decay * osc))
+	if off == 0 {
+		return s
+	}
+	pad := strings.Repeat(" ", off)
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = pad + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
 
 // tickMsg drives the periodic check that expires the status line.
 type tickMsg struct{}
@@ -232,6 +333,9 @@ type Model struct {
 
 	// help overlay scroll offset (when it's taller than the terminal)
 	helpScroll int
+
+	// motion: the currently-active visual effect (zero value = none)
+	fx activeFX
 
 	// hot reload
 	watcher         fileWatcher
@@ -426,6 +530,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ensureVisible(paneHosts)
 		return m, nil
 
+	case frameMsg:
+		if !m.fxActive() {
+			m.fx = activeFX{} // effect finished; stop the frame ticker
+			return m, nil
+		}
+		return m, frameTick()
+
 	case tickMsg:
 		if m.status != "" && time.Since(m.statusSetAt) >= statusTTL {
 			m.status = ""
@@ -468,32 +579,32 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentDoneMsg:
 		if msg.err != nil {
 			m.status = "agent error: " + msg.err.Error()
-			return m, nil
+			return m, m.play(false, false)
 		}
 		m.status = msg.verb
 		// Re-sync so the loaded badge reflects the new agent state.
 		m.loading = true
-		return m, m.refresh
+		return m, tea.Batch(m.refresh, m.play(true, false))
 
 	case editDoneMsg:
 		if msg.err != nil {
 			m.status = "error: " + msg.err.Error()
-			return m, nil
+			return m, m.play(false, false)
 		}
 		m.status = msg.verb
 		m.muteReloadUntil = time.Now().Add(reloadMuteWindow) // our write, not external
 		m.loading = true
-		return m, m.refresh
+		return m, tea.Batch(m.refresh, m.play(true, false))
 
 	case keygenDoneMsg:
 		if msg.err != nil {
 			m.status = "ssh-keygen error: " + msg.err.Error()
-			return m, nil
+			return m, m.play(false, false)
 		}
 		m.status = "key generated"
 		m.muteReloadUntil = time.Now().Add(reloadMuteWindow)
 		m.loading = true
-		return m, m.refresh
+		return m, tea.Batch(m.refresh, m.play(true, false))
 
 	case connectDoneMsg:
 		if msg.err != nil {
@@ -638,6 +749,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeHelp
 		m.helpScroll = 0
 		return m, nil
+	case "m":
+		return m.toggleMotion()
 	case "r":
 		m.loading = true
 		return m, m.refresh
@@ -1116,12 +1229,13 @@ func (m Model) handleDeleteConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.mode = modeNormal
 	m.status = "deleting…"
+	shake := m.play(true, true) // destructive: flash + a forced shake at any level
 	if mode == modeConfirmDelHost {
 		h := m.pendingHost
-		return m, func() tea.Msg { return editDoneMsg{verb: "host removed", err: m.svc.DeleteHost(h)} }
+		return m, tea.Batch(shake, func() tea.Msg { return editDoneMsg{verb: "host removed", err: m.svc.DeleteHost(h)} })
 	}
 	id := m.pendingKey
-	return m, func() tea.Msg { return editDoneMsg{verb: "key deleted", err: m.svc.DeleteKey(id)} }
+	return m, tea.Batch(shake, func() tea.Msg { return editDoneMsg{verb: "key deleted", err: m.svc.DeleteKey(id)} })
 }
 
 // beginEdit opens the edit overlay on the selected host. Only directives the
@@ -1339,6 +1453,26 @@ func (m Model) setDefaultKey() (tea.Model, tea.Cmd) {
 	} else {
 		m.status = "removed default: " + sel.Name
 	}
+	return m, nil
+}
+
+// toggleMotion flips the motion system on/off and persists the choice.
+func (m Model) toggleMotion() (tea.Model, tea.Cmd) {
+	if m.settings == nil {
+		m.status = "no settings file configured"
+		return m, nil
+	}
+	on := !m.settings.MotionEnabled()
+	if err := m.settings.SetMotion(on, ""); err != nil {
+		m.status = "settings error: " + err.Error()
+		return m, nil
+	}
+	if on {
+		m.status = "motion on (" + m.settings.MotionIntensity() + ") — press m to disable"
+		return m, m.play(true, true) // demo: flash + shake so the level is obvious
+	}
+	m.status = "motion off"
+	m.fx = activeFX{}
 	return m, nil
 }
 
@@ -1735,6 +1869,7 @@ var (
 	headerStyle   = lipgloss.NewStyle().Foreground(colDim).Underline(true)
 	selectedRow   = lipgloss.NewStyle().Bold(true).Foreground(colAccent).Background(colSelBg)
 	loadedBadge   = lipgloss.NewStyle().Foreground(colGreen)
+	textStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("253")) // explicit, so body text doesn't inherit the terminal's foreground
 	dimStyle      = lipgloss.NewStyle().Foreground(colDim)
 	errStyle      = lipgloss.NewStyle().Bold(true).Foreground(colErr)
 	starStyle     = lipgloss.NewStyle().Foreground(colGold)
@@ -1744,6 +1879,10 @@ var (
 	helpKey       = lipgloss.NewStyle().Bold(true).Foreground(colAccent)
 	helpLabel     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("245"))
 	hostTagStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("109")) // muted teal — hosts using a key
+
+	// Flash colors track the palette: cyan accent for success, red for errors.
+	flashGoodStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(colAccent)
+	flashBadStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(colErr)
 )
 
 // tabActive is kept as the overlay/title accent style for readability.
@@ -1814,7 +1953,7 @@ func (m Model) View() string {
 			dimStyle.Render(fmt.Sprintf("  (%d match · esc clears)", m.rowCountFor(m.active))) + "\n")
 	}
 	if m.status != "" {
-		f.WriteString(statusStyle.Render("  "+m.status) + "\n")
+		f.WriteString(m.renderStatus() + "\n")
 	}
 	f.WriteString(m.renderHelp())
 	if m.srcFile != "" {
@@ -1822,7 +1961,28 @@ func (m Model) View() string {
 	}
 	// No trailing newline: an extra blank line would push the header off the top
 	// of an exactly-full screen.
-	return f.String()
+	out := f.String()
+	if m.fxActive() && m.fx.shakeAmp > 0 {
+		out = m.applyShake(out)
+	}
+	return out
+}
+
+// renderStatus draws the status line, as a full-width flash bar while a flash
+// effect is playing (so the highlight fills the row instead of hugging text).
+func (m Model) renderStatus() string {
+	text := "  " + m.status
+	if m.fxActive() && (m.fx.flashGood || m.fx.flashBad) {
+		fs := flashGoodStyle
+		if m.fx.flashBad {
+			fs = flashBadStyle
+		}
+		if m.width > 0 {
+			fs = fs.Width(m.width)
+		}
+		return fs.Render(text)
+	}
+	return statusStyle.Render(text)
 }
 
 // renderTabs draws the Keys/Hosts tab bar with the active tab highlighted.
@@ -2286,7 +2446,7 @@ type helpGroup struct {
 // helpGroups returns the keybinding hints for the active pane, grouped into
 // labeled categories for a less cluttered footer.
 func (m Model) helpGroups() []helpGroup {
-	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"P", "perms"}, {"K", "known_hosts"}, {"?", "help"}, {"tab", "panes"}, {"q", "quit"}}}
+	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"P", "perms"}, {"K", "known_hosts"}, {"m", "motion"}, {"?", "help"}, {"tab", "panes"}, {"q", "quit"}}}
 	if m.active == paneKeys {
 		return []helpGroup{
 			{"agent", []helpItem{{"↵", "load/unload"}, {"U", "unload all"}, {"s", "default"}}},
@@ -2311,7 +2471,7 @@ func (m Model) renderHelp() string {
 			parts[i] = helpKey.Render(it.key) + " " + dimStyle.Render(it.desc)
 		}
 		label := helpLabel.Render(fmt.Sprintf("%-6s", g.label))
-		lines = append(lines, "  "+label+strings.Join(parts, sep))
+		lines = append(lines, fit("  "+label+strings.Join(parts, sep), m.width))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -2357,18 +2517,22 @@ func (m Model) keysLines(w int) []string {
 		nameCol := fmt.Sprintf("%-20s", id.Name)
 		algoCol := fmt.Sprintf("%-11s", algo)
 
-		// plain: one uncolored string, so the selected-row background fills it.
-		plain := fmt.Sprintf("%s %s %s %s", glyph, nameCol, algoCol, id.Comment)
-		// styled: per-segment colors for the non-selected rows.
-		styled := glyphStyle.Render(glyph) + " " + nameCol + " " + algoCol + " " + dimStyle.Render(id.Comment)
+		// Order: name, algo, default, hosts, comment — so truncation drops the
+		// least-important field (comment) first and keeps the ★/↪ tags.
+		plain := fmt.Sprintf("%s %s %s", glyph, nameCol, algoCol)
+		styled := glyphStyle.Render(glyph) + " " + textStyle.Render(nameCol) + " " + dimStyle.Render(algoCol)
+		if m.settings != nil && m.settings.IsDefault(id.ID) {
+			plain += "  ★ default"
+			styled += "  " + starStyle.Render("★ default")
+		}
 		if hosts := usedBy[id.ID]; len(hosts) > 0 {
 			tag := "↪ " + strings.Join(hosts, ", ")
 			plain += "  " + tag
 			styled += "  " + hostTagStyle.Render(tag)
 		}
-		if m.settings != nil && m.settings.IsDefault(id.ID) {
-			plain += "  ★ default"
-			styled += "  " + starStyle.Render("★ default")
+		if id.Comment != "" {
+			plain += "  " + id.Comment
+			styled += "  " + dimStyle.Render(id.Comment)
 		}
 		lines = append(lines, m.listRow(paneKeys, i, plain, styled, w))
 	}
@@ -2421,7 +2585,7 @@ func (m Model) hostsLines(w int) []string {
 		}
 		nameCol := fmt.Sprintf("%-20s", h.Name)
 		plain := nameCol + " " + dest
-		styled := nameCol + " " + dimStyle.Render(dest)
+		styled := textStyle.Render(nameCol) + " " + dimStyle.Render(dest)
 		lines = append(lines, m.listRow(paneHosts, i, plain, styled, w))
 	}
 	if ind := m.scrollIndicator(paneHosts); ind != "" {

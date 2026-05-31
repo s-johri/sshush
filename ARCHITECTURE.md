@@ -423,6 +423,11 @@ color is off; unknown/partial themes fall back per-field to defaults).
   the choice to `config.toml`.
 - **Randomize / reset**: a key to roll a random theme (from presets or generated
   palette) and one to reset to the default. Useful for demos/fun.
+- **No implicit terminal colors**: audit every rendered string to route through an
+  explicit theme foreground. Pane rows use `textStyle` now; **overlay bodies
+  (perms/known_hosts/copy/edit/help) still print some plain text that inherits the
+  terminal's foreground** (e.g. a user with green terminal text saw green labels) —
+  wrap them so the theme fully controls color.
 
 ### Milestone 27 detail
 

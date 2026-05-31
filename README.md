@@ -142,6 +142,11 @@ default_identities = ["id_ed25519", "id_work"]
 # to <ssh_dir>/config when only ssh_dir is set.
 ssh_dir = "~/.ssh"
 config_path = "~/.ssh/config"
+
+# Optional: opt-in motion/animation (off by default). Toggle in-app with `m`.
+[motion]
+enabled = false
+intensity = "normal"   # subtle | normal | arcade
 ```
 
 `default_identities` is managed from the TUI (`s` toggles a key in/out; all are
