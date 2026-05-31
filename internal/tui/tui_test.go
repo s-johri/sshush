@@ -450,25 +450,51 @@ func TestDeleteAgentOnlyKeyRejected(t *testing.T) {
 	}
 }
 
-func TestNewKeyGenDispatches(t *testing.T) {
+func TestNewKeyGenEd25519SkipsBits(t *testing.T) {
 	svc := &fakeService{model: snapshot()}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()}) // Keys pane
 
 	m = feed(m, key("n"))
-	if m.mode != modeNewKeyGen {
-		t.Fatalf("expected modeNewKeyGen, got %d", m.mode)
+	if m.mode != modeNewKeyAlgo {
+		t.Fatalf("expected modeNewKeyAlgo, got %d", m.mode)
 	}
-	for _, r := range "id_new" {
-		m = feed(m, key(string(r)))
+	// ed25519 is first; selecting it skips the bits step and prefills the name.
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != modeNewKeyGen {
+		t.Fatalf("ed25519 should go straight to filename, got mode %d", m.mode)
+	}
+	if m.keyAlgo != config.AlgED25519 || m.keyBits != 0 {
+		t.Errorf("algo=%q bits=%d", m.keyAlgo, m.keyBits)
+	}
+	if m.input.Value() != "id_ed25519" {
+		t.Errorf("filename default = %q", m.input.Value())
 	}
 	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = out.(Model)
-	if cmd == nil {
-		t.Error("key generation should dispatch an ExecProcess command")
+	if cmd == nil || m.mode != modeNormal {
+		t.Error("should dispatch keygen and reset mode")
 	}
-	if m.mode != modeNormal {
-		t.Errorf("mode should reset after dispatch, got %d", m.mode)
+}
+
+func TestNewKeyGenRsaPicksBits(t *testing.T) {
+	svc := &fakeService{model: snapshot()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	m = feed(m, key("n"))
+	m = feed(m, key("j"))                       // ed25519 -> rsa
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // select rsa -> bits step
+	if m.mode != modeNewKeyBits || m.keyAlgo != config.AlgRSA {
+		t.Fatalf("expected rsa bits step, mode=%d algo=%q", m.mode, m.keyAlgo)
+	}
+	m = feed(m, key("j"))                       // 3072 -> 4096
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // select 4096 -> filename
+	if m.mode != modeNewKeyGen || m.keyBits != 4096 {
+		t.Fatalf("bits not selected: mode=%d bits=%d", m.mode, m.keyBits)
+	}
+	if !strings.Contains(m.View(), "rsa, 4096 bits") {
+		t.Errorf("filename step should summarize algo/bits:\n%s", m.View())
 	}
 }
 

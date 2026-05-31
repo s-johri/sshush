@@ -60,6 +60,35 @@ func TestDeleteEmptyPathRefused(t *testing.T) {
 	}
 }
 
+func TestKeygenArgsBits(t *testing.T) {
+	// rsa includes -b <bits>.
+	rsa := keygenArgs(GenerateOpts{Algorithm: config.AlgRSA, Bits: 4096}, "/k/id", true)
+	if !hasPair(rsa, "-b", "4096") {
+		t.Errorf("rsa args missing -b 4096: %v", rsa)
+	}
+	// ecdsa includes -b <curve>.
+	ec := keygenArgs(GenerateOpts{Algorithm: config.AlgECDSA, Bits: 521}, "/k/id", true)
+	if !hasPair(ec, "-b", "521") {
+		t.Errorf("ecdsa args missing -b 521: %v", ec)
+	}
+	// ed25519 ignores bits (no -b).
+	ed := keygenArgs(GenerateOpts{Algorithm: config.AlgED25519, Bits: 256}, "/k/id", true)
+	for _, a := range ed {
+		if a == "-b" {
+			t.Errorf("ed25519 must not pass -b: %v", ed)
+		}
+	}
+}
+
+func hasPair(args []string, flag, val string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag && args[i+1] == val {
+			return true
+		}
+	}
+	return false
+}
+
 func TestGenerateCommandInteractive(t *testing.T) {
 	cmd, priv, err := GenerateCommand(GenerateOpts{
 		Dir: "/keys", Name: "id_ed25519", Algorithm: config.AlgED25519, Comment: "c",
