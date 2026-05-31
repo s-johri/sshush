@@ -2,14 +2,15 @@
 
 Interactive CLI/TUI to switch SSH keys, inspect the agent, view hosts, and edit SSH config.
 
-**Status:** milestones 0–20 shipped (`v0.3.0`) — full read/merge pipeline, agent
-switch (load/unload/unload-all), host directive + key/host CRUD with
+**Status:** through `v0.4.0` (milestones 0–23, 39, 40) — full read/merge pipeline,
+agent switch (load/unload/unload-all), host directive + key/host CRUD with
 backup+confirm, wildcard hosts, key↔host association, hot reload, app config with
-default-identity auto-load, configurable SSH dir/config path, multi-algorithm key
-generation, scrollable panes, live search/filter, connect-to-host, lipgloss
-styling, and a versioned self-update/release pipeline. The roadmap below (M21+)
-carries the work to `v1.0.0` and beyond. Tests cover every `pkg`; see
-[README.md](README.md) for usage.
+multiple default identities + auto-load, configurable SSH dir/config path,
+multi-algorithm key generation, scrollable panes, live search/filter,
+connect-to-host, permission audit+fix, known_hosts management, clipboard copy,
+smart shell-init, lipgloss styling, and a versioned self-update/release pipeline.
+Next windows: v0.5.0 (help overlay, adaptive layout, polish/motion, themes) →
+`v1.0.0`. Tests cover every `pkg`; see [README.md](README.md) for usage.
 
 ## Decisions (locked)
 
