@@ -155,6 +155,7 @@ type Model struct {
 
 	active  pane
 	cursor  [numPanes]int
+	scroll  [numPanes]int     // first visible row index per pane (viewport offset)
 	ids     []config.Identity // sorted for stable display
 	hosts   []config.Host     // sorted for stable display
 	srcFile string
@@ -274,6 +275,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.ensureVisible(paneKeys)
+		m.ensureVisible(paneHosts)
 		return m, nil
 
 	case tickMsg:
@@ -388,11 +391,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor[m.active] > 0 {
 			m.cursor[m.active]--
 		}
+		m.ensureVisible(m.active)
 		return m, nil
 	case "down", "j":
 		if m.cursor[m.active] < m.rowCount()-1 {
 			m.cursor[m.active]++
 		}
+		m.ensureVisible(m.active)
+		return m, nil
+	case "pgup", "ctrl+u":
+		m.moveCursor(m.active, -m.listCapacity())
+		return m, nil
+	case "pgdown", "ctrl+d":
+		m.moveCursor(m.active, m.listCapacity())
+		return m, nil
+	case "home", "g":
+		m.cursor[m.active] = 0
+		m.ensureVisible(m.active)
+		return m, nil
+	case "end", "G":
+		m.cursor[m.active] = m.rowCount() - 1
+		m.ensureVisible(m.active)
 		return m, nil
 	case "enter", " ":
 		return m.toggleSelectedKey()
@@ -1059,6 +1078,8 @@ func (m *Model) applySnapshot(snap *config.SshConfigModel) {
 	}
 	m.rewatch(snap.SourceFiles)
 	m.clampCursors()
+	m.ensureVisible(paneKeys)
+	m.ensureVisible(paneHosts)
 }
 
 // rewatch points the file watcher at the directories of the config source files
@@ -1084,6 +1105,95 @@ func (m *Model) rewatch(sourceFiles []string) {
 		add(filepath.Join(home, ".ssh"))
 	}
 	_ = m.watcher.Watch(dirs)
+}
+
+// listCapacity is how many data rows fit in a pane given the terminal height.
+// When the height is unknown (e.g. before the first WindowSizeMsg, or in tests)
+// it returns a large number so every row renders.
+func (m Model) listCapacity() int {
+	const chrome = 10 // title/tabs, box borders, column header, indicator, status, help, srcfile
+	if m.height <= 0 {
+		return 1 << 30
+	}
+	if c := m.height - chrome; c > 1 {
+		return c
+	}
+	return 1
+}
+
+// moveCursor shifts the cursor by delta (clamped) and keeps it visible.
+func (m *Model) moveCursor(p pane, delta int) {
+	n := m.rowCountFor(p)
+	cur := m.cursor[p] + delta
+	if cur < 0 {
+		cur = 0
+	}
+	if cur > n-1 {
+		cur = n - 1
+	}
+	if cur < 0 {
+		cur = 0
+	}
+	m.cursor[p] = cur
+	m.ensureVisible(p)
+}
+
+// ensureVisible scrolls pane p so its cursor row is within the viewport.
+func (m *Model) ensureVisible(p pane) {
+	cap := m.listCapacity()
+	n := m.rowCountFor(p)
+	if n == 0 {
+		m.scroll[p] = 0
+		return
+	}
+	cur := m.cursor[p]
+	if cur < m.scroll[p] {
+		m.scroll[p] = cur
+	}
+	if cur >= m.scroll[p]+cap {
+		m.scroll[p] = cur - cap + 1
+	}
+	if max := n - cap; m.scroll[p] > max {
+		m.scroll[p] = max
+	}
+	if m.scroll[p] < 0 {
+		m.scroll[p] = 0
+	}
+}
+
+// window returns the [start, end) row range visible for pane p.
+func (m Model) window(p pane) (int, int) {
+	cap := m.listCapacity()
+	n := m.rowCountFor(p)
+	start := m.scroll[p]
+	if start > n-cap {
+		start = n - cap
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + cap
+	if end > n {
+		end = n
+	}
+	return start, end
+}
+
+// scrollIndicator is a dim "rows X–Y of N" line shown when a pane overflows.
+func (m Model) scrollIndicator(p pane) string {
+	n := m.rowCountFor(p)
+	start, end := m.window(p)
+	if start == 0 && end == n {
+		return "" // everything fits
+	}
+	arrows := ""
+	if start > 0 {
+		arrows += " ↑"
+	}
+	if end < n {
+		arrows += " ↓"
+	}
+	return dimStyle.Render(fmt.Sprintf("  rows %d–%d of %d%s", start+1, end, n, arrows))
 }
 
 func (m *Model) clampCursors() {
@@ -1443,7 +1553,9 @@ func (m Model) viewKeys() string {
 	}
 	usedBy := m.hostsByKey()
 	lines := []string{headerStyle.Render(fmt.Sprintf("  %1s %-20s %-11s %s", " ", "name", "algo", "comment / hosts"))}
-	for i, id := range m.ids {
+	start, end := m.window(paneKeys)
+	for i := start; i < end; i++ {
+		id := m.ids[i]
 		glyph := glyphUnloaded
 		glyphStyle := dimStyle
 		if id.LoadedInAgent {
@@ -1471,6 +1583,9 @@ func (m Model) viewKeys() string {
 		}
 		lines = append(lines, m.listRow(paneKeys, i, plain, styled))
 	}
+	if ind := m.scrollIndicator(paneKeys); ind != "" {
+		lines = append(lines, ind)
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -1491,7 +1606,9 @@ func (m Model) viewHosts() string {
 		return dimStyle.Render("no hosts found")
 	}
 	lines := []string{headerStyle.Render(fmt.Sprintf("  %-20s %s", "host", "destination"))}
-	for i, h := range m.hosts {
+	start, end := m.window(paneHosts)
+	for i := start; i < end; i++ {
+		h := m.hosts[i]
 		dest := h.Hostname
 		if h.User != "" {
 			dest = h.User + "@" + dest
@@ -1513,6 +1630,9 @@ func (m Model) viewHosts() string {
 		plain := nameCol + " " + dest
 		styled := nameCol + " " + dimStyle.Render(dest)
 		lines = append(lines, m.listRow(paneHosts, i, plain, styled))
+	}
+	if ind := m.scrollIndicator(paneHosts); ind != "" {
+		lines = append(lines, ind)
 	}
 	return strings.Join(lines, "\n")
 }

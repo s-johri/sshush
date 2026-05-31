@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -819,6 +820,67 @@ func TestKeysShowAssociatedHosts(t *testing.T) {
 	used := m.hostsByKey()
 	if len(used["id_a"]) != 2 || len(used["id_b"]) != 0 {
 		t.Errorf("hostsByKey wrong: %v", used)
+	}
+}
+
+func manyKeysSnap(n int) *config.SshConfigModel {
+	ids := map[config.IdentityID]config.Identity{}
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("id_%02d", i)
+		ids[config.IdentityID(name)] = config.Identity{ID: config.IdentityID(name), Name: name, ExistsOnDisk: true}
+	}
+	return &config.SshConfigModel{Identities: ids}
+}
+
+func TestScrollKeepsCursorVisible(t *testing.T) {
+	snap := manyKeysSnap(20)
+	m := New(&fakeService{model: snap})
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 15}) // cap = 15 - 10 = 5
+	m = feed(m, refreshedMsg{model: snap})
+
+	if cap := m.listCapacity(); cap != 5 {
+		t.Fatalf("capacity = %d, want 5", cap)
+	}
+	// Move down past the first window; scroll should follow the cursor.
+	for i := 0; i < 6; i++ {
+		m = feed(m, key("j"))
+	}
+	if m.cursor[paneKeys] != 6 {
+		t.Fatalf("cursor = %d, want 6", m.cursor[paneKeys])
+	}
+	start, end := m.window(paneKeys)
+	if !(m.cursor[paneKeys] >= start && m.cursor[paneKeys] < end) {
+		t.Errorf("cursor %d not in window [%d,%d)", m.cursor[paneKeys], start, end)
+	}
+	if end-start != 5 {
+		t.Errorf("window size %d, want 5", end-start)
+	}
+	if !strings.Contains(m.View(), "rows ") || !strings.Contains(m.View(), "of 20") {
+		t.Errorf("expected scroll indicator:\n%s", m.View())
+	}
+}
+
+func TestPageAndEndKeys(t *testing.T) {
+	snap := manyKeysSnap(30)
+	m := New(&fakeService{model: snap})
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 16}) // cap = 6
+	m = feed(m, refreshedMsg{model: snap})
+
+	m = feed(m, tea.KeyMsg{Type: tea.KeyPgDown})
+	if m.cursor[paneKeys] != 6 {
+		t.Errorf("pgdown cursor = %d, want 6", m.cursor[paneKeys])
+	}
+	m = feed(m, key("G")) // jump to end
+	if m.cursor[paneKeys] != 29 {
+		t.Errorf("end cursor = %d, want 29", m.cursor[paneKeys])
+	}
+	start, end := m.window(paneKeys)
+	if end != 30 || m.cursor[paneKeys] < start {
+		t.Errorf("end-of-list window wrong: [%d,%d)", start, end)
+	}
+	m = feed(m, key("g")) // jump home
+	if m.cursor[paneKeys] != 0 || m.scroll[paneKeys] != 0 {
+		t.Errorf("home not at top: cursor=%d scroll=%d", m.cursor[paneKeys], m.scroll[paneKeys])
 	}
 }
 

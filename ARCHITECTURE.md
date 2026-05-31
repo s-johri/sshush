@@ -2,11 +2,12 @@
 
 Interactive CLI/TUI to switch SSH keys, inspect the agent, view hosts, and edit SSH config.
 
-**Status:** milestones 0–15 shipped — full read/merge pipeline, agent switch
-(load/unload/unload-all), host directive + key/host CRUD with backup+confirm,
-wildcard hosts, key↔host association, hot reload, app config with default-identity
-auto-load, lipgloss styling, and a versioned self-update/release pipeline. The
-roadmap below (M16+) carries the work to `v1.0.0` and beyond. Tests cover every
+**Status:** milestones 0–17 shipped (tagged `v0.2.0`) — full read/merge pipeline,
+agent switch (load/unload/unload-all), host directive + key/host CRUD with
+backup+confirm, wildcard hosts, key↔host association, hot reload, app config with
+default-identity auto-load, configurable SSH dir/config path, multi-algorithm key
+generation, lipgloss styling, and a versioned self-update/release pipeline. The
+roadmap below (M18+) carries the work to `v1.0.0` and beyond. Tests cover every
 `pkg`; see [README.md](README.md) for usage.
 
 ## Decisions (locked)
@@ -32,7 +33,7 @@ pkg/sshconfig/         parse + round-trip write (kevinburke wrapper)
 pkg/keys/              scan ~/.ssh for keypairs; generate/delete keys
 pkg/agent/             agent client: List (Go proto), Add/Remove/RemoveAll (exec ssh-add)
 pkg/service/           orchestrator: builds unified model, mediates mutations
-pkg/appconfig/         sshush settings (default identity) at ~/.config/sshush
+pkg/appconfig/         sshush settings (default identity, SSH dir/config overrides) at ~/.config/sshush
 pkg/watch/             fsnotify wrapper, debounced change signals (hot reload)
 internal/tui/          BubbleTea views/update — thin, no IO of its own
 ```
