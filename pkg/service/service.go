@@ -6,10 +6,12 @@ package service
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
+	"github.com/s-johri/sshush/pkg/perms"
 	"github.com/s-johri/sshush/pkg/sshconfig"
 )
 
@@ -31,6 +33,8 @@ type Service interface {
 	DeleteHost(config.HostID) error
 	GenerateKey(keys.GenerateOpts) (config.Identity, error)
 	DeleteKey(config.IdentityID) error
+	AuditPermissions() ([]perms.Issue, error)
+	FixPermissions([]perms.Issue) error
 }
 
 // App is the default Service, wiring the three repositories together.
@@ -145,6 +149,40 @@ func (a *App) RemoveKeyFromAgent(id config.IdentityID) error {
 // UnloadAllKeys drops every identity from the agent in one call.
 func (a *App) UnloadAllKeys() error {
 	return a.Agent.RemoveAll()
+}
+
+// AuditPermissions checks the SSH directory, config files, and private keys for
+// over-permissive modes that SSH would reject. Requires a prior Refresh.
+func (a *App) AuditPermissions() ([]perms.Issue, error) {
+	if a.model == nil {
+		return nil, errors.New("no snapshot loaded; call Refresh first")
+	}
+	configFiles := a.model.SourceFiles
+	var keyPaths []string
+	for _, id := range a.model.Identities {
+		if id.ExistsOnDisk && id.Path != "" {
+			keyPaths = append(keyPaths, id.Path)
+		}
+	}
+	sshDir := ""
+	switch {
+	case len(configFiles) > 0:
+		sshDir = filepath.Dir(configFiles[0])
+	case len(keyPaths) > 0:
+		sshDir = filepath.Dir(keyPaths[0])
+	}
+	return perms.Audit(sshDir, configFiles, keyPaths), nil
+}
+
+// FixPermissions chmods each issue to its suggested mode, stopping at the first
+// error.
+func (a *App) FixPermissions(issues []perms.Issue) error {
+	for _, i := range issues {
+		if err := perms.Fix(i); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // diskIdentity returns a cached identity that has a usable on-disk key path.

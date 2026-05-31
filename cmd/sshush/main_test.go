@@ -5,6 +5,7 @@ import (
 
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
+	"github.com/s-johri/sshush/pkg/perms"
 )
 
 // stubService implements service.Service; Refresh returns a fixed model and
@@ -30,7 +31,9 @@ func (s *stubService) DeleteHost(config.HostID) error                   { return
 func (s *stubService) GenerateKey(keys.GenerateOpts) (config.Identity, error) {
 	return config.Identity{}, nil
 }
-func (s *stubService) DeleteKey(config.IdentityID) error { return nil }
+func (s *stubService) DeleteKey(config.IdentityID) error        { return nil }
+func (s *stubService) AuditPermissions() ([]perms.Issue, error) { return nil, nil }
+func (s *stubService) FixPermissions([]perms.Issue) error       { return nil }
 
 func modelWith(id config.Identity) *config.SshConfigModel {
 	return &config.SshConfigModel{

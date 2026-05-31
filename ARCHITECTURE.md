@@ -162,17 +162,17 @@ users get value before 1.0; the API/config surface only freezes at the RC.
 | 21 | Permissions audit + fix (`~/.ssh`, keys, `config`, `authorized_keys` modes) | low |
 | 22 | `known_hosts` management (view/search, remove stale/changed keys) | low |
 | 23 | Copy to clipboard (public key / fingerprint / ready `ssh` command) | low |
-| 🏷 | **v0.4.0** — perms fix, known_hosts, clipboard | — |
+| 🏷 | **v0.4.0** — perms fix, known_hosts, clipboard, multi-default, smart shell-init | — |
 | 24 | Help overlay (`?`) + `NO_COLOR`, narrow-terminal, non-TTY handling | low |
 | 25 | Styling / polish pass + opt-in motion system | low |
-| 26 | Custom themes — user-configurable color palette | low |
-| 🏷 | **v0.5.0** — help overlay + polish/motion + theming | — |
+| 26 | Themes — palette config, in-app switcher, open-source presets, randomize/reset | low |
+| 🏷 | **v0.5.0** — help overlay + adaptive layout + polish/motion + theming | — |
 | 27 | `Match` block + broader directive support (read/display, edit-safe) | medium |
 | 28 | Restore-from-backup (undo last write) command/action | low |
 | 🏷 | **v0.6.0** — Match/advanced directives + undo | — |
 | 29 | Integration tests (real agent/keygen e2e) + CI matrix (linux/macOS) | low |
 | 30 | Packaging: Homebrew tap, AUR, shell completions, man page | low |
-| 🏷 | **v0.7.0** — e2e/CI hardening + packaging | — |
+| 🏷 | **v0.7.0** — e2e/CI hardening + packaging + install script + update-check | — |
 | 31 | v1.0 stabilization: error-handling audit, config schema freeze, docs/screenshots, CHANGELOG | low |
 | 🏷 | **v0.9.0** — release candidate (feature-complete, schema frozen) | — |
 | — | soak period: bug-fix-only patch releases (v0.9.x) from real-world use | — |
@@ -195,6 +195,63 @@ bump. The "why it hurts" column is the user pain sshush removes.
 
 Connectivity actions (20, 32, 37) reuse the `tea.ExecProcess` terminal-handover
 pattern already used for `ssh-add`/`ssh-keygen`.
+
+### Additional planned work
+
+Newer asks, with the release window they slot into. Numbered 39+; they fold into
+the existing windows above (not a separate phase).
+
+| # | Feature | Why / note | Target |
+|---|---------|-----------|--------|
+| 39 | Multiple default identities | auto-load several keys on startup, not just one — teams juggle work+personal+deploy keys. `default_identities = [...]` in `config.toml`; `s` toggles membership; `load-default` loads all | v0.4.0 |
+| 40 | Smart `shell-init` | detect whether the snippet is already in `~/.bashrc`/`~/.zshrc`: nudge to add it when a default is set (only if absent), and warn on `shell-init` if a stub is already present (avoid duplicates) | v0.4.0 |
+| 41 | Adaptive layout | use whatever terminal real-estate exists: wide → two-column (Keys + Hosts side by side, or a detail pane on the right); tall → fill vertical space, more rows + a details/preview region. Responsive breakpoints off `m.width`/`m.height` | v0.5.0 |
+| 42 | Auto update-check on launch | async, non-blocking: check latest release in a `tea.Cmd`, surface "update available → run `sshush update`" as a transient status. Off for `dev` builds; respects a `check_updates = false` setting | v0.7.0 |
+| 43 | `curl \| bash` install script | host an `install.sh` (detect OS/arch → download the right release asset + checksum verify → drop `sshush` on PATH); one-line install in the README | v0.7.0 |
+
+### Beyond v1.0 — fun & flair
+
+| # | Feature | Note | Target |
+|---|---------|------|--------|
+| 44 | Loud / "make some noise" mode | arcade-style SFX (Pokémon/Mario energy) on load/switch/error/connect. Independent on/off toggle, but **only active when motion ≠ off**; intensity rides alongside motion. Audio via a small embedded-asset player (e.g. `beep`/`oto`); fully optional, silent by default | v1.5.0 |
+| 45 | Stripped build + `sshush update --stripped` | a build tag that excludes the sound assets (smaller binary, Loud mode disabled); `update --stripped` fetches that variant. goreleaser produces both | v1.5.0 |
+
+### Bigger bets (separate track)
+
+Not gating any version; standalone projects that amplify the tool.
+
+- **Website + interactive playground.** A landing site with a live, in-browser
+  sshush demo. Back it with throwaway **Docker containers** that simulate SSH
+  configs/keys/hosts so visitors can really drive it. **Guardrail:** containers run
+  on an isolated Docker network with egress blocked — connections never leave the
+  internal network (no real hosts reachable). Likely a WASM TUI or a
+  ttyd/websocket-streamed terminal per session, with hard session timeouts and
+  resource caps.
+
+### More problems sshush could solve (backlog, unscheduled)
+
+Candidate ideas beyond the numbered roadmap — pulled in as they prove valuable:
+
+- **Config lint** — flag duplicate `Host` aliases, unreachable/overshadowed blocks,
+  invalid option values, `IdentityFile`s that don't exist on disk.
+- **Diff preview before write** — show a unified diff of pending config changes in
+  the confirm step (not just "Set X to Y").
+- **Host groups / tags + favorites** — label and pin hosts; filter by tag; a
+  favorites view for the handful you actually use.
+- **Recent / frequent hosts** — track connects (locally) and surface a quick-connect
+  list ordered by usage.
+- **Port-forward manager** — UI for `LocalForward`/`RemoteForward`/`DynamicForward`,
+  and launch a forward as a background session.
+- **ProxyJump / bastion builder** — visualize and assemble jump chains.
+- **Bulk operations** — attach a key to N hosts, set an option across a selection.
+- **Key comment editor** — `ssh-keygen -c` to rename a key's comment in place.
+- **Security warnings** — world-readable keys, keys tracked in a git repo, agent
+  forwarding enabled to untrusted hosts.
+- **Export host as command** — copy a ready `ssh`/`scp`/`sftp` invocation, or an
+  `~/.ssh/config` snippet, for sharing.
+- **Profiles / context switch** — quick toggle between separate `~/.ssh` sets
+  (work vs personal) building on the configurable SSH dir.
+- **Command palette** — fuzzy action launcher (`Ctrl+K`) across hosts + commands.
 
 ### Milestone 9 detail
 
@@ -354,9 +411,16 @@ ticker when idle) and respect the off switch unconditionally.
 Let users theme the UI. The styling already centralizes colors in named palette
 constants (`colPrimary`, `colAccent`, …) — lift them into a `Theme` struct built
 from those defaults, and let `config.toml` override any entry (hex or 256-color
-index) under a `[theme]` table. Ship a couple of presets (e.g. default, mono,
-high-contrast) selectable by name; unknown/partial themes fall back per-field to
-defaults. Honors M24's `NO_COLOR` (theme ignored when color is off).
+index) under a `[theme]` table. Honors M24's `NO_COLOR` (theme ignored when
+color is off; unknown/partial themes fall back per-field to defaults).
+
+- **Presets**: ship built-in named presets, including popular open-source palettes
+  (Dracula, Gruvbox, Nord, Catppuccin, Solarized, Tokyo Night, …) plus default /
+  mono / high-contrast.
+- **In-app switcher**: a theme picker overlay (live preview as you scroll), persisting
+  the choice to `config.toml`.
+- **Randomize / reset**: a key to roll a random theme (from presets or generated
+  palette) and one to reset to the default. Useful for demos/fun.
 
 ### Milestone 27 detail
 

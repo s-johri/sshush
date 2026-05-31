@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
+	"github.com/s-johri/sshush/pkg/perms"
 )
 
 type fakeService struct {
@@ -23,6 +24,9 @@ type fakeService struct {
 	unloadedAll  int
 	attached     []string
 	detached     []string
+	permIssues   []perms.Issue
+	permErr      error
+	fixedPerms   int
 }
 
 func (f *fakeService) Refresh() (*config.SshConfigModel, error)   { return f.model, f.err }
@@ -59,6 +63,11 @@ func (f *fakeService) GenerateKey(o keys.GenerateOpts) (config.Identity, error) 
 }
 func (f *fakeService) DeleteKey(id config.IdentityID) error {
 	f.deletedKeys = append(f.deletedKeys, id)
+	return nil
+}
+func (f *fakeService) AuditPermissions() ([]perms.Issue, error) { return f.permIssues, f.permErr }
+func (f *fakeService) FixPermissions(is []perms.Issue) error {
+	f.fixedPerms += len(is)
 	return nil
 }
 
@@ -1116,6 +1125,56 @@ func TestEndKeyOnEmptyList(t *testing.T) {
 	m = feed(m, key("G"))
 	if m.cursor[paneKeys] != 0 {
 		t.Errorf("end on empty list left cursor at %d, want 0", m.cursor[paneKeys])
+	}
+}
+
+func TestPermsAuditAndFix(t *testing.T) {
+	svc := &fakeService{model: snapshot(), permIssues: []perms.Issue{
+		{Path: "/home/u/.ssh/id_rsa", Kind: perms.KeyKind, Got: 0o644, Want: 0o600, Why: "too open"},
+	}}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	m = feed(m, key("P"))
+	if m.mode != modePerms {
+		t.Fatalf("expected modePerms, got %d", m.mode)
+	}
+	if !strings.Contains(m.View(), "id_rsa") || !strings.Contains(m.View(), "0600") {
+		t.Errorf("perms overlay should list the issue:\n%s", m.View())
+	}
+
+	m = feed(m, key("y")) // confirm fix
+	if svc.fixedPerms != 1 {
+		t.Errorf("FixPermissions called for %d issues, want 1", svc.fixedPerms)
+	}
+	if m.mode != modeNormal || !strings.Contains(m.status, "fixed permissions") {
+		t.Errorf("after fix: mode=%d status=%q", m.mode, m.status)
+	}
+}
+
+func TestPermsNoIssues(t *testing.T) {
+	svc := &fakeService{model: snapshot()} // no issues
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("P"))
+	if m.mode != modeNormal || !strings.Contains(m.status, "permissions OK") {
+		t.Errorf("clean audit: mode=%d status=%q", m.mode, m.status)
+	}
+}
+
+func TestPermsCancelNoFix(t *testing.T) {
+	svc := &fakeService{model: snapshot(), permIssues: []perms.Issue{
+		{Path: "/x", Kind: perms.DirKind, Got: 0o755, Want: 0o700},
+	}}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("P"))
+	m = feed(m, key("n")) // cancel
+	if svc.fixedPerms != 0 {
+		t.Errorf("cancel must not fix: %d", svc.fixedPerms)
+	}
+	if m.mode != modeNormal {
+		t.Errorf("cancel should return to normal: %d", m.mode)
 	}
 }
 

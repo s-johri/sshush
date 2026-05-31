@@ -22,6 +22,7 @@ import (
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
+	"github.com/s-johri/sshush/pkg/perms"
 	"github.com/s-johri/sshush/pkg/service"
 	"github.com/s-johri/sshush/pkg/watch"
 )
@@ -119,6 +120,7 @@ const (
 	modeConfirmDelHost          // confirming whole-host removal
 	modeConfirmDelKey           // confirming key-file deletion (irreversible)
 	modeKeyPicker               // attaching/detaching keys to a host
+	modePerms                   // reviewing/fixing permission issues
 )
 
 // coreFields are always offered for editing; a host's existing option keys are
@@ -195,6 +197,9 @@ type Model struct {
 
 	// key picker (attach/detach identities to pendingHost)
 	pickerCursor int
+
+	// permission audit
+	permIssues []perms.Issue
 
 	// hot reload
 	watcher         fileWatcher
@@ -504,6 +509,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleDeleteConfirm(msg)
 	case modeKeyPicker:
 		return m.handlePicker(msg)
+	case modePerms:
+		return m.handlePermsKey(msg)
 	}
 
 	// The filter input (when focused) captures keys before pane navigation.
@@ -575,10 +582,49 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.beginNew()
 	case "d":
 		return m.beginDelete()
+	case "P":
+		return m.beginPermsAudit()
 	case "r":
 		m.loading = true
 		return m, m.refresh
 	}
+	return m, nil
+}
+
+// beginPermsAudit checks SSH file permissions and, if any are too permissive,
+// opens a confirm-gated fix overlay.
+func (m Model) beginPermsAudit() (tea.Model, tea.Cmd) {
+	issues, err := m.svc.AuditPermissions()
+	if err != nil {
+		m.status = "permission audit: " + err.Error()
+		return m, nil
+	}
+	if len(issues) == 0 {
+		m.status = "permissions OK"
+		return m, nil
+	}
+	m.permIssues = issues
+	m.mode = modePerms
+	m.status = ""
+	return m, nil
+}
+
+// handlePermsKey gates the chmod fix: only "y" applies it.
+func (m Model) handlePermsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() != "y" && msg.String() != "Y" {
+		m.mode = modeNormal
+		m.status = "permissions unchanged"
+		return m, nil
+	}
+	n := len(m.permIssues)
+	err := m.svc.FixPermissions(m.permIssues)
+	m.mode = modeNormal
+	m.permIssues = nil
+	if err != nil {
+		m.status = "fix failed: " + err.Error()
+		return m, nil
+	}
+	m.status = fmt.Sprintf("fixed permissions on %d file(s)", n)
 	return m, nil
 }
 
@@ -1488,6 +1534,8 @@ func (m Model) View() string {
 		return m.card(m.viewDeleteConfirm(true))
 	case modeKeyPicker:
 		return m.card(m.viewPicker())
+	case modePerms:
+		return m.card(m.viewPerms())
 	}
 
 	header := appTitleStyle.Render("sshush") + "   " + m.renderTabs()
@@ -1636,6 +1684,22 @@ func (m Model) viewKeyBits() string {
 	return b.String()
 }
 
+// viewPerms lists the permission issues found and gates the chmod fix.
+func (m Model) viewPerms() string {
+	var b strings.Builder
+	b.WriteString(errStyle.Render("Permission issues — ssh may reject these") + "\n\n")
+	for _, i := range m.permIssues {
+		b.WriteString(fmt.Sprintf("  %s  %s→%s  %s\n",
+			i.Path,
+			dimStyle.Render(fmt.Sprintf("%04o", i.Got)),
+			starStyle.Render(fmt.Sprintf("%04o", i.Want)),
+			dimStyle.Render(i.Why)))
+	}
+	b.WriteString("\n  " + keyCap.Render("y") + " fix all (chmod)    " + keyCap.Render("n") + " cancel")
+	b.WriteString("\n")
+	return b.String()
+}
+
 // viewPrompt renders a single-line text prompt (new host / new key).
 func (m Model) viewPrompt(title, hint string) string {
 	var b strings.Builder
@@ -1721,7 +1785,7 @@ type helpGroup struct {
 // helpGroups returns the keybinding hints for the active pane, grouped into
 // labeled categories for a less cluttered footer.
 func (m Model) helpGroups() []helpGroup {
-	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"tab", "panes"}, {"r", "refresh"}, {"q", "quit"}}}
+	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"P", "perms"}, {"tab", "panes"}, {"r", "refresh"}, {"q", "quit"}}}
 	if m.active == paneKeys {
 		return []helpGroup{
 			{"agent", []helpItem{{"↵", "load/unload"}, {"U", "unload all"}, {"s", "default"}}},
