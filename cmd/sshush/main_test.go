@@ -5,6 +5,7 @@ import (
 
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
+	"github.com/s-johri/sshush/pkg/knownhosts"
 	"github.com/s-johri/sshush/pkg/perms"
 )
 
@@ -34,6 +35,8 @@ func (s *stubService) GenerateKey(keys.GenerateOpts) (config.Identity, error) {
 func (s *stubService) DeleteKey(config.IdentityID) error        { return nil }
 func (s *stubService) AuditPermissions() ([]perms.Issue, error) { return nil, nil }
 func (s *stubService) FixPermissions([]perms.Issue) error       { return nil }
+func (s *stubService) KnownHosts() ([]knownhosts.Entry, error)  { return nil, nil }
+func (s *stubService) RemoveKnownHost(int) error                { return nil }
 
 func modelWith(id config.Identity) *config.SshConfigModel {
 	return &config.SshConfigModel{

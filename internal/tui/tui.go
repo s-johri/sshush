@@ -22,6 +22,7 @@ import (
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
+	"github.com/s-johri/sshush/pkg/knownhosts"
 	"github.com/s-johri/sshush/pkg/perms"
 	"github.com/s-johri/sshush/pkg/service"
 	"github.com/s-johri/sshush/pkg/watch"
@@ -121,6 +122,7 @@ const (
 	modeConfirmDelKey           // confirming key-file deletion (irreversible)
 	modeKeyPicker               // attaching/detaching keys to a host
 	modePerms                   // reviewing/fixing permission issues
+	modeKnownHosts              // browsing/removing known_hosts entries
 )
 
 // coreFields are always offered for editing; a host's existing option keys are
@@ -200,6 +202,12 @@ type Model struct {
 
 	// permission audit
 	permIssues []perms.Issue
+
+	// known_hosts browser
+	khEntries []knownhosts.Entry
+	khCursor  int
+	khScroll  int
+	khConfirm bool // confirming removal of the selected entry
 
 	// hot reload
 	watcher         fileWatcher
@@ -511,6 +519,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePicker(msg)
 	case modePerms:
 		return m.handlePermsKey(msg)
+	case modeKnownHosts:
+		return m.handleKnownHostsKey(msg)
 	}
 
 	// The filter input (when focused) captures keys before pane navigation.
@@ -584,6 +594,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.beginDelete()
 	case "P":
 		return m.beginPermsAudit()
+	case "K":
+		return m.beginKnownHosts()
 	case "r":
 		m.loading = true
 		return m, m.refresh
@@ -607,6 +619,125 @@ func (m Model) beginPermsAudit() (tea.Model, tea.Cmd) {
 	m.mode = modePerms
 	m.status = ""
 	return m, nil
+}
+
+// beginKnownHosts loads known_hosts entries into a browsable overlay.
+func (m Model) beginKnownHosts() (tea.Model, tea.Cmd) {
+	entries, err := m.svc.KnownHosts()
+	if err != nil {
+		m.status = "known_hosts: " + err.Error()
+		return m, nil
+	}
+	if len(entries) == 0 {
+		m.status = "no known_hosts entries"
+		return m, nil
+	}
+	m.khEntries = entries
+	m.khCursor = 0
+	m.khScroll = 0
+	m.khConfirm = false
+	m.mode = modeKnownHosts
+	m.status = ""
+	return m, nil
+}
+
+// handleKnownHostsKey drives the known_hosts overlay: navigate, and remove the
+// selected entry (confirm-gated).
+func (m Model) handleKnownHostsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.khConfirm {
+		if msg.String() == "y" || msg.String() == "Y" {
+			return m.removeSelectedKnownHost()
+		}
+		m.khConfirm = false
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc", "q":
+		m.mode = modeNormal
+		return m, nil
+	case "up", "k":
+		if m.khCursor > 0 {
+			m.khCursor--
+		}
+		m.khEnsureVisible()
+	case "down", "j":
+		if m.khCursor < len(m.khEntries)-1 {
+			m.khCursor++
+		}
+		m.khEnsureVisible()
+	case "d", "enter":
+		if len(m.khEntries) > 0 {
+			m.khConfirm = true
+		}
+	}
+	return m, nil
+}
+
+// removeSelectedKnownHost deletes the highlighted entry and reloads the list.
+func (m Model) removeSelectedKnownHost() (tea.Model, tea.Cmd) {
+	ent := m.khEntries[m.khCursor]
+	m.khConfirm = false
+	if err := m.svc.RemoveKnownHost(ent.Line); err != nil {
+		m.status = "remove failed: " + err.Error()
+		m.mode = modeNormal
+		return m, nil
+	}
+	entries, _ := m.svc.KnownHosts()
+	m.khEntries = entries
+	if m.khCursor >= len(entries) {
+		m.khCursor = len(entries) - 1
+	}
+	if m.khCursor < 0 {
+		m.khCursor = 0
+	}
+	m.khEnsureVisible()
+	m.status = "removed known_hosts entry (backup written)"
+	if len(entries) == 0 {
+		m.mode = modeNormal
+	}
+	return m, nil
+}
+
+// khCapacity / khWindow / khEnsureVisible mirror the pane viewport logic for the
+// known_hosts overlay.
+func (m Model) khCapacity() int {
+	if m.height <= 0 {
+		return 1 << 30
+	}
+	if c := m.height - 9; c > 1 {
+		return c
+	}
+	return 1
+}
+
+func (m Model) khWindow() (int, int) {
+	cap := m.khCapacity()
+	n := len(m.khEntries)
+	start := m.khScroll
+	if start > n-cap {
+		start = n - cap
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + cap
+	if end > n {
+		end = n
+	}
+	return start, end
+}
+
+func (m *Model) khEnsureVisible() {
+	cap := m.khCapacity()
+	if m.khCursor < m.khScroll {
+		m.khScroll = m.khCursor
+	}
+	if m.khCursor >= m.khScroll+cap {
+		m.khScroll = m.khCursor - cap + 1
+	}
+	if m.khScroll < 0 {
+		m.khScroll = 0
+	}
 }
 
 // handlePermsKey gates the chmod fix: only "y" applies it.
@@ -1536,6 +1667,8 @@ func (m Model) View() string {
 		return m.card(m.viewPicker())
 	case modePerms:
 		return m.card(m.viewPerms())
+	case modeKnownHosts:
+		return m.card(m.viewKnownHosts())
 	}
 
 	header := appTitleStyle.Render("sshush") + "   " + m.renderTabs()
@@ -1684,6 +1817,41 @@ func (m Model) viewKeyBits() string {
 	return b.String()
 }
 
+// viewKnownHosts renders the known_hosts browser with a removal confirm gate.
+func (m Model) viewKnownHosts() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(fmt.Sprintf("known_hosts — %d entries", len(m.khEntries))) + "\n\n")
+
+	start, end := m.khWindow()
+	for i := start; i < end; i++ {
+		e := m.khEntries[i]
+		host := e.Display()
+		if e.Hashed {
+			host = dimStyle.Render(host)
+		}
+		line := fmt.Sprintf("%-28s %-20s %s", host, e.KeyType, dimStyle.Render(e.Fingerprint))
+		if i == m.khCursor {
+			b.WriteString(selectedRow.Render("▸ "+line) + "\n")
+		} else {
+			b.WriteString("  " + line + "\n")
+		}
+	}
+	if start > 0 || end < len(m.khEntries) {
+		b.WriteString(dimStyle.Render(fmt.Sprintf("  rows %d–%d of %d\n", start+1, end, len(m.khEntries))))
+	}
+
+	b.WriteString("\n")
+	if m.khConfirm {
+		sel := m.khEntries[m.khCursor]
+		b.WriteString(errStyle.Render(fmt.Sprintf("  remove key for %s?  ", sel.Display())) +
+			keyCap.Render("y") + " yes  " + keyCap.Render("n") + " no")
+	} else {
+		b.WriteString(dimStyle.Render("  ↑/↓ move · d remove · esc close"))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
 // viewPerms lists the permission issues found and gates the chmod fix.
 func (m Model) viewPerms() string {
 	var b strings.Builder
@@ -1785,7 +1953,7 @@ type helpGroup struct {
 // helpGroups returns the keybinding hints for the active pane, grouped into
 // labeled categories for a less cluttered footer.
 func (m Model) helpGroups() []helpGroup {
-	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"P", "perms"}, {"tab", "panes"}, {"r", "refresh"}, {"q", "quit"}}}
+	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"P", "perms"}, {"K", "known_hosts"}, {"tab", "panes"}, {"r", "refresh"}, {"q", "quit"}}}
 	if m.active == paneKeys {
 		return []helpGroup{
 			{"agent", []helpItem{{"↵", "load/unload"}, {"U", "unload all"}, {"s", "default"}}},

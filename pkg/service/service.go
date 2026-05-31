@@ -11,6 +11,7 @@ import (
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
+	"github.com/s-johri/sshush/pkg/knownhosts"
 	"github.com/s-johri/sshush/pkg/perms"
 	"github.com/s-johri/sshush/pkg/sshconfig"
 )
@@ -35,6 +36,8 @@ type Service interface {
 	DeleteKey(config.IdentityID) error
 	AuditPermissions() ([]perms.Issue, error)
 	FixPermissions([]perms.Issue) error
+	KnownHosts() ([]knownhosts.Entry, error)
+	RemoveKnownHost(line int) error
 }
 
 // App is the default Service, wiring the three repositories together.
@@ -164,14 +167,42 @@ func (a *App) AuditPermissions() ([]perms.Issue, error) {
 			keyPaths = append(keyPaths, id.Path)
 		}
 	}
-	sshDir := ""
-	switch {
-	case len(configFiles) > 0:
-		sshDir = filepath.Dir(configFiles[0])
-	case len(keyPaths) > 0:
-		sshDir = filepath.Dir(keyPaths[0])
+	return perms.Audit(a.sshDirHint(), configFiles, keyPaths), nil
+}
+
+// sshDirHint guesses the SSH directory from the cached snapshot (config dir, or
+// a key's dir), or "" to let callers fall back to ~/.ssh.
+func (a *App) sshDirHint() string {
+	if a.model == nil {
+		return ""
 	}
-	return perms.Audit(sshDir, configFiles, keyPaths), nil
+	if len(a.model.SourceFiles) > 0 {
+		return filepath.Dir(a.model.SourceFiles[0])
+	}
+	for _, id := range a.model.Identities {
+		if id.Path != "" {
+			return filepath.Dir(id.Path)
+		}
+	}
+	return ""
+}
+
+// KnownHosts parses the known_hosts file under the SSH directory.
+func (a *App) KnownHosts() ([]knownhosts.Entry, error) {
+	path, err := knownhosts.Path(a.sshDirHint())
+	if err != nil {
+		return nil, err
+	}
+	return knownhosts.Parse(path)
+}
+
+// RemoveKnownHost deletes a known_hosts line (backing up the file first).
+func (a *App) RemoveKnownHost(line int) error {
+	path, err := knownhosts.Path(a.sshDirHint())
+	if err != nil {
+		return err
+	}
+	return knownhosts.Remove(path, line)
 }
 
 // FixPermissions chmods each issue to its suggested mode, stopping at the first

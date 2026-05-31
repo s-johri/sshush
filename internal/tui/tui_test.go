@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
+	"github.com/s-johri/sshush/pkg/knownhosts"
 	"github.com/s-johri/sshush/pkg/perms"
 )
 
@@ -27,6 +28,9 @@ type fakeService struct {
 	permIssues   []perms.Issue
 	permErr      error
 	fixedPerms   int
+	khEntries    []knownhosts.Entry
+	khErr        error
+	khRemoved    []int
 }
 
 func (f *fakeService) Refresh() (*config.SshConfigModel, error)   { return f.model, f.err }
@@ -68,6 +72,19 @@ func (f *fakeService) DeleteKey(id config.IdentityID) error {
 func (f *fakeService) AuditPermissions() ([]perms.Issue, error) { return f.permIssues, f.permErr }
 func (f *fakeService) FixPermissions(is []perms.Issue) error {
 	f.fixedPerms += len(is)
+	return nil
+}
+func (f *fakeService) KnownHosts() ([]knownhosts.Entry, error) { return f.khEntries, f.khErr }
+func (f *fakeService) RemoveKnownHost(line int) error {
+	f.khRemoved = append(f.khRemoved, line)
+	// Simulate removal so a re-fetch reflects it.
+	var kept []knownhosts.Entry
+	for _, e := range f.khEntries {
+		if e.Line != line {
+			kept = append(kept, e)
+		}
+	}
+	f.khEntries = kept
 	return nil
 }
 
@@ -1175,6 +1192,70 @@ func TestPermsCancelNoFix(t *testing.T) {
 	}
 	if m.mode != modeNormal {
 		t.Errorf("cancel should return to normal: %d", m.mode)
+	}
+}
+
+func TestKnownHostsBrowseAndRemove(t *testing.T) {
+	svc := &fakeService{model: snapshot(), khEntries: []knownhosts.Entry{
+		{Hosts: []string{"github.com"}, KeyType: "ssh-ed25519", Fingerprint: "SHA256:aaa", Line: 0},
+		{Hosts: []string{"gitlab.com"}, KeyType: "ssh-rsa", Fingerprint: "SHA256:bbb", Line: 1},
+	}}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	m = feed(m, key("K"))
+	if m.mode != modeKnownHosts {
+		t.Fatalf("expected modeKnownHosts, got %d", m.mode)
+	}
+	if !strings.Contains(m.View(), "github.com") || !strings.Contains(m.View(), "gitlab.com") {
+		t.Errorf("known_hosts overlay should list entries:\n%s", m.View())
+	}
+
+	// Select second entry, request delete, confirm.
+	m = feed(m, key("j"))
+	if m.khCursor != 1 {
+		t.Fatalf("cursor = %d, want 1", m.khCursor)
+	}
+	m = feed(m, key("d"))
+	if !m.khConfirm {
+		t.Fatal("d should ask for confirmation")
+	}
+	m = feed(m, key("y"))
+	if len(svc.khRemoved) != 1 || svc.khRemoved[0] != 1 {
+		t.Errorf("removed lines = %v, want [1]", svc.khRemoved)
+	}
+	if len(m.khEntries) != 1 || m.khEntries[0].Hosts[0] != "github.com" {
+		t.Errorf("list not reloaded after remove: %+v", m.khEntries)
+	}
+}
+
+func TestKnownHostsEmpty(t *testing.T) {
+	m := New(&fakeService{model: snapshot()}) // no entries
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("K"))
+	if m.mode != modeNormal || !strings.Contains(m.status, "no known_hosts") {
+		t.Errorf("empty known_hosts: mode=%d status=%q", m.mode, m.status)
+	}
+}
+
+func TestKnownHostsCancelDelete(t *testing.T) {
+	svc := &fakeService{model: snapshot(), khEntries: []knownhosts.Entry{
+		{Hosts: []string{"github.com"}, KeyType: "ssh-ed25519", Line: 0},
+	}}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("K"))
+	m = feed(m, key("d"))
+	m = feed(m, key("n")) // cancel confirm
+	if m.khConfirm {
+		t.Error("n should cancel the confirm")
+	}
+	if len(svc.khRemoved) != 0 {
+		t.Errorf("cancel must not remove: %v", svc.khRemoved)
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEsc}) // close
+	if m.mode != modeNormal {
+		t.Error("esc should close the overlay")
 	}
 }
 
