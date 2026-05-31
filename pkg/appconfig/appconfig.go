@@ -7,6 +7,7 @@ package appconfig
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -15,16 +16,19 @@ import (
 
 // Config is the on-disk settings document.
 type Config struct {
-	// DefaultIdentity is the key name (Identity.Name) to load into the agent.
-	DefaultIdentity string `toml:"default_identity"`
-	// AutoLoad controls whether DefaultIdentity is loaded on startup.
-	AutoLoad bool `toml:"auto_load"`
+	// DefaultIdentities are the key names (Identity.Name) loaded into the agent
+	// on startup. A non-empty list means auto-load is on.
+	DefaultIdentities []string `toml:"default_identities"`
+
+	// DefaultIdentity is the legacy single default; migrated into
+	// DefaultIdentities on load and then dropped from the file.
+	DefaultIdentity string `toml:"default_identity,omitempty"`
 
 	// SshDir overrides the directory scanned for keys (default ~/.ssh). Relative
 	// Include directives and ~ in the config resolve against it.
-	SshDir string `toml:"ssh_dir"`
+	SshDir string `toml:"ssh_dir,omitempty"`
 	// ConfigPath overrides the SSH config file (default <ssh_dir>/config).
-	ConfigPath string `toml:"config_path"`
+	ConfigPath string `toml:"config_path,omitempty"`
 }
 
 // Store reads and writes the settings file.
@@ -51,17 +55,36 @@ func (s *Store) Load() (Config, error) {
 		}
 		return Config{}, err
 	}
+	// Migrate the legacy single default into the list.
+	if len(cfg.DefaultIdentities) == 0 && cfg.DefaultIdentity != "" {
+		cfg.DefaultIdentities = []string{cfg.DefaultIdentity}
+	}
+	cfg.DefaultIdentity = ""
 	s.cfg = cfg
 	return cfg, nil
 }
 
-// DefaultIdentity returns the configured default key name, if any.
-func (s *Store) DefaultIdentity() config.IdentityID {
-	return config.IdentityID(s.cfg.DefaultIdentity)
+// DefaultIdentities returns the configured default key names.
+func (s *Store) DefaultIdentities() []config.IdentityID {
+	out := make([]config.IdentityID, 0, len(s.cfg.DefaultIdentities))
+	for _, n := range s.cfg.DefaultIdentities {
+		out = append(out, config.IdentityID(n))
+	}
+	return out
 }
 
-// AutoLoad reports whether the default identity should load on startup.
-func (s *Store) AutoLoad() bool { return s.cfg.AutoLoad }
+// IsDefault reports whether id is one of the default identities.
+func (s *Store) IsDefault(id config.IdentityID) bool {
+	for _, n := range s.cfg.DefaultIdentities {
+		if n == string(id) {
+			return true
+		}
+	}
+	return false
+}
+
+// AutoLoad reports whether any default identities are set.
+func (s *Store) AutoLoad() bool { return len(s.cfg.DefaultIdentities) > 0 }
 
 // SshDir returns the configured SSH directory, or "" to use the default (~/.ssh).
 // Precedence: $SSHUSH_SSH_DIR > config file > default. ~ is expanded.
@@ -98,17 +121,24 @@ func expandHome(p string) string {
 	return p
 }
 
-// SetDefaultIdentity sets the default key (enabling auto-load) and persists it.
-func (s *Store) SetDefaultIdentity(id config.IdentityID) error {
-	s.cfg.DefaultIdentity = string(id)
-	s.cfg.AutoLoad = true
-	return s.save()
+// ToggleDefault adds id to the defaults if absent, or removes it if present,
+// then persists. Returns whether id is now a default.
+func (s *Store) ToggleDefault(id config.IdentityID) (bool, error) {
+	name := string(id)
+	for i, n := range s.cfg.DefaultIdentities {
+		if n == name {
+			s.cfg.DefaultIdentities = append(s.cfg.DefaultIdentities[:i], s.cfg.DefaultIdentities[i+1:]...)
+			return false, s.save()
+		}
+	}
+	s.cfg.DefaultIdentities = append(s.cfg.DefaultIdentities, name)
+	sort.Strings(s.cfg.DefaultIdentities)
+	return true, s.save()
 }
 
-// ClearDefault removes the default identity and disables auto-load.
-func (s *Store) ClearDefault() error {
-	s.cfg.DefaultIdentity = ""
-	s.cfg.AutoLoad = false
+// ClearDefaults removes all default identities.
+func (s *Store) ClearDefaults() error {
+	s.cfg.DefaultIdentities = nil
 	return s.save()
 }
 

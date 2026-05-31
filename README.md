@@ -87,7 +87,7 @@ sshush help         # show help
 |-----|--------|
 | `↵` enter / space | load / unload the selected key in the agent |
 | `U` | unload all keys from the agent |
-| `s` | set / unset the selected key as the startup default |
+| `s` | toggle the selected key in/out of the startup defaults |
 | `n` | generate a new key (`ssh-keygen`) |
 | `d` | delete the selected key's files (irreversible) |
 
@@ -132,8 +132,8 @@ sshush stores its own settings (separate from `~/.ssh/config`) at
 `$XDG_CONFIG_HOME/sshush/config.toml` (default `~/.config/sshush/config.toml`):
 
 ```toml
-default_identity = "id_ed25519"
-auto_load = true
+# Keys auto-loaded into the agent on startup (toggle with `s` in the TUI).
+default_identities = ["id_ed25519", "id_work"]
 
 # Optional: point sshush at a non-default SSH location.
 # ssh_dir resolves relative Includes and ~ in the config; config_path defaults
@@ -142,8 +142,9 @@ ssh_dir = "~/.ssh"
 config_path = "~/.ssh/config"
 ```
 
-`default_identity`/`auto_load` are managed from the TUI. The path overrides can
-also come from the environment (which takes precedence):
+`default_identities` is managed from the TUI (`s` toggles a key in/out; all are
+loaded on startup). An older `default_identity = "..."` is migrated automatically.
+The path overrides can also come from the environment (which takes precedence):
 
 ```bash
 export SSHUSH_SSH_DIR=~/work/.ssh

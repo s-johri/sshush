@@ -44,42 +44,39 @@ func modelWith(id config.Identity) *config.SshConfigModel {
 	}
 }
 
-func TestApplyDefaultLoadsWhenEligible(t *testing.T) {
-	svc := &stubService{model: modelWith(config.Identity{
-		ID: "id_ed", ExistsOnDisk: true, LoadedInAgent: false,
-	})}
-	if err := applyDefault(true, "id_ed", svc); err != nil {
+func TestApplyDefaultsLoadsEligible(t *testing.T) {
+	model := &config.SshConfigModel{Identities: map[config.IdentityID]config.Identity{
+		"id_a": {ID: "id_a", ExistsOnDisk: true},
+		"id_b": {ID: "id_b", ExistsOnDisk: true, LoadedInAgent: true}, // already loaded
+		"id_c": {ID: "id_c", ExistsOnDisk: false},                     // missing on disk
+	}}
+	svc := &stubService{model: model}
+	if err := applyDefaults([]config.IdentityID{"id_a", "id_b", "id_c"}, svc); err != nil {
 		t.Fatal(err)
 	}
-	if len(svc.added) != 1 || svc.added[0] != "id_ed" {
-		t.Errorf("default not loaded: %v", svc.added)
+	if len(svc.added) != 1 || svc.added[0] != "id_a" {
+		t.Errorf("expected only id_a loaded, got %v", svc.added)
 	}
 }
 
-func TestApplyDefaultNoOps(t *testing.T) {
+func TestApplyDefaultsNoOps(t *testing.T) {
 	loaded := modelWith(config.Identity{ID: "id_ed", ExistsOnDisk: true, LoadedInAgent: true})
-	missing := &config.SshConfigModel{Identities: map[config.IdentityID]config.Identity{}}
 
-	cases := []struct {
-		name string
-		auto bool
-		id   config.IdentityID
-		mdl  *config.SshConfigModel
-	}{
-		{"auto-load off", false, "id_ed", loaded},
-		{"no default set", true, "", loaded},
-		{"already loaded", true, "id_ed", loaded},
-		{"key missing on disk", true, "id_ed", missing},
+	// Empty list: no-op (doesn't even refresh-load anything).
+	svc := &stubService{model: loaded}
+	if err := applyDefaults(nil, svc); err != nil {
+		t.Fatal(err)
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			svc := &stubService{model: c.mdl}
-			if err := applyDefault(c.auto, c.id, svc); err != nil {
-				t.Fatal(err)
-			}
-			if len(svc.added) != 0 {
-				t.Errorf("expected no load, got %v", svc.added)
-			}
-		})
+	if len(svc.added) != 0 {
+		t.Errorf("empty list should load nothing: %v", svc.added)
+	}
+
+	// All ineligible (already loaded): no-op.
+	svc = &stubService{model: loaded}
+	if err := applyDefaults([]config.IdentityID{"id_ed"}, svc); err != nil {
+		t.Fatal(err)
+	}
+	if len(svc.added) != 0 {
+		t.Errorf("already-loaded should not reload: %v", svc.added)
 	}
 }

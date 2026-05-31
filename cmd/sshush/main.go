@@ -116,7 +116,7 @@ func runTUI() {
 	}
 }
 
-// loadDefault loads the configured default identity into the agent and exits.
+// loadDefault loads the configured default identities into the agent and exits.
 // Intended to run from a shell startup file (see `sshush shell-init`).
 func loadDefault() error {
 	settings := appconfig.New("")
@@ -124,25 +124,29 @@ func loadDefault() error {
 		return err
 	}
 	svc := newService(settings.SshDir(), settings.ConfigPath())
-	return applyDefault(settings.AutoLoad(), settings.DefaultIdentity(), svc)
+	return applyDefaults(settings.DefaultIdentities(), svc)
 }
 
-// applyDefault loads identity id into the agent via svc. It is a no-op when
-// auto-load is off, no default is set, the key is missing on disk, or it is
-// already loaded — so it is cheap and safe to call on every new shell.
-func applyDefault(autoLoad bool, id config.IdentityID, svc service.Service) error {
-	if !autoLoad || id == "" {
+// applyDefaults loads each identity into the agent via svc, skipping ones that
+// are missing on disk or already loaded — cheap and safe to call on every shell.
+func applyDefaults(ids []config.IdentityID, svc service.Service) error {
+	if len(ids) == 0 {
 		return nil
 	}
 	model, err := svc.Refresh()
 	if err != nil {
 		return err
 	}
-	ident, ok := model.Identities[id]
-	if !ok || !ident.ExistsOnDisk || ident.LoadedInAgent {
-		return nil
+	for _, id := range ids {
+		ident, ok := model.Identities[id]
+		if !ok || !ident.ExistsOnDisk || ident.LoadedInAgent {
+			continue
+		}
+		if err := svc.AddKeyToAgent(id); err != nil {
+			return err
+		}
 	}
-	return svc.AddKeyToAgent(id)
+	return nil
 }
 
 const shellSnippet = `# sshush: load the default SSH identity into the agent on shell start.

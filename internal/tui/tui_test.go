@@ -734,93 +734,98 @@ func contains(ss []string, want string) bool {
 }
 
 type fakeSettings struct {
-	def     config.IdentityID
-	auto    bool
-	set     []config.IdentityID
-	cleared int
+	defaults []config.IdentityID
+	toggles  []config.IdentityID
 }
 
-func (f *fakeSettings) DefaultIdentity() config.IdentityID { return f.def }
-func (f *fakeSettings) AutoLoad() bool                     { return f.auto }
-func (f *fakeSettings) SetDefaultIdentity(id config.IdentityID) error {
-	f.set = append(f.set, id)
-	f.def = id
-	f.auto = true
-	return nil
+func (f *fakeSettings) DefaultIdentities() []config.IdentityID { return f.defaults }
+func (f *fakeSettings) AutoLoad() bool                         { return len(f.defaults) > 0 }
+func (f *fakeSettings) IsDefault(id config.IdentityID) bool {
+	for _, d := range f.defaults {
+		if d == id {
+			return true
+		}
+	}
+	return false
 }
-func (f *fakeSettings) ClearDefault() error {
-	f.cleared++
-	f.def = ""
-	f.auto = false
-	return nil
+func (f *fakeSettings) ToggleDefault(id config.IdentityID) (bool, error) {
+	f.toggles = append(f.toggles, id)
+	for i, d := range f.defaults {
+		if d == id {
+			f.defaults = append(f.defaults[:i], f.defaults[i+1:]...)
+			return false, nil
+		}
+	}
+	f.defaults = append(f.defaults, id)
+	return true, nil
 }
 
-func TestSetDefaultKey(t *testing.T) {
+func TestToggleDefaultKey(t *testing.T) {
 	fs := &fakeSettings{}
 	m := New(&fakeService{model: diskKeySnap()}).WithSettings(fs)
 	m = feed(m, refreshedMsg{model: diskKeySnap()}) // Keys pane, id_ed on disk
 
 	m = feed(m, key("s"))
-	if len(fs.set) != 1 || fs.set[0] != "id_ed" {
-		t.Errorf("default not set: %v", fs.set)
-	}
-	if !strings.Contains(m.status, "default key set") {
-		t.Errorf("status = %q", m.status)
+	if !fs.IsDefault("id_ed") || !strings.Contains(m.status, "added default") {
+		t.Errorf("first press should add default; status=%q defaults=%v", m.status, fs.defaults)
 	}
 	if !strings.Contains(m.View(), "★ default") {
 		t.Error("default key should be marked")
 	}
 
-	// Pressing s again on the same key unsets the default.
 	m = feed(m, key("s"))
-	if fs.cleared != 1 {
-		t.Errorf("second press should clear default, cleared=%d", fs.cleared)
-	}
-	if !strings.Contains(m.status, "unset") {
-		t.Errorf("status = %q", m.status)
+	if fs.IsDefault("id_ed") || !strings.Contains(m.status, "removed default") {
+		t.Errorf("second press should remove; status=%q defaults=%v", m.status, fs.defaults)
 	}
 }
 
-func TestAutoLoadDefaultOnStartup(t *testing.T) {
-	fs := &fakeSettings{def: "id_ed", auto: true}
-	m := New(&fakeService{model: diskKeySnap()}).WithSettings(fs)
+func TestAutoLoadMultipleDefaults(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"id_a": {ID: "id_a", Name: "id_a", Path: "/k/id_a", ExistsOnDisk: true},
+			"id_b": {ID: "id_b", Name: "id_b", Path: "/k/id_b", ExistsOnDisk: true, LoadedInAgent: true},
+			"id_c": {ID: "id_c", Name: "id_c", Path: "/k/id_c", ExistsOnDisk: true},
+		},
+	}
+	fs := &fakeSettings{defaults: []config.IdentityID{"id_a", "id_b", "id_c"}}
+	m := New(&fakeService{model: snap}).WithSettings(fs)
 
-	out, cmd := m.Update(refreshedMsg{model: diskKeySnap()})
+	out, cmd := m.Update(refreshedMsg{model: snap})
 	m = out.(Model)
+	// id_b already loaded → only id_a and id_c get loaded.
 	if cmd == nil {
-		t.Error("auto-load should dispatch a load command for the default key")
+		t.Error("auto-load should dispatch for the unloaded defaults")
 	}
 	if !m.autoLoaded {
-		t.Error("autoLoaded flag should be set")
+		t.Error("autoLoaded should be set")
 	}
-	if !strings.Contains(m.status, "loading default key") {
+	if !strings.Contains(m.status, "loading default keys") {
 		t.Errorf("status = %q", m.status)
 	}
 
-	// A second refresh must not auto-load again.
-	out, cmd = m.Update(refreshedMsg{model: diskKeySnap()})
+	out, cmd = m.Update(refreshedMsg{model: snap})
 	m = out.(Model)
 	if cmd != nil {
 		t.Error("auto-load should run only once")
 	}
 }
 
-func TestAutoLoadSkipsWhenAlreadyLoaded(t *testing.T) {
+func TestAutoLoadSkipsWhenAllLoaded(t *testing.T) {
 	snap := &config.SshConfigModel{
 		Identities: map[config.IdentityID]config.Identity{
 			"id_ed": {ID: "id_ed", Name: "id_ed", Path: "/k/id_ed", ExistsOnDisk: true, LoadedInAgent: true},
 		},
 	}
-	fs := &fakeSettings{def: "id_ed", auto: true}
+	fs := &fakeSettings{defaults: []config.IdentityID{"id_ed"}}
 	m := New(&fakeService{model: snap}).WithSettings(fs)
 
 	out, cmd := m.Update(refreshedMsg{model: snap})
 	m = out.(Model)
 	if cmd != nil {
-		t.Error("should not reload a key that is already in the agent")
+		t.Error("should not reload an already-loaded default")
 	}
 	if !m.autoLoaded {
-		t.Error("autoLoaded should still be marked to avoid retrying")
+		t.Error("autoLoaded should still be marked")
 	}
 }
 

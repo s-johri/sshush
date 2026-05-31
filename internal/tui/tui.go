@@ -90,10 +90,10 @@ type fileWatcher interface {
 // depends on this narrow interface so it can run without settings and be tested
 // with a fake. The real implementation is pkg/appconfig.Store.
 type appSettings interface {
-	DefaultIdentity() config.IdentityID
+	DefaultIdentities() []config.IdentityID
+	IsDefault(config.IdentityID) bool
 	AutoLoad() bool
-	SetDefaultIdentity(config.IdentityID) error
-	ClearDefault() error
+	ToggleDefault(config.IdentityID) (bool, error)
 }
 
 // reloadMsg signals that watched files changed and the model should refresh.
@@ -1268,30 +1268,37 @@ func (m Model) deleteCmd(h config.HostID, field string) tea.Cmd {
 	return func() tea.Msg { return editDoneMsg{verb: "removed", err: m.svc.DeleteHostField(h, field)} }
 }
 
-// maybeAutoLoad loads the configured default identity into the agent once, on
-// the first snapshot, if it exists on disk and is not already loaded.
+// maybeAutoLoad loads the configured default identities into the agent once, on
+// the first snapshot — those that exist on disk and aren't already loaded, in a
+// single ssh-add invocation.
 func (m Model) maybeAutoLoad() (tea.Model, tea.Cmd) {
 	if m.autoLoaded || m.settings == nil || !m.settings.AutoLoad() {
 		return m, nil
 	}
 	m.autoLoaded = true // attempt only once per session
 
-	id := m.settings.DefaultIdentity()
-	if id == "" {
-		return m, nil
+	want := map[config.IdentityID]bool{}
+	for _, id := range m.settings.DefaultIdentities() {
+		want[id] = true
 	}
+	var paths []string
 	for _, ident := range m.ids {
-		if ident.ID == id && ident.ExistsOnDisk && !ident.LoadedInAgent {
-			m.status = "loading default key…"
-			return m, tea.ExecProcess(agent.AddCommand(ident.Path),
-				func(err error) tea.Msg { return agentDoneMsg{verb: "default key loaded", err: err} })
+		if want[ident.ID] && ident.ExistsOnDisk && !ident.LoadedInAgent {
+			paths = append(paths, ident.Path)
 		}
 	}
-	return m, nil
+	if len(paths) == 0 {
+		return m, nil
+	}
+	m.status = "loading default keys…"
+	cmd := exec.Command("ssh-add", paths...)
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return agentDoneMsg{verb: "default keys loaded", err: err}
+	})
 }
 
-// setDefaultKey toggles the selected key as the startup default (Keys pane):
-// setting it, or unsetting it when it is already the default.
+// setDefaultKey toggles the selected key's membership in the default set
+// (Keys pane). On-disk keys only.
 func (m Model) setDefaultKey() (tea.Model, tea.Cmd) {
 	if m.active != paneKeys || m.settings == nil {
 		if m.settings == nil {
@@ -1303,24 +1310,20 @@ func (m Model) setDefaultKey() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-
-	if sel.ID == m.settings.DefaultIdentity() {
-		if err := m.settings.ClearDefault(); err != nil {
-			m.status = "settings error: " + err.Error()
-			return m, nil
-		}
-		m.status = "default key unset"
-		return m, nil
-	}
-	if !sel.ExistsOnDisk {
+	if !sel.ExistsOnDisk && !m.settings.IsDefault(sel.ID) {
 		m.status = "cannot set agent-only key as default"
 		return m, nil
 	}
-	if err := m.settings.SetDefaultIdentity(sel.ID); err != nil {
+	added, err := m.settings.ToggleDefault(sel.ID)
+	if err != nil {
 		m.status = "settings error: " + err.Error()
 		return m, nil
 	}
-	m.status = "default key set: " + sel.Name
+	if added {
+		m.status = "added default: " + sel.Name
+	} else {
+		m.status = "removed default: " + sel.Name
+	}
 	return m, nil
 }
 
@@ -2112,10 +2115,6 @@ func (m Model) viewKeys() string {
 	if len(vis) == 0 {
 		return dimStyle.Render("no keys match " + strconv.Quote(m.filterQuery()))
 	}
-	var defaultID config.IdentityID
-	if m.settings != nil {
-		defaultID = m.settings.DefaultIdentity()
-	}
 	usedBy := m.hostsByKey()
 	lines := []string{headerStyle.Render(fmt.Sprintf("  %1s %-20s %-11s %s", " ", "name", "algo", "comment / hosts"))}
 	start, end := m.window(paneKeys)
@@ -2142,7 +2141,7 @@ func (m Model) viewKeys() string {
 			plain += "  " + tag
 			styled += "  " + hostTagStyle.Render(tag)
 		}
-		if id.ID == defaultID {
+		if m.settings != nil && m.settings.IsDefault(id.ID) {
 			plain += "  ★ default"
 			styled += "  " + starStyle.Render("★ default")
 		}

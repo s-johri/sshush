@@ -1,7 +1,9 @@
 package appconfig
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -51,30 +53,65 @@ func TestLoadMissingIsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("missing file should not error: %v", err)
 	}
-	if cfg.DefaultIdentity != "" || cfg.AutoLoad {
+	if len(cfg.DefaultIdentities) != 0 {
 		t.Errorf("missing file should yield zero config: %+v", cfg)
 	}
 }
 
-func TestSetDefaultPersists(t *testing.T) {
+func TestToggleDefaultsPersist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	s := New(path)
 	if _, err := s.Load(); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetDefaultIdentity("id_ed25519"); err != nil {
-		t.Fatal(err)
+	if added, err := s.ToggleDefault("id_ed"); err != nil || !added {
+		t.Fatalf("add id_ed: added=%v err=%v", added, err)
 	}
-	if s.DefaultIdentity() != "id_ed25519" || !s.AutoLoad() {
-		t.Errorf("in-memory state wrong: %q auto=%v", s.DefaultIdentity(), s.AutoLoad())
+	if added, _ := s.ToggleDefault("id_rsa"); !added {
+		t.Fatal("add id_rsa should report added")
+	}
+	if !s.IsDefault("id_ed") || !s.AutoLoad() || len(s.DefaultIdentities()) != 2 {
+		t.Errorf("state wrong: %v", s.DefaultIdentities())
 	}
 
-	// A fresh store reading the same file sees the persisted values.
+	// Persisted across a fresh store.
 	s2 := New(path)
 	if _, err := s2.Load(); err != nil {
 		t.Fatal(err)
 	}
-	if s2.DefaultIdentity() != "id_ed25519" || !s2.AutoLoad() {
-		t.Errorf("not persisted: %q auto=%v", s2.DefaultIdentity(), s2.AutoLoad())
+	if !s2.IsDefault("id_ed") || !s2.IsDefault("id_rsa") {
+		t.Errorf("not persisted: %v", s2.DefaultIdentities())
+	}
+
+	// Toggling off removes it.
+	if added, _ := s2.ToggleDefault("id_ed"); added {
+		t.Error("toggling existing should remove (added=false)")
+	}
+	if s2.IsDefault("id_ed") {
+		t.Error("id_ed should be removed")
+	}
+}
+
+// TestLegacyMigration: an old config.toml with a single default_identity is read
+// into the list and the legacy key is dropped on the next save.
+func TestLegacyMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("default_identity = \"id_ed25519\"\nauto_load = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := New(path)
+	if _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if !s.IsDefault("id_ed25519") || len(s.DefaultIdentities()) != 1 {
+		t.Errorf("legacy default not migrated: %v", s.DefaultIdentities())
+	}
+	// Persist + reload: now stored as a list, legacy key gone.
+	if _, err := s.ToggleDefault("id_rsa"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "default_identity ") {
+		t.Errorf("legacy default_identity should be dropped after save:\n%s", data)
 	}
 }
