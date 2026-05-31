@@ -833,29 +833,33 @@ func manyKeysSnap(n int) *config.SshConfigModel {
 }
 
 func TestScrollKeepsCursorVisible(t *testing.T) {
-	snap := manyKeysSnap(20)
+	snap := manyKeysSnap(40)
 	m := New(&fakeService{model: snap})
-	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 15}) // cap = 15 - 10 = 5
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 18})
 	m = feed(m, refreshedMsg{model: snap})
 
-	if cap := m.listCapacity(); cap != 5 {
-		t.Fatalf("capacity = %d, want 5", cap)
+	cap := m.listCapacity()
+	if cap <= 0 || cap >= 40 {
+		t.Fatalf("capacity = %d, want a bounded window", cap)
 	}
-	// Move down past the first window; scroll should follow the cursor.
-	for i := 0; i < 6; i++ {
+	// Move past the first window; scroll should follow the cursor.
+	for i := 0; i <= cap; i++ {
 		m = feed(m, key("j"))
 	}
-	if m.cursor[paneKeys] != 6 {
-		t.Fatalf("cursor = %d, want 6", m.cursor[paneKeys])
+	if m.cursor[paneKeys] != cap+1 {
+		t.Fatalf("cursor = %d, want %d", m.cursor[paneKeys], cap+1)
+	}
+	if m.scroll[paneKeys] == 0 {
+		t.Error("scroll should advance once cursor passes the first window")
 	}
 	start, end := m.window(paneKeys)
 	if !(m.cursor[paneKeys] >= start && m.cursor[paneKeys] < end) {
 		t.Errorf("cursor %d not in window [%d,%d)", m.cursor[paneKeys], start, end)
 	}
-	if end-start != 5 {
-		t.Errorf("window size %d, want 5", end-start)
+	if end-start != cap {
+		t.Errorf("window size %d, want %d", end-start, cap)
 	}
-	if !strings.Contains(m.View(), "rows ") || !strings.Contains(m.View(), "of 20") {
+	if !strings.Contains(m.View(), "rows ") || !strings.Contains(m.View(), "of 40") {
 		t.Errorf("expected scroll indicator:\n%s", m.View())
 	}
 }
@@ -863,12 +867,13 @@ func TestScrollKeepsCursorVisible(t *testing.T) {
 func TestPageAndEndKeys(t *testing.T) {
 	snap := manyKeysSnap(30)
 	m := New(&fakeService{model: snap})
-	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 16}) // cap = 6
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 18})
 	m = feed(m, refreshedMsg{model: snap})
 
+	cap := m.listCapacity()
 	m = feed(m, tea.KeyMsg{Type: tea.KeyPgDown})
-	if m.cursor[paneKeys] != 6 {
-		t.Errorf("pgdown cursor = %d, want 6", m.cursor[paneKeys])
+	if m.cursor[paneKeys] != cap {
+		t.Errorf("pgdown cursor = %d, want %d", m.cursor[paneKeys], cap)
 	}
 	m = feed(m, key("G")) // jump to end
 	if m.cursor[paneKeys] != 29 {
@@ -881,6 +886,113 @@ func TestPageAndEndKeys(t *testing.T) {
 	m = feed(m, key("g")) // jump home
 	if m.cursor[paneKeys] != 0 || m.scroll[paneKeys] != 0 {
 		t.Errorf("home not at top: cursor=%d scroll=%d", m.cursor[paneKeys], m.scroll[paneKeys])
+	}
+}
+
+// TestLayoutFitsHeight guards that the full view never exceeds the terminal
+// height (which would scroll the header off the top), with and without a status.
+func TestLayoutFitsHeight(t *testing.T) {
+	snap := manyKeysSnap(100)
+	for _, h := range []int{10, 18, 24, 40} {
+		m := New(&fakeService{model: snap})
+		m = feed(m, tea.WindowSizeMsg{Width: 80, Height: h})
+		m = feed(m, refreshedMsg{model: snap})
+		for _, withStatus := range []bool{false, true} {
+			if withStatus {
+				m = feed(m, agentDoneMsg{verb: "a status message"})
+				m.loading = false
+			}
+			lines := strings.Count(m.View(), "\n") + 1
+			if lines > h {
+				t.Errorf("height=%d status=%v: view has %d lines (> height)", h, withStatus, lines)
+			}
+			if !strings.Contains(m.View(), "Keys") {
+				t.Errorf("height=%d status=%v: header/tabs missing", h, withStatus)
+			}
+		}
+	}
+}
+
+func TestFilterNarrowsKeys(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	m = feed(m, key("/"))
+	if !m.filtering {
+		t.Fatal("/ should focus the filter")
+	}
+	for _, r := range "alp" {
+		m = feed(m, key(string(r)))
+	}
+	vis := m.visibleIDs()
+	if len(vis) != 1 || vis[0].Name != "alpha" {
+		t.Fatalf("filter 'alp' => %v", vis)
+	}
+	view := m.View()
+	if !strings.Contains(view, "alpha") || strings.Contains(view, "zeta") {
+		t.Errorf("filtered view should show alpha only:\n%s", view)
+	}
+
+	// enter keeps the query but exits the input.
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.filtering || m.filterQuery() != "alp" {
+		t.Errorf("after enter: filtering=%v query=%q", m.filtering, m.filterQuery())
+	}
+	// selection now indexes the filtered list.
+	sel, ok := m.selectedKey()
+	if !ok || sel.Name != "alpha" {
+		t.Errorf("selectedKey = %v,%v", sel, ok)
+	}
+
+	// esc clears the filter.
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.filterQuery() != "" || len(m.visibleIDs()) != 2 {
+		t.Errorf("esc should clear filter; query=%q visible=%d", m.filterQuery(), len(m.visibleIDs()))
+	}
+}
+
+func TestFilterMatchesAlgoAndHosts(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	// Filter keys by algorithm.
+	m = feed(m, key("/"))
+	for _, r := range "rsa" {
+		m = feed(m, key(string(r)))
+	}
+	if vis := m.visibleIDs(); len(vis) != 1 || vis[0].Name != "zeta" {
+		t.Errorf("algo filter 'rsa' => %v", vis)
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	// Switch to Hosts and filter by hostname.
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = feed(m, key("/"))
+	for _, r := range "example" {
+		m = feed(m, key(string(r)))
+	}
+	if vis := m.visibleHosts(); len(vis) != 1 || vis[0].Name != "web" {
+		t.Errorf("host filter 'example' => %v", vis)
+	}
+}
+
+func TestFilterClampsCursor(t *testing.T) {
+	snap := manyKeysSnap(20)
+	m := New(&fakeService{model: snap})
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = feed(m, refreshedMsg{model: snap})
+
+	m = feed(m, key("G")) // cursor at last (19)
+	m = feed(m, key("/"))
+	for _, r := range "id_01" {
+		m = feed(m, key(string(r)))
+	}
+	// Only "id_01" matches; cursor must clamp into range.
+	if n := m.rowCountFor(paneKeys); n != 1 {
+		t.Fatalf("expected 1 match, got %d", n)
+	}
+	if m.cursor[paneKeys] != 0 {
+		t.Errorf("cursor not clamped after filter: %d", m.cursor[paneKeys])
 	}
 }
 

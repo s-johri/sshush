@@ -193,6 +193,10 @@ type Model struct {
 	pendingReload   bool      // a change arrived while an overlay was open
 	muteReloadUntil time.Time // ignore reloads until this time (self-induced writes)
 
+	// search / filter (per active pane)
+	filterInput textinput.Model
+	filtering   bool // true while the filter input is focused
+
 	// app settings / default identity
 	settings   appSettings
 	autoLoaded bool   // startup auto-load of the default identity has run
@@ -206,7 +210,105 @@ func New(svc service.Service) Model {
 	ti := textinput.New()
 	ti.CharLimit = 256
 	ti.Width = 40
-	return Model{svc: svc, loading: true, input: ti}
+
+	fi := textinput.New()
+	fi.Placeholder = "filter…"
+	fi.CharLimit = 80
+	fi.Width = 30
+
+	return Model{svc: svc, loading: true, input: ti, filterInput: fi}
+}
+
+// filterQuery is the active (lower-cased, trimmed) filter string.
+func (m Model) filterQuery() string {
+	return strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
+}
+
+// visibleIDs / visibleHosts are the rows shown in each pane: the full sorted
+// list, or its filtered subset when a filter is active. All display, selection,
+// and scrolling operate on these, not the raw m.ids/m.hosts.
+func (m Model) visibleIDs() []config.Identity {
+	q := m.filterQuery()
+	if q == "" {
+		return m.ids
+	}
+	var out []config.Identity
+	for _, id := range m.ids {
+		if matchAny(q, id.Name, id.Comment, string(id.Algorithm)) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func (m Model) visibleHosts() []config.Host {
+	q := m.filterQuery()
+	if q == "" {
+		return m.hosts
+	}
+	var out []config.Host
+	for _, h := range m.hosts {
+		if matchAny(q, h.Name, h.Hostname, h.User) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// matchAny reports whether q (already lower-cased) is a substring of any field.
+func matchAny(q string, fields ...string) bool {
+	for _, f := range fields {
+		if strings.Contains(strings.ToLower(f), q) {
+			return true
+		}
+	}
+	return false
+}
+
+// selectedKey returns the highlighted identity in the (filtered) Keys pane.
+func (m Model) selectedKey() (config.Identity, bool) {
+	v := m.visibleIDs()
+	i := m.cursor[paneKeys]
+	if i < 0 || i >= len(v) {
+		return config.Identity{}, false
+	}
+	return v[i], true
+}
+
+// handleFilterKey drives the live filter input. enter applies and exits the
+// input (keeping the query); esc clears it; anything else edits and re-filters.
+func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.filtering = false
+		m.filterInput.SetValue("")
+		m.filterInput.Blur()
+		m.afterFilterChange()
+		return m, nil
+	case "enter":
+		m.filtering = false
+		m.filterInput.Blur()
+		m.afterFilterChange()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.filterInput, cmd = m.filterInput.Update(msg)
+	m.afterFilterChange()
+	return m, cmd
+}
+
+// afterFilterChange keeps the cursor/scroll valid for the (possibly smaller)
+// filtered list of the active pane.
+func (m *Model) afterFilterChange() {
+	n := m.rowCountFor(m.active)
+	if m.cursor[m.active] >= n {
+		m.cursor[m.active] = n - 1
+	}
+	if m.cursor[m.active] < 0 {
+		m.cursor[m.active] = 0
+	}
+	m.scroll[m.active] = 0
+	m.ensureVisible(m.active)
 }
 
 // WithWatcher attaches a filesystem watcher for hot reload. Optional: without
@@ -381,9 +483,25 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePicker(msg)
 	}
 
+	// The filter input (when focused) captures keys before pane navigation.
+	if m.filtering {
+		return m.handleFilterKey(msg)
+	}
+
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
+	case "/":
+		m.filtering = true
+		m.filterInput.Focus()
+		return m, textinput.Blink
+	case "esc":
+		if m.filterQuery() != "" {
+			m.filterInput.SetValue("")
+			m.afterFilterChange()
+			m.status = "filter cleared"
+		}
+		return m, nil
 	case "tab", "left", "right", "h", "l":
 		m.active = (m.active + 1) % numPanes
 		return m, nil
@@ -525,10 +643,10 @@ func (m Model) beginDelete() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// Keys pane: only on-disk keys have files to delete.
-	if len(m.ids) == 0 {
+	sel, ok := m.selectedKey()
+	if !ok {
 		return m, nil
 	}
-	sel := m.ids[m.cursor[paneKeys]]
 	if !sel.ExistsOnDisk || sel.Path == "" {
 		m.status = "cannot delete agent-only key (no file on disk)"
 		return m, nil
@@ -871,13 +989,16 @@ func (m Model) maybeAutoLoad() (tea.Model, tea.Cmd) {
 // setDefaultKey toggles the selected key as the startup default (Keys pane):
 // setting it, or unsetting it when it is already the default.
 func (m Model) setDefaultKey() (tea.Model, tea.Cmd) {
-	if m.active != paneKeys || m.settings == nil || len(m.ids) == 0 {
+	if m.active != paneKeys || m.settings == nil {
 		if m.settings == nil {
 			m.status = "no settings file configured"
 		}
 		return m, nil
 	}
-	sel := m.ids[m.cursor[paneKeys]]
+	sel, ok := m.selectedKey()
+	if !ok {
+		return m, nil
+	}
 
 	if sel.ID == m.settings.DefaultIdentity() {
 		if err := m.settings.ClearDefault(); err != nil {
@@ -911,10 +1032,12 @@ func (m Model) unloadAll() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) selectedHost() (config.Host, bool) {
-	if len(m.hosts) == 0 {
+	v := m.visibleHosts()
+	i := m.cursor[paneHosts]
+	if i < 0 || i >= len(v) {
 		return config.Host{}, false
 	}
-	return m.hosts[m.cursor[paneHosts]], true
+	return v[i], true
 }
 
 // hostByID returns the current model copy of a host (post-refresh).
@@ -1039,10 +1162,13 @@ func (m Model) currentFieldValue() string {
 // ssh-add, run through tea.ExecProcess so the terminal is free for a passphrase
 // prompt. Only applies on the Keys pane to on-disk keys.
 func (m Model) toggleSelectedKey() (tea.Model, tea.Cmd) {
-	if m.active != paneKeys || len(m.ids) == 0 {
+	if m.active != paneKeys {
 		return m, nil
 	}
-	sel := m.ids[m.cursor[paneKeys]]
+	sel, ok := m.selectedKey()
+	if !ok {
+		return m, nil
+	}
 	if !sel.ExistsOnDisk || sel.Path == "" {
 		m.status = "cannot toggle agent-only key (no file on disk)"
 		return m, nil
@@ -1111,9 +1237,22 @@ func (m *Model) rewatch(sourceFiles []string) {
 // When the height is unknown (e.g. before the first WindowSizeMsg, or in tests)
 // it returns a large number so every row renders.
 func (m Model) listCapacity() int {
-	const chrome = 10 // title/tabs, box borders, column header, indicator, status, help, srcfile
 	if m.height <= 0 {
-		return 1 << 30
+		return 1 << 30 // height unknown (initial render / tests): show all rows
+	}
+	// Fixed chrome: header+tabs (1), box borders (2), column header (1),
+	// scroll-indicator reserve (1), plus the help lines. Then add the optional
+	// lines actually present so the list shrinks to keep everything — header
+	// included — on screen, and grows when they're absent.
+	chrome := 1 + 2 + 1 + 1 + len(m.helpGroups())
+	if m.status != "" {
+		chrome++
+	}
+	if m.filtering || m.filterQuery() != "" {
+		chrome++
+	}
+	if m.srcFile != "" {
+		chrome++
 	}
 	if c := m.height - chrome; c > 1 {
 		return c
@@ -1212,9 +1351,9 @@ func (m Model) rowCount() int { return m.rowCountFor(m.active) }
 
 func (m Model) rowCountFor(p pane) int {
 	if p == paneKeys {
-		return len(m.ids)
+		return len(m.visibleIDs())
 	}
-	return len(m.hosts)
+	return len(m.visibleHosts())
 }
 
 // --- styles (basic; polish pass is a later milestone) ---
@@ -1300,13 +1439,21 @@ func (m Model) View() string {
 	var f strings.Builder
 	f.WriteString(header + "\n")
 	f.WriteString(m.box(body) + "\n")
+	if m.filtering {
+		f.WriteString("  " + helpKey.Render("/") + " " + m.filterInput.View() + "\n")
+	} else if q := m.filterQuery(); q != "" {
+		f.WriteString(statusStyle.Render(fmt.Sprintf("  filter: %s", q)) +
+			dimStyle.Render(fmt.Sprintf("  (%d match · esc clears)", m.rowCountFor(m.active))) + "\n")
+	}
 	if m.status != "" {
 		f.WriteString(statusStyle.Render("  "+m.status) + "\n")
 	}
-	f.WriteString(m.renderHelp() + "\n")
+	f.WriteString(m.renderHelp())
 	if m.srcFile != "" {
-		f.WriteString(dimStyle.Render("  "+m.srcFile) + "\n")
+		f.WriteString("\n" + dimStyle.Render("  "+m.srcFile))
 	}
+	// No trailing newline: an extra blank line would push the header off the top
+	// of an exactly-full screen.
 	return f.String()
 }
 
@@ -1506,7 +1653,7 @@ type helpGroup struct {
 // helpGroups returns the keybinding hints for the active pane, grouped into
 // labeled categories for a less cluttered footer.
 func (m Model) helpGroups() []helpGroup {
-	view := helpGroup{"view", []helpItem{{"tab", "panes"}, {"r", "refresh"}, {"q", "quit"}}}
+	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"tab", "panes"}, {"r", "refresh"}, {"q", "quit"}}}
 	if m.active == paneKeys {
 		return []helpGroup{
 			{"agent", []helpItem{{"↵", "load/unload"}, {"U", "unload all"}, {"s", "default"}}},
@@ -1544,8 +1691,12 @@ const (
 )
 
 func (m Model) viewKeys() string {
+	vis := m.visibleIDs()
 	if len(m.ids) == 0 {
 		return dimStyle.Render("no keys found")
+	}
+	if len(vis) == 0 {
+		return dimStyle.Render("no keys match " + strconv.Quote(m.filterQuery()))
 	}
 	var defaultID config.IdentityID
 	if m.settings != nil {
@@ -1555,7 +1706,7 @@ func (m Model) viewKeys() string {
 	lines := []string{headerStyle.Render(fmt.Sprintf("  %1s %-20s %-11s %s", " ", "name", "algo", "comment / hosts"))}
 	start, end := m.window(paneKeys)
 	for i := start; i < end; i++ {
-		id := m.ids[i]
+		id := vis[i]
 		glyph := glyphUnloaded
 		glyphStyle := dimStyle
 		if id.LoadedInAgent {
@@ -1602,13 +1753,17 @@ func (m Model) hostsByKey() map[config.IdentityID][]string {
 }
 
 func (m Model) viewHosts() string {
+	vis := m.visibleHosts()
 	if len(m.hosts) == 0 {
 		return dimStyle.Render("no hosts found")
+	}
+	if len(vis) == 0 {
+		return dimStyle.Render("no hosts match " + strconv.Quote(m.filterQuery()))
 	}
 	lines := []string{headerStyle.Render(fmt.Sprintf("  %-20s %s", "host", "destination"))}
 	start, end := m.window(paneHosts)
 	for i := start; i < end; i++ {
-		h := m.hosts[i]
+		h := vis[i]
 		dest := h.Hostname
 		if h.User != "" {
 			dest = h.User + "@" + dest
