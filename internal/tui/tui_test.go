@@ -996,6 +996,58 @@ func TestFilterClampsCursor(t *testing.T) {
 	}
 }
 
+func TestConnectToHostDispatches(t *testing.T) {
+	svc := &fakeService{model: snapshot()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+
+	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(Model)
+	if cmd == nil {
+		t.Fatal("enter on a host should dispatch ssh")
+	}
+	if !strings.Contains(m.status, "connecting to web") {
+		t.Errorf("status = %q", m.status)
+	}
+}
+
+func TestConnectWildcardRejected(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Hosts: map[config.HostID]config.Host{"*": {ID: "*", Name: "*", IsPattern: true}},
+	}
+	m := New(&fakeService{model: snap})
+	m = feed(m, refreshedMsg{model: snap})
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(Model)
+	if cmd != nil {
+		t.Error("should not ssh to a pattern host")
+	}
+	if !strings.Contains(m.status, "wildcard") {
+		t.Errorf("status = %q", m.status)
+	}
+}
+
+func TestConnectDoneStatus(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	out, _ := m.Update(connectDoneMsg{alias: "web"})
+	m = out.(Model)
+	if !strings.Contains(m.status, "session to web ended") {
+		t.Errorf("status = %q", m.status)
+	}
+}
+
+func TestFirstAlias(t *testing.T) {
+	if got := firstAlias("web prod-web"); got != "web" {
+		t.Errorf("firstAlias = %q, want web", got)
+	}
+	if got := firstAlias(""); got != "" {
+		t.Errorf("firstAlias empty = %q", got)
+	}
+}
+
 func TestRefreshErrorShown(t *testing.T) {
 	m := New(&fakeService{})
 	m = feed(m, refreshedMsg{err: errFake{}})

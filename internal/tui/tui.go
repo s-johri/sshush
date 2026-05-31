@@ -6,6 +6,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -53,6 +54,13 @@ type editDoneMsg struct {
 
 // keygenDoneMsg reports the outcome of an interactive ssh-keygen run.
 type keygenDoneMsg struct{ err error }
+
+// connectDoneMsg reports that an `ssh <alias>` session (run via ExecProcess)
+// has ended.
+type connectDoneMsg struct {
+	alias string
+	err   error
+}
 
 // fileWatcher reports coalesced filesystem changes under directories it is told
 // to watch. The real implementation is pkg/watch; the TUI depends on this
@@ -450,6 +458,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		return m, m.refresh
 
+	case connectDoneMsg:
+		if msg.err != nil {
+			m.status = "ssh " + msg.alias + ": " + msg.err.Error()
+		} else {
+			m.status = "session to " + msg.alias + " ended"
+		}
+		// The agent may have gained keys during the session (AddKeysToAgent).
+		m.loading = true
+		return m, m.refresh
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -532,6 +550,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensureVisible(m.active)
 		return m, nil
 	case "enter", " ":
+		if m.active == paneHosts {
+			return m.connectToHost()
+		}
 		return m.toggleSelectedKey()
 	case "U":
 		return m.unloadAll()
@@ -1038,6 +1059,40 @@ func (m Model) selectedHost() (config.Host, bool) {
 		return config.Host{}, false
 	}
 	return v[i], true
+}
+
+// firstAlias returns the first pattern of a host's name (a block may declare
+// several, e.g. "web prod-web"); ssh connects by a single alias.
+func firstAlias(name string) string {
+	if fields := strings.Fields(name); len(fields) > 0 {
+		return fields[0]
+	}
+	return ""
+}
+
+// connectToHost launches `ssh <alias>` for the selected host via ExecProcess,
+// yielding the terminal for the session and resuming sshush when it exits. The
+// user's own config (ProxyJump, IdentityFile, …) applies. Wildcard blocks can't
+// be connected to.
+func (m Model) connectToHost() (tea.Model, tea.Cmd) {
+	host, ok := m.selectedHost()
+	if !ok {
+		return m, nil
+	}
+	if host.IsPattern {
+		m.status = "cannot connect to a wildcard/pattern host"
+		return m, nil
+	}
+	alias := firstAlias(host.Name)
+	if alias == "" {
+		m.status = "host has no alias to connect to"
+		return m, nil
+	}
+	m.status = "connecting to " + alias + "…"
+	cmd := exec.Command("ssh", alias)
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return connectDoneMsg{alias: alias, err: err}
+	})
 }
 
 // hostByID returns the current model copy of a host (post-refresh).
@@ -1662,7 +1717,7 @@ func (m Model) helpGroups() []helpGroup {
 		}
 	}
 	return []helpGroup{
-		{"hosts", []helpItem{{"e", "edit"}, {"i", "keys"}, {"n", "new"}, {"d", "delete"}}},
+		{"hosts", []helpItem{{"↵", "connect"}, {"e", "edit"}, {"i", "keys"}, {"n", "new"}, {"d", "delete"}}},
 		view,
 	}
 }

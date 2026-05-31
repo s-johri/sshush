@@ -17,6 +17,9 @@ edit your config without leaving the terminal.
   (`ssh-add -D`), and see agent-only keys that aren't on disk.
 - **Hosts pane** — hosts from `~/.ssh/config` and its `Include`d files with their
   connection details (`user@hostname:port`), including wildcard (`Host *`) blocks.
+  Press `Enter` to `ssh` into the selected host.
+- **Scroll & search** — panes scroll for long lists (`PgUp`/`PgDn`, `g`/`G`); `/`
+  filters the active pane by name, host, comment, or algorithm.
 - **Edit config in place** — change `HostName`/`User`/`Port`, add/edit/delete any
   directive (e.g. `ForwardAgent yes`), add or delete whole hosts (guided wizard),
   and attach/detach keys to a host (`IdentityFile`). Formatting and comments are
@@ -92,6 +95,7 @@ sshush help         # show help
 
 | Key | Action |
 |-----|--------|
+| `↵` enter | `ssh` into the selected host |
 | `e` | edit host directives (`tab` to cycle, `ctrl+o` add option, `ctrl+d` delete) |
 | `i` | attach / detach keys for the host |
 | `n` | add a new host (guided wizard) |
@@ -103,6 +107,8 @@ sshush help         # show help
 |-----|--------|
 | `tab` / `←` `→` | switch panes |
 | `↑` `↓` / `k` `j` | move |
+| `PgUp` `PgDn`, `g` `G` | page / jump to top / bottom |
+| `/` | filter the active pane (`esc` clears) |
 | `r` | refresh |
 | `q` / `ctrl+c` | quit |
 
