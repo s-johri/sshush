@@ -32,6 +32,9 @@ type Config struct {
 
 	// Motion controls the opt-in animation/juice system.
 	Motion MotionConfig `toml:"motion"`
+
+	// ThemeName selects a built-in color theme (empty = default).
+	ThemeName string `toml:"theme,omitempty"`
 }
 
 // MotionConfig is the [motion] table: off by default.
@@ -168,6 +171,15 @@ func (s *Store) SetMotion(enabled bool, intensity string) error {
 	if intensity != "" {
 		s.cfg.Motion.Intensity = intensity
 	}
+	return s.save()
+}
+
+// ThemeName returns the configured theme name (empty = default).
+func (s *Store) ThemeName() string { return s.cfg.ThemeName }
+
+// SetTheme persists the selected theme name.
+func (s *Store) SetTheme(name string) error {
+	s.cfg.ThemeName = name
 	return s.save()
 }
 

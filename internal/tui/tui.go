@@ -6,6 +6,7 @@ package tui
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,6 +101,8 @@ type appSettings interface {
 	MotionEnabled() bool
 	MotionIntensity() string
 	SetMotion(enabled bool, intensity string) error
+	ThemeName() string
+	SetTheme(name string) error
 }
 
 // reloadMsg signals that watched files changed and the model should refresh.
@@ -242,6 +245,7 @@ const (
 	modeKnownHosts              // browsing/removing known_hosts entries
 	modeCopy                    // choosing what to copy to the clipboard
 	modeHelp                    // full keybinding reference overlay
+	modeTheme                   // theme picker with live preview
 )
 
 // coreFields are always offered for editing; a host's existing option keys are
@@ -336,6 +340,10 @@ type Model struct {
 
 	// motion: the currently-active visual effect (zero value = none)
 	fx activeFX
+
+	// theme switcher
+	themeCursor int
+	themeOrig   string // theme to revert to on cancel
 
 	// hot reload
 	watcher         fileWatcher
@@ -467,9 +475,13 @@ func (m Model) WithWatcher(w fileWatcher) Model {
 	return m
 }
 
-// WithSettings attaches persisted app settings (default identity). Optional.
+// WithSettings attaches persisted app settings (default identity, theme, …) and
+// applies the saved theme. Optional.
 func (m Model) WithSettings(s appSettings) Model {
 	m.settings = s
+	if t, ok := themeByName(s.ThemeName()); ok {
+		applyTheme(t)
+	}
 	return m
 }
 
@@ -668,6 +680,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCopyKey(msg)
 	case modeHelp:
 		return m.handleHelpKey(msg)
+	case modeTheme:
+		return m.handleThemeKey(msg)
 	}
 
 	// The filter input (when focused) captures keys before pane navigation.
@@ -751,6 +765,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "m":
 		return m.toggleMotion()
+	case "t":
+		return m.beginTheme()
 	case "r":
 		m.loading = true
 		return m, m.refresh
@@ -1476,6 +1492,60 @@ func (m Model) toggleMotion() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// beginTheme opens the theme picker, previewing the current theme.
+func (m Model) beginTheme() (tea.Model, tea.Cmd) {
+	if m.settings == nil {
+		m.status = "no settings file configured"
+		return m, nil
+	}
+	m.themeOrig = m.settings.ThemeName()
+	m.themeCursor = 0
+	for i, p := range presets {
+		if p.name == m.themeOrig {
+			m.themeCursor = i
+			break
+		}
+	}
+	applyTheme(presets[m.themeCursor].theme)
+	m.mode = modeTheme
+	m.status = ""
+	return m, nil
+}
+
+// handleThemeKey drives the theme picker: ↑/↓ live-preview, r randomize,
+// enter applies + persists, esc reverts.
+func (m Model) handleThemeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.themeCursor > 0 {
+			m.themeCursor--
+		}
+	case "down", "j":
+		if m.themeCursor < len(presets)-1 {
+			m.themeCursor++
+		}
+	case "r":
+		m.themeCursor = rand.Intn(len(presets))
+	case "enter":
+		name := presets[m.themeCursor].name
+		_ = m.settings.SetTheme(name)
+		m.mode = modeNormal
+		m.status = "theme: " + name
+		return m, nil
+	case "esc", "q":
+		t, ok := themeByName(m.themeOrig)
+		if !ok {
+			t = defaultTheme
+		}
+		applyTheme(t)
+		m.mode = modeNormal
+		m.status = "theme unchanged"
+		return m, nil
+	}
+	applyTheme(presets[m.themeCursor].theme) // live preview
+	return m, nil
+}
+
 // unloadAll drops every key from the agent (Keys pane only).
 func (m Model) unloadAll() (tea.Model, tea.Cmd) {
 	if m.active != paneKeys {
@@ -1853,43 +1923,33 @@ func (m Model) rowCountFor(p pane) int {
 // --- styles (basic; polish pass is a later milestone) ---
 
 var (
-	colPrimary = lipgloss.Color("212") // pink — accents, active tab
-	colAccent  = lipgloss.Color("159") // light cyan — selection text
-	colGreen   = lipgloss.Color("42")  // loaded badge
-	colDim     = lipgloss.Color("244") // muted text
-	colErr     = lipgloss.Color("203") // errors / destructive
-	colGold    = lipgloss.Color("220") // default-key star
-	colBorder  = lipgloss.Color("240") // box borders
-	colSelBg   = lipgloss.Color("236") // selected-row background
+	// Palette colors and styles — all assigned by applyTheme (see theme.go),
+	// so the look is swappable at runtime.
+	colPrimary, colAccent, colGreen, colDim lipgloss.Color
+	colErr, colGold, colBorder, colSelBg    lipgloss.Color
+	colBg                                   lipgloss.Color
 
-	appTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(colPrimary)
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(colPrimary)
-	tabSelected   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(colPrimary).Padding(0, 1)
-	tabUnselected = lipgloss.NewStyle().Foreground(colDim).Padding(0, 1)
-	headerStyle   = lipgloss.NewStyle().Foreground(colDim).Underline(true)
-	selectedRow   = lipgloss.NewStyle().Bold(true).Foreground(colAccent).Background(colSelBg)
-	loadedBadge   = lipgloss.NewStyle().Foreground(colGreen)
-	textStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("253")) // explicit, so body text doesn't inherit the terminal's foreground
-	dimStyle      = lipgloss.NewStyle().Foreground(colDim)
-	errStyle      = lipgloss.NewStyle().Bold(true).Foreground(colErr)
-	starStyle     = lipgloss.NewStyle().Foreground(colGold)
-	keyCap        = lipgloss.NewStyle().Bold(true).Foreground(colGold)
-	statusStyle   = lipgloss.NewStyle().Foreground(colAccent)
-	boxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colBorder).Padding(0, 1)
-	helpKey       = lipgloss.NewStyle().Bold(true).Foreground(colAccent)
-	helpLabel     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("245"))
-	hostTagStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("109")) // muted teal — hosts using a key
-
-	// Flash colors track the palette: cyan accent for success, red for errors.
-	flashGoodStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(colAccent)
-	flashBadStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(colErr)
+	appTitleStyle, titleStyle, tabActive        lipgloss.Style
+	tabSelected, tabUnselected, headerStyle     lipgloss.Style
+	selectedRow, loadedBadge, textStyle         lipgloss.Style
+	dimStyle, errStyle, starStyle, keyCap       lipgloss.Style
+	statusStyle, boxStyle, helpKey, helpLabel   lipgloss.Style
+	hostTagStyle, flashGoodStyle, flashBadStyle lipgloss.Style
 )
 
-// tabActive is kept as the overlay/title accent style for readability.
-var tabActive = titleStyle
-
-// View renders the current pane or an active overlay.
+// View renders the current screen, then layers the theme background and any
+// active screen-shake over the whole output (so overlays get them too).
 func (m Model) View() string {
+	out := m.viewInner()
+	out = applyBackground(out, m.width, m.height)
+	if m.fxActive() && m.fx.shakeAmp > 0 {
+		out = m.applyShake(out)
+	}
+	return out
+}
+
+// viewInner renders the current pane or active overlay (no bg/shake).
+func (m Model) viewInner() string {
 	switch m.mode {
 	case modeNewKey:
 		return m.card(m.viewNewKey())
@@ -1927,6 +1987,8 @@ func (m Model) View() string {
 		return m.card(m.viewCopy())
 	case modeHelp:
 		return m.card(m.viewHelp())
+	case modeTheme:
+		return m.card(m.viewTheme())
 	}
 
 	header := appTitleStyle.Render("sshush") + "   " + m.renderTabs()
@@ -1937,8 +1999,6 @@ func (m Model) View() string {
 		body = m.box(dimStyle.Render("loading…"))
 	case m.err != nil:
 		body = m.box(errStyle.Render("error: " + m.err.Error()))
-	case m.wide():
-		body = m.twoColumnBody() // both panes side by side
 	default:
 		body = m.box(strings.Join(m.paneLines(m.active, m.boxInner()), "\n"))
 	}
@@ -1960,12 +2020,8 @@ func (m Model) View() string {
 		f.WriteString("\n" + dimStyle.Render("  "+m.srcFile))
 	}
 	// No trailing newline: an extra blank line would push the header off the top
-	// of an exactly-full screen.
-	out := f.String()
-	if m.fxActive() && m.fx.shakeAmp > 0 {
-		out = m.applyShake(out)
-	}
-	return out
+	// of an exactly-full screen. (Background + shake are layered in View.)
+	return f.String()
 }
 
 // renderStatus draws the status line, as a full-width flash bar while a flash
@@ -1996,9 +2052,6 @@ func (m Model) renderTabs() string {
 	return keys + " " + hosts
 }
 
-// wide reports whether the terminal is wide enough to show both panes at once.
-func (m Model) wide() bool { return m.width >= 100 }
-
 // boxInner is the content width inside the single full-width pane box. The box
 // uses Width(m.width-2) (lipgloss Width includes padding), so the text area is
 // that minus the 2-col padding.
@@ -2017,37 +2070,6 @@ func (m Model) box(content string) string {
 		s = s.Width(m.width - 2)
 	}
 	return s.Render(strings.TrimRight(content, "\n"))
-}
-
-// twoColumnBody renders Keys and Hosts side by side, each in its own box (the
-// active pane's border is highlighted). Columns are padded to equal height.
-func (m Model) twoColumnBody() string {
-	// Budget: total minus a 1-col gap and each box's 2-col border.
-	avail := m.width - 5
-	leftOuter := avail / 2
-	rightOuter := avail - leftOuter
-	lk := m.paneLines(paneKeys, leftOuter-2) // -2: lipgloss Width includes padding
-	lh := m.paneLines(paneHosts, rightOuter-2)
-	for len(lk) < len(lh) {
-		lk = append(lk, "")
-	}
-	for len(lh) < len(lk) {
-		lh = append(lh, "")
-	}
-	left := m.paneBox(paneKeys, leftOuter, strings.Join(lk, "\n"))
-	right := m.paneBox(paneHosts, rightOuter, strings.Join(lh, "\n"))
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
-}
-
-// paneBox boxes one pane's content, highlighting the border when it is active.
-func (m Model) paneBox(p pane, outerW int, content string) string {
-	s := boxStyle.Width(outerW)
-	if p == m.active {
-		s = s.BorderForeground(colPrimary)
-	} else {
-		s = s.BorderForeground(colBorder)
-	}
-	return s.Render(content)
 }
 
 // fit truncates a (possibly ANSI-styled) string to width w with an ellipsis.
@@ -2185,6 +2207,8 @@ var helpReference = []helpSection{
 	{"Tools", []helpItem{
 		{"P", "audit & fix file permissions"},
 		{"K", "browse / remove known_hosts entries"},
+		{"m", "toggle motion / animations"},
+		{"t", "switch theme"},
 	}},
 	{"In overlays", []helpItem{
 		{"esc", "cancel / close"},
@@ -2293,6 +2317,51 @@ func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.helpScroll = 0
 	}
 	return m, nil
+}
+
+// viewTheme renders the theme picker with a live preview swatch (the swatch
+// reflects the currently-applied/previewed theme).
+func (m Model) viewTheme() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("Theme") + "\n\n")
+
+	// Window the list around the cursor so it never overflows a short terminal.
+	cap := len(presets)
+	if m.height > 0 {
+		if c := m.height - 12; c > 2 {
+			cap = c
+		} else {
+			cap = 2
+		}
+	}
+	start := m.themeCursor - cap/2
+	if start > len(presets)-cap {
+		start = len(presets) - cap
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + cap
+	if end > len(presets) {
+		end = len(presets)
+	}
+	for i := start; i < end; i++ {
+		if i == m.themeCursor {
+			b.WriteString(selectedRow.Render("▸ "+presets[i].name) + "\n")
+		} else {
+			b.WriteString("  " + textStyle.Render(presets[i].name) + "\n")
+		}
+	}
+	if start > 0 || end < len(presets) {
+		b.WriteString(dimStyle.Render(fmt.Sprintf("  %d–%d of %d", start+1, end, len(presets))) + "\n")
+	}
+	// Preview swatch using the live styles.
+	swatch := loadedBadge.Render("●") + " " + textStyle.Render("loaded") + "   " +
+		starStyle.Render("★ default") + "   " + hostTagStyle.Render("↪ host") + "   " +
+		errStyle.Render("error")
+	b.WriteString("\n  " + swatch + "\n")
+	b.WriteString("\n" + dimStyle.Render("  ↑/↓ preview · enter apply · r random · esc cancel") + "\n")
+	return b.String()
 }
 
 // viewCopy renders the clipboard copy menu.
@@ -2446,7 +2515,7 @@ type helpGroup struct {
 // helpGroups returns the keybinding hints for the active pane, grouped into
 // labeled categories for a less cluttered footer.
 func (m Model) helpGroups() []helpGroup {
-	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"P", "perms"}, {"K", "known_hosts"}, {"m", "motion"}, {"?", "help"}, {"tab", "panes"}, {"q", "quit"}}}
+	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"P", "perms"}, {"K", "known_hosts"}, {"t", "theme"}, {"m", "motion"}, {"?", "help"}, {"tab", "panes"}, {"q", "quit"}}}
 	if m.active == paneKeys {
 		return []helpGroup{
 			{"agent", []helpItem{{"↵", "load/unload"}, {"U", "unload all"}, {"s", "default"}}},
@@ -2501,7 +2570,7 @@ func (m Model) keysLines(w int) []string {
 		return []string{dimStyle.Render("no keys match " + strconv.Quote(m.filterQuery()))}
 	}
 	usedBy := m.hostsByKey()
-	lines := []string{fit(headerStyle.Render(fmt.Sprintf("  %1s %-20s %-11s %s", " ", "name", "algo", "comment / hosts")), w)}
+	lines := []string{fit(headerStyle.Render(fmt.Sprintf("  %1s %-20s %-11s %s", " ", "name", "algo", "default · hosts · comment")), w)}
 	start, end := m.window(paneKeys)
 	for i := start; i < end; i++ {
 		id := vis[i]

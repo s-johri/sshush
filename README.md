@@ -109,6 +109,9 @@ sshush help         # show help
 | `↑` `↓` / `k` `j` | move |
 | `PgUp` `PgDn`, `g` `G` | page / jump to top / bottom |
 | `/` | filter the active pane (`esc` clears) |
+| `P` / `K` | permission audit / known_hosts |
+| `t` / `m` | switch theme / toggle motion |
+| `?` | full keybinding help |
 | `r` | refresh |
 | `q` / `ctrl+c` | quit |
 
@@ -142,6 +145,13 @@ default_identities = ["id_ed25519", "id_work"]
 # to <ssh_dir>/config when only ssh_dir is set.
 ssh_dir = "~/.ssh"
 config_path = "~/.ssh/config"
+
+# Optional: color theme (sets foreground + background). Switch live in-app with
+# `t`. Presets: default, mono, high-contrast, dracula, nord, gruvbox-dark,
+# gruvbox-light, solarized-dark, solarized-light, catppuccin-mocha,
+# catppuccin-macchiato, catppuccin-frappe, catppuccin-latte, tokyonight,
+# tokyonight-storm, tokyonight-day.
+theme = "default"
 
 # Optional: opt-in motion/animation (off by default). Toggle in-app with `m`.
 [motion]

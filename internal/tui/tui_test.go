@@ -739,6 +739,7 @@ type fakeSettings struct {
 	toggles     []config.IdentityID
 	motionOn    bool
 	motionLevel string
+	themeName   string
 }
 
 func (f *fakeSettings) MotionEnabled() bool { return f.motionOn }
@@ -755,6 +756,8 @@ func (f *fakeSettings) SetMotion(on bool, intensity string) error {
 	}
 	return nil
 }
+func (f *fakeSettings) ThemeName() string       { return f.themeName }
+func (f *fakeSettings) SetTheme(n string) error { f.themeName = n; return nil }
 
 func (f *fakeSettings) DefaultIdentities() []config.IdentityID { return f.defaults }
 func (f *fakeSettings) AutoLoad() bool                         { return len(f.defaults) > 0 }
@@ -1408,7 +1411,7 @@ func TestHelpFitsAndScrolls(t *testing.T) {
 	}
 }
 
-func TestTwoColumnWhenWide(t *testing.T) {
+func TestSinglePaneShowsActiveOnly(t *testing.T) {
 	snap := &config.SshConfigModel{
 		Identities: map[config.IdentityID]config.Identity{
 			"keyonly": {ID: "keyonly", Name: "keyonly", ExistsOnDisk: true},
@@ -1417,28 +1420,18 @@ func TestTwoColumnWhenWide(t *testing.T) {
 			"hostonly": {ID: "hostonly", Name: "hostonly", Hostname: "h.example"},
 		},
 	}
-	// Wide: both panes visible at once.
+	// Even on a wide terminal, only the active pane is shown (no two-column).
 	m := New(&fakeService{model: snap})
 	m = feed(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = feed(m, refreshedMsg{model: snap})
-	if !m.wide() {
-		t.Fatal("120 cols should be wide")
-	}
 	v := m.View()
-	if !strings.Contains(v, "keyonly") || !strings.Contains(v, "hostonly") {
-		t.Errorf("wide layout should show both panes:\n%s", v)
-	}
-
-	// Narrow: only the active pane (keys) — host content hidden.
-	m = New(&fakeService{model: snap})
-	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = feed(m, refreshedMsg{model: snap})
-	if m.wide() {
-		t.Fatal("80 cols should be narrow")
-	}
-	v = m.View()
 	if !strings.Contains(v, "keyonly") || strings.Contains(v, "hostonly") {
-		t.Errorf("narrow layout should show only the active pane:\n%s", v)
+		t.Errorf("keys pane should show only keys:\n%s", v)
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // -> hosts
+	v = m.View()
+	if !strings.Contains(v, "hostonly") || strings.Contains(v, "keyonly") {
+		t.Errorf("hosts pane should show only hosts:\n%s", v)
 	}
 }
 
@@ -1536,6 +1529,62 @@ func TestToggleMotionPersists(t *testing.T) {
 	m = feed(m, key("m"))
 	if fs.motionOn || !strings.Contains(m.status, "motion off") {
 		t.Errorf("second m should disable; on=%v status=%q", fs.motionOn, m.status)
+	}
+}
+
+func TestThemeApplyOnSettings(t *testing.T) {
+	defer applyTheme(defaultTheme)
+	applyTheme(defaultTheme)
+	if colPrimary != defaultTheme.Primary {
+		t.Fatalf("setup: primary=%v", colPrimary)
+	}
+	_ = New(&fakeService{model: snapshot()}).WithSettings(&fakeSettings{themeName: "dracula"})
+	drac, _ := themeByName("dracula")
+	if colPrimary != drac.Primary {
+		t.Errorf("saved theme not applied: primary=%v want %v", colPrimary, drac.Primary)
+	}
+}
+
+func TestThemeSwitcherApply(t *testing.T) {
+	defer applyTheme(defaultTheme)
+	fs := &fakeSettings{}
+	m := New(&fakeService{model: snapshot()}).WithSettings(fs)
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	m = feed(m, key("t"))
+	if m.mode != modeTheme {
+		t.Fatalf("t should open theme picker, got %d", m.mode)
+	}
+	if v := m.View(); !strings.Contains(v, "dracula") || !strings.Contains(v, "nord") {
+		t.Errorf("theme picker should list presets:\n%s", v)
+	}
+	// Move to the 2nd preset and apply.
+	m = feed(m, key("j"))
+	want := presets[1].name
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if fs.themeName != want || m.mode != modeNormal {
+		t.Errorf("apply: themeName=%q mode=%d, want %q/normal", fs.themeName, m.mode, want)
+	}
+}
+
+func TestThemeSwitcherCancelReverts(t *testing.T) {
+	defer applyTheme(defaultTheme)
+	fs := &fakeSettings{themeName: "nord"}
+	m := New(&fakeService{model: snapshot()}).WithSettings(fs) // applies nord
+	m = feed(m, refreshedMsg{model: snapshot()})
+	nord, _ := themeByName("nord")
+
+	m = feed(m, key("t"))
+	m = feed(m, key("j")) // preview a different theme (changes global styles)
+	if colPrimary == nord.Primary {
+		t.Fatal("preview should have changed the live theme")
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEsc}) // cancel
+	if fs.themeName != "nord" {
+		t.Errorf("cancel must not persist: %q", fs.themeName)
+	}
+	if colPrimary != nord.Primary {
+		t.Errorf("cancel should revert the live theme to nord")
 	}
 }
 

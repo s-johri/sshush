@@ -408,6 +408,18 @@ Plus an **opt-in motion system** — playful, arcade-style juice:
 Risk: presentation only, but guard performance (cap active effects, stop the
 ticker when idle) and respect the off switch unconditionally.
 
+**Status — core done; flavor deferred.** Shipped: `[motion]` config + in-app
+`m` toggle + intensity (subtle/normal/arcade), 16ms frame ticker scheduled only
+while an effect plays (no idle CPU), palette-matched full-width **flash** bar on
+success/error, and a **punchy screen-shake** (ease-out² decay + ~38Hz osc;
+amp 2/4/7) on errors / destructive deletes / all arcade actions / the toggle demo.
+Also the `textStyle` pass so panes don't inherit the terminal foreground.
+
+Deferred (continuous effects — conflict with the no-idle-CPU rule, so revisit
+when ready, possibly arcade-only): the **breathing shimmer** on the hovered row
+and loaded `●` keys, and **animated pane/status transitions**. Remaining polish:
+route overlay body text through explicit theme colors (tracked in M26).
+
 ### Milestone 26 detail
 
 Let users theme the UI. The styling already centralizes colors in named palette
