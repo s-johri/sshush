@@ -52,6 +52,14 @@ type Host struct {
 	// These set defaults applied to many connections rather than a single host.
 	IsPattern bool
 
+	// IsMatch is true when this block comes from a `Match` directive (e.g.
+	// `Match Host *.example.com`). Match blocks are surfaced read-only: their
+	// criteria depend on connection-time conditions sshush can't safely edit.
+	IsMatch bool
+	// MatchCriteria is the display form of a Match block's condition, e.g.
+	// "Match Host *.example.com" or "Match all". Empty for normal Host blocks.
+	MatchCriteria string
+
 	// Options is a map of additional ssh options that can be used for this host, such as "ProxyCommand", "ForwardAgent", etc.
 	Options map[string]string
 }

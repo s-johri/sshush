@@ -1083,6 +1083,10 @@ func (m Model) beginDelete() (tea.Model, tea.Cmd) {
 			m.status = "no host to delete"
 			return m, nil
 		}
+		if host.IsMatch {
+			m.status = "Match block — read-only"
+			return m, nil
+		}
 		m.pendingHost = host.ID
 		m.mode = modeConfirmDelHost
 		return m, nil
@@ -1309,6 +1313,10 @@ func (m *Model) editTarget() (config.Host, bool) {
 	host, ok := m.selectedHost()
 	if !ok {
 		m.status = "no host selected"
+		return config.Host{}, false
+	}
+	if host.IsMatch {
+		m.status = "Match block — read-only"
 		return config.Host{}, false
 	}
 	m.pendingHost = host.ID
@@ -1587,6 +1595,10 @@ func (m Model) connectToHost() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	if host.IsMatch {
+		m.status = "Match block — read-only (cannot connect)"
+		return m, nil
+	}
 	if host.IsPattern {
 		m.status = "cannot connect to a wildcard/pattern host"
 		return m, nil
@@ -1638,6 +1650,10 @@ func (m Model) beginKeyPicker() (tea.Model, tea.Cmd) {
 	host, ok := m.selectedHost()
 	if !ok {
 		m.status = "no host selected"
+		return m, nil
+	}
+	if host.IsMatch {
+		m.status = "Match block — read-only"
 		return m, nil
 	}
 	if len(m.diskKeys()) == 0 {
@@ -2638,6 +2654,15 @@ func (m Model) hostsLines(w int) []string {
 	start, end := m.window(paneHosts)
 	for i := start; i < end; i++ {
 		h := vis[i]
+		// Match blocks are surfaced read-only: show the criteria (already in
+		// h.Name) with a read-only tag instead of a connectable destination.
+		if h.IsMatch {
+			nameCol := fmt.Sprintf("%-20s", h.Name)
+			plain := nameCol + " read-only"
+			styled := dimStyle.Render(nameCol) + " " + hostTagStyle.Render("read-only")
+			lines = append(lines, m.listRow(paneHosts, i, plain, styled, w))
+			continue
+		}
 		dest := h.Hostname
 		if h.User != "" {
 			dest = h.User + "@" + dest

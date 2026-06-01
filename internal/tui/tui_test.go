@@ -206,6 +206,47 @@ func TestEditFlowConfirmWrites(t *testing.T) {
 	}
 }
 
+func TestMatchHostReadOnly(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Hosts: map[config.HostID]config.Host{
+			"Match Host *.corp": {
+				ID: "Match Host *.corp", Name: "Match Host *.corp",
+				IsMatch: true, MatchCriteria: "Match Host *.corp", User: "corpuser",
+			},
+		},
+	}
+	svc := &fakeService{model: snap}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snap})
+	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+
+	if v := m.View(); !strings.Contains(v, "Match Host *.corp") || !strings.Contains(v, "read-only") {
+		t.Errorf("Match block should render with a read-only tag:\n%s", v)
+	}
+
+	// Every host action is blocked and leaves no overlay/dispatch.
+	for _, k := range []string{"e", "d", "i"} {
+		out, cmd := m.Update(key(k))
+		mm := out.(Model)
+		if mm.mode != modeNormal {
+			t.Errorf("%q opened an overlay on a Match block (mode=%d)", k, mm.mode)
+		}
+		if cmd != nil {
+			t.Errorf("%q dispatched a command on a Match block", k)
+		}
+		if !strings.Contains(mm.status, "read-only") {
+			t.Errorf("%q status = %q, want read-only notice", k, mm.status)
+		}
+	}
+
+	// Enter (connect) is also refused.
+	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := out.(Model)
+	if cmd != nil || !strings.Contains(mm.status, "read-only") {
+		t.Errorf("connect on Match block not blocked: cmd=%v status=%q", cmd, mm.status)
+	}
+}
+
 func TestEditFlowCancelNoWrite(t *testing.T) {
 	svc := &fakeService{model: snapshot()}
 	m := New(svc)

@@ -171,7 +171,7 @@ users get value before 1.0; the API/config surface only freezes at the RC.
 | 25 | Styling / polish pass + opt-in motion system | low |
 | 26 | Themes — palette config, in-app switcher, open-source presets, randomize/reset | low |
 | 🏷 | **v0.5.0** — help overlay + polish/motion + theming (M41 adaptive layout reverted) | — |
-| 27 | `Match` block + broader directive support (read/display, edit-safe) | medium |
+| 27 | `Match` block + broader directive support (read/display, edit-safe) — *read-only display done; editing deferred* | medium |
 | 28 | Restore-from-backup (undo last write) command/action | low |
 | 🏷 | **v0.6.0** — Match/advanced directives + undo | — |
 | 29 | Integration tests (real agent/keygen e2e) + CI matrix (linux/macOS) | low |
@@ -464,6 +464,23 @@ Real configs use `Match` blocks and directives sshush doesn't model. Today
 read-only first (display, flag non-editable), then allow edits where the AST
 round-trips. Audit common directives (`ProxyJump`, `IdentitiesOnly`,
 `AddKeysToAgent`) — they flow through `Options`, but verify display.
+
+**Status — read-only done.** `Match` blocks now surface in the Hosts pane keyed
+and labeled by their criteria (`Match Host …` / `Match all`) with a `read-only`
+tag, parsed via the library's unexported `isMatch`/`matchKeyword` (pinned to
+ssh_config v1.6.0, reflection-guarded like `isImplicitHost`). Their directives
+(incl. `ProxyJump` etc., which flow through `Options`) are parsed for display.
+Every mutator — `SetHostField`, `DeleteHostField`, `AddHostIdentity`,
+`RemoveHostIdentity`, `DeleteHost` — refuses a Match block with
+`ErrMatchReadOnly`, and the TUI blocks `e`/`d`/`i`/`enter` on one. Directive
+display audited: `ProxyJump`/`IdentitiesOnly`/`AddKeysToAgent` round-trip and
+show in the edit overlay.
+
+Deferred: editing Match blocks (the "edit where the AST round-trips" half);
+surfacing key directives (e.g. `ProxyJump`) in the host row, not just the editor.
+Note: the parser only accepts `Match all` / `Match Host …`; other criteria
+(`Match user`, `Match exec`, …) fail to parse upstream — a library limit, not
+handled here.
 
 ### Milestone 28 detail
 

@@ -21,6 +21,10 @@ import (
 // ErrNotImplemented is returned by stubbed methods during scaffolding.
 var ErrNotImplemented = errors.New("not implemented")
 
+// ErrMatchReadOnly is returned when a mutation targets a `Match` block. Match
+// conditions depend on connection-time state, so sshush surfaces them read-only.
+var ErrMatchReadOnly = errors.New("Match blocks are read-only")
+
 // maxIncludeDepth caps Include recursion, matching OpenSSH's limit.
 const maxIncludeDepth = 5
 
@@ -138,7 +142,8 @@ func (r *FileRepo) loadFile(path string, depth int, visited map[string]bool) err
 // hostFromAST converts a parsed Host block into a model Host. Returns false for
 // blocks with no patterns and for the parser's implicit global block (which
 // holds directives before the first Host and shares the "*" pattern with an
-// explicit "Host *"). Explicit wildcard blocks are surfaced with IsPattern set.
+// explicit "Host *"). Explicit wildcard blocks are surfaced with IsPattern set;
+// `Match` blocks are surfaced read-only with IsMatch + MatchCriteria set.
 func hostFromAST(h *sshcfg.Host) (config.Host, bool) {
 	if isImplicitHost(h) {
 		return config.Host{}, false
@@ -162,6 +167,15 @@ func hostFromAST(h *sshcfg.Host) (config.Host, bool) {
 		Name:      name,
 		IsPattern: isPattern,
 		Options:   map[string]string{},
+	}
+	// A Match block is keyed and labeled by its criteria, not its patterns, so
+	// it can't be confused with (or collide with) a Host of the same name.
+	if isMatchHost(h) {
+		crit := matchCriteria(h)
+		host.ID = config.HostID(crit)
+		host.Name = crit
+		host.IsMatch = true
+		host.MatchCriteria = crit
 	}
 	for _, node := range h.Nodes {
 		kv, ok := node.(*sshcfg.KV)
@@ -190,6 +204,33 @@ func hostFromAST(h *sshcfg.Host) (config.Host, bool) {
 // The flag is unexported; pinned to ssh_config v1.6.0 and guarded by tests.
 func isImplicitHost(h *sshcfg.Host) bool {
 	return reflect.ValueOf(h).Elem().FieldByName("implicit").Bool()
+}
+
+// isMatchHost reports whether h came from a `Match` directive. The flag is
+// unexported; pinned to ssh_config v1.6.0 and guarded by tests.
+func isMatchHost(h *sshcfg.Host) bool {
+	return reflect.ValueOf(h).Elem().FieldByName("isMatch").Bool()
+}
+
+// matchKeywordOf returns the original-case word after `Match` (e.g. "Host" or
+// "all"), preserved by the parser for round-tripping. Unexported; v1.6.0.
+func matchKeywordOf(h *sshcfg.Host) string {
+	return reflect.ValueOf(h).Elem().FieldByName("matchKeyword").String()
+}
+
+// matchCriteria renders a Match block's condition for display, reconstructing
+// the source line: "Match all" or "Match Host <patterns>". The library parses
+// only `all` and `Host`; other criteria fail to parse upstream.
+func matchCriteria(h *sshcfg.Host) string {
+	kw := matchKeywordOf(h)
+	if strings.EqualFold(kw, "all") {
+		return "Match all"
+	}
+	pats := make([]string, 0, len(h.Patterns))
+	for _, p := range h.Patterns {
+		pats = append(pats, p.String())
+	}
+	return strings.TrimSpace("Match " + kw + " " + strings.Join(pats, " "))
 }
 
 // identityIDFromPath derives an IdentityID from an IdentityFile value by taking
@@ -268,6 +309,9 @@ func (r *FileRepo) SetHostField(h config.HostID, key, val string) error {
 	if host == nil {
 		return fmt.Errorf("unknown host %q", h)
 	}
+	if isMatchHost(host) {
+		return ErrMatchReadOnly
+	}
 
 	for _, node := range host.Nodes {
 		kv, ok := node.(*sshcfg.KV)
@@ -293,6 +337,9 @@ func (r *FileRepo) DeleteHostField(h config.HostID, key string) error {
 	if host == nil {
 		return fmt.Errorf("unknown host %q", h)
 	}
+	if isMatchHost(host) {
+		return ErrMatchReadOnly
+	}
 	for i, node := range host.Nodes {
 		if kv, ok := node.(*sshcfg.KV); ok && strings.EqualFold(kv.Key, key) {
 			host.Nodes = append(host.Nodes[:i], host.Nodes[i+1:]...)
@@ -309,6 +356,9 @@ func (r *FileRepo) AddHostIdentity(h config.HostID, path string) error {
 	lf, host := r.findHost(h)
 	if host == nil {
 		return fmt.Errorf("unknown host %q", h)
+	}
+	if isMatchHost(host) {
+		return ErrMatchReadOnly
 	}
 	// Skip if this exact path is already associated.
 	for _, node := range host.Nodes {
@@ -330,6 +380,9 @@ func (r *FileRepo) RemoveHostIdentity(h config.HostID, id config.IdentityID) err
 	lf, host := r.findHost(h)
 	if host == nil {
 		return fmt.Errorf("unknown host %q", h)
+	}
+	if isMatchHost(host) {
+		return ErrMatchReadOnly
 	}
 	for i, node := range host.Nodes {
 		kv, ok := node.(*sshcfg.KV)
@@ -391,6 +444,9 @@ func (r *FileRepo) DeleteHost(h config.HostID) error {
 	for _, lf := range r.files {
 		for i, host := range lf.cfg.Hosts {
 			if mh, ok := hostFromAST(host); ok && mh.ID == h {
+				if isMatchHost(host) {
+					return ErrMatchReadOnly
+				}
 				lf.cfg.Hosts = append(lf.cfg.Hosts[:i], lf.cfg.Hosts[i+1:]...)
 				r.dirty[lf.path] = true
 				return nil

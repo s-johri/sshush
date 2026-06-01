@@ -1,8 +1,10 @@
 package sshconfig
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/s-johri/sshush/pkg/config"
@@ -387,4 +389,67 @@ func hostIDs(m *config.SshConfigModel) []config.HostID {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestMatchBlocksSurfacedReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path,
+		"Host web\n    HostName 1.2.3.4\n    User admin\n\n"+
+			"Match Host *.corp.example.com\n    User corpuser\n    ProxyJump bastion\n\n"+
+			"Match all\n    ForwardAgent yes\n")
+
+	r := New(path)
+	model, err := r.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Match Host block is keyed/labeled by its criteria, flagged read-only, and
+	// its directives are still parsed (ProxyJump flows through Options).
+	mh, ok := model.Hosts["Match Host *.corp.example.com"]
+	if !ok {
+		t.Fatalf("Match Host block not surfaced; got %v", hostIDs(model))
+	}
+	if !mh.IsMatch || mh.MatchCriteria != "Match Host *.corp.example.com" {
+		t.Errorf("match flags wrong: IsMatch=%v criteria=%q", mh.IsMatch, mh.MatchCriteria)
+	}
+	if mh.Options["ProxyJump"] != "bastion" {
+		t.Errorf("ProxyJump not surfaced on Match block: %v", mh.Options)
+	}
+	if ma, ok := model.Hosts["Match all"]; !ok || !ma.IsMatch {
+		t.Errorf("Match all not surfaced read-only: %+v", ma)
+	}
+
+	// A normal Host of the same name does not get mislabeled.
+	if w, ok := model.Hosts["web"]; !ok || w.IsMatch {
+		t.Errorf("normal host mis-flagged: %+v", w)
+	}
+
+	// Every mutator refuses a Match block.
+	for name, err := range map[string]error{
+		"SetHostField":       r.SetHostField(mh.ID, "User", "x"),
+		"DeleteHostField":    r.DeleteHostField(mh.ID, "User"),
+		"AddHostIdentity":    r.AddHostIdentity(mh.ID, "k"),
+		"RemoveHostIdentity": r.RemoveHostIdentity(mh.ID, "k"),
+		"DeleteHost":         r.DeleteHost(mh.ID),
+	} {
+		if !errors.Is(err, ErrMatchReadOnly) {
+			t.Errorf("%s on Match block: got %v, want ErrMatchReadOnly", name, err)
+		}
+	}
+
+	// Editing a real host still works and leaves Match blocks intact on save.
+	if err := r.SetHostField("web", "User", "root"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := os.ReadFile(path)
+	for _, want := range []string{"Match Host *.corp.example.com", "Match all", "ProxyJump bastion", "User root"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("saved config missing %q:\n%s", want, out)
+		}
+	}
 }
