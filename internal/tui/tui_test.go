@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/s-johri/sshush/pkg/clip"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
@@ -1585,6 +1586,52 @@ func TestThemeSwitcherCancelReverts(t *testing.T) {
 	}
 	if colPrimary != nord.Primary {
 		t.Errorf("cancel should revert the live theme to nord")
+	}
+}
+
+// draculaIdx is the presets index of a theme that sets a background.
+func draculaIdx() int {
+	for i, p := range presets {
+		if p.name == "dracula" {
+			return i
+		}
+	}
+	return 0
+}
+
+func TestBackgroundFillsWholeScreen(t *testing.T) {
+	prof := lipgloss.ColorProfile()
+	defer lipgloss.SetColorProfile(prof)
+	defer applyTheme(defaultTheme)
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	applyTheme(presets[draculaIdx()].theme) // has Bg
+
+	out := applyBackground("hi\nthere", 10, 6)
+	lines := strings.Split(out, "\n")
+	if len(lines) != 6 {
+		t.Fatalf("want 6 rows filled to height, got %d", len(lines))
+	}
+	bg := bgOpenSeq()
+	for i, ln := range lines {
+		if !strings.HasPrefix(ln, bg) {
+			t.Errorf("row %d missing bg prefix: %q", i, ln)
+		}
+		if w := lipgloss.Width(ln); w != 10 {
+			t.Errorf("row %d width=%d, want 10 (padded, no wrap)", i, w)
+		}
+	}
+}
+
+func TestBackgroundNoColorEmitsNoEscape(t *testing.T) {
+	prof := lipgloss.ColorProfile()
+	defer lipgloss.SetColorProfile(prof)
+	defer applyTheme(defaultTheme)
+	lipgloss.SetColorProfile(termenv.Ascii) // NO_COLOR / no-color terminal
+	applyTheme(presets[draculaIdx()].theme) // bg theme, but ascii strips color
+
+	out := applyBackground("hi", 10, 3)
+	if strings.ContainsRune(out, '\x1b') {
+		t.Errorf("ascii profile must stay escape-free, got %q", out)
 	}
 }
 

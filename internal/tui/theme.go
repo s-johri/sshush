@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -75,13 +76,12 @@ func applyTheme(t Theme) {
 	colDim, colErr, colGold = t.Dim, t.Err, t.Gold
 	colBorder, colSelBg, colBg = t.Border, t.SelBg, t.Bg
 
-	// onColored is a readable foreground for text on a colored fill.
-	onColored := lipgloss.Color("16")
-
 	appTitleStyle = themed(t).Bold(true).Foreground(t.Primary)
 	titleStyle = themed(t).Bold(true).Foreground(t.Primary)
 	tabActive = titleStyle
-	tabSelected = lipgloss.NewStyle().Bold(true).Foreground(onColored).Background(t.Primary).Padding(0, 1)
+	// Text on a colored fill (tab/flash) picks black or white by the fill's
+	// luminance, so it stays readable on both bright and dark accent colors.
+	tabSelected = lipgloss.NewStyle().Bold(true).Foreground(readableOn(t.Primary)).Background(t.Primary).Padding(0, 1)
 	tabUnselected = themed(t).Foreground(t.Dim).Padding(0, 1)
 	headerStyle = themed(t).Foreground(t.Dim).Underline(true)
 	selectedRow = lipgloss.NewStyle().Bold(true).Foreground(t.Accent).Background(t.SelBg)
@@ -96,8 +96,43 @@ func applyTheme(t Theme) {
 	helpKey = themed(t).Bold(true).Foreground(t.Accent)
 	helpLabel = themed(t).Bold(true).Foreground(t.Subtle)
 	hostTagStyle = themed(t).Foreground(t.HostTag)
-	flashGoodStyle = lipgloss.NewStyle().Bold(true).Foreground(onColored).Background(t.Accent)
-	flashBadStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(t.Err)
+	flashGoodStyle = lipgloss.NewStyle().Bold(true).Foreground(readableOn(t.Accent)).Background(t.Accent)
+	flashBadStyle = lipgloss.NewStyle().Bold(true).Foreground(readableOn(t.Err)).Background(t.Err)
+}
+
+// readableOn returns black or white — whichever reads better on fill color c
+// (by Rec. 601 luminance). Non-hex colors (256-palette indices, used only by the
+// bright default/mono/high-contrast fills) fall back to black.
+func readableOn(c lipgloss.Color) lipgloss.Color {
+	r, g, b, ok := parseHex(string(c))
+	if !ok {
+		return lipgloss.Color("16")
+	}
+	lum := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
+	if lum < 140 {
+		return lipgloss.Color("#ffffff")
+	}
+	return lipgloss.Color("#000000")
+}
+
+// parseHex parses "#rgb" / "#rrggbb" into 8-bit components.
+func parseHex(s string) (r, g, b uint8, ok bool) {
+	if len(s) == 0 || s[0] != '#' {
+		return 0, 0, 0, false
+	}
+	s = s[1:]
+	switch len(s) {
+	case 3:
+		s = string([]byte{s[0], s[0], s[1], s[1], s[2], s[2]})
+	case 6:
+	default:
+		return 0, 0, 0, false
+	}
+	v, err := strconv.ParseUint(s, 16, 32)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return uint8(v >> 16), uint8(v >> 8), uint8(v), true
 }
 
 // themed returns a base style carrying the theme background (so individual
@@ -131,6 +166,9 @@ func applyBackground(s string, width, height int) string {
 		return s
 	}
 	open := bgOpenSeq()
+	if open == "" {
+		return s // no bg escape (NO_COLOR / ascii profile) — leave output plain
+	}
 	lines := strings.Split(s, "\n")
 	for height > 0 && len(lines) < height {
 		lines = append(lines, "")

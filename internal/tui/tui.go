@@ -1528,8 +1528,11 @@ func (m Model) handleThemeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.themeCursor = rand.Intn(len(presets))
 	case "enter":
 		name := presets[m.themeCursor].name
-		_ = m.settings.SetTheme(name)
 		m.mode = modeNormal
+		if err := m.settings.SetTheme(name); err != nil {
+			m.status = "theme applied (not saved): " + err.Error()
+			return m, nil
+		}
 		m.status = "theme: " + name
 		return m, nil
 	case "esc", "q":
