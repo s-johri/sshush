@@ -2,15 +2,18 @@
 
 Interactive CLI/TUI to switch SSH keys, inspect the agent, view hosts, and edit SSH config.
 
-**Status:** through `v0.4.0` (milestones 0–23, 39, 40) — full read/merge pipeline,
+**Status:** through `v0.5.0` (milestones 0–26, 39, 40) — full read/merge pipeline,
 agent switch (load/unload/unload-all), host directive + key/host CRUD with
 backup+confirm, wildcard hosts, key↔host association, hot reload, app config with
 multiple default identities + auto-load, configurable SSH dir/config path,
 multi-algorithm key generation, scrollable panes, live search/filter,
 connect-to-host, permission audit+fix, known_hosts management, clipboard copy,
-smart shell-init, lipgloss styling, and a versioned self-update/release pipeline.
-Next windows: v0.5.0 (help overlay, adaptive layout, polish/motion, themes) →
-`v1.0.0`. Tests cover every `pkg`; see [README.md](README.md) for usage.
+smart shell-init, help overlay, opt-in motion system, 16 color themes (fg+bg,
+in-app switcher), lipgloss styling, and a versioned self-update/release pipeline.
+Adaptive two-column layout (M41) was tried and reverted — full-height single
+pane reads better and avoids row truncation. Next windows: v0.6.0
+(Match/advanced directives + undo) → `v1.0.0`. Tests cover every `pkg`; see
+[README.md](README.md) for usage.
 
 ## Decisions (locked)
 
@@ -167,7 +170,7 @@ users get value before 1.0; the API/config surface only freezes at the RC.
 | 24 | Help overlay (`?`) + `NO_COLOR`, narrow-terminal, non-TTY handling | low |
 | 25 | Styling / polish pass + opt-in motion system | low |
 | 26 | Themes — palette config, in-app switcher, open-source presets, randomize/reset | low |
-| 🏷 | **v0.5.0** — help overlay + adaptive layout + polish/motion + theming | — |
+| 🏷 | **v0.5.0** — help overlay + polish/motion + theming (M41 adaptive layout reverted) | — |
 | 27 | `Match` block + broader directive support (read/display, edit-safe) | medium |
 | 28 | Restore-from-backup (undo last write) command/action | low |
 | 🏷 | **v0.6.0** — Match/advanced directives + undo | — |
@@ -206,7 +209,7 @@ the existing windows above (not a separate phase).
 |---|---------|-----------|--------|
 | 39 | Multiple default identities | auto-load several keys on startup, not just one — teams juggle work+personal+deploy keys. `default_identities = [...]` in `config.toml`; `s` toggles membership; `load-default` loads all | v0.4.0 |
 | 40 | Smart `shell-init` | detect whether the snippet is already in `~/.bashrc`/`~/.zshrc`: nudge to add it when a default is set (only if absent), and warn on `shell-init` if a stub is already present (avoid duplicates) | v0.4.0 |
-| 41 | Adaptive layout | use whatever terminal real-estate exists: wide → two-column (Keys + Hosts side by side, or a detail pane on the right); tall → fill vertical space, more rows + a details/preview region. Responsive breakpoints off `m.width`/`m.height` | v0.5.0 |
+| 41 | Adaptive layout | ~~wide → two-column (Keys + Hosts side by side); tall → fill vertical space~~ **Reverted.** Two-column was built then removed: side-by-side panes truncated host tags + default status, and felt cramped. Kept the tall half only — full-height single pane that grows to fit, no pagination | v0.5.0 (reverted) |
 | 42 | Auto update-check on launch | async, non-blocking: check latest release in a `tea.Cmd`, surface "update available → run `sshush update`" as a transient status. Off for `dev` builds; respects a `check_updates = false` setting | v0.7.0 |
 | 43 | `curl \| bash` install script | host an `install.sh` (detect OS/arch → download the right release asset + checksum verify → drop `sshush` on PATH); one-line install in the README | v0.7.0 |
 
@@ -440,6 +443,19 @@ color is off; unknown/partial themes fall back per-field to defaults).
   (perms/known_hosts/copy/edit/help) still print some plain text that inherits the
   terminal's foreground** (e.g. a user with green terminal text saw green labels) —
   wrap them so the theme fully controls color.
+
+**Status — core done.** Shipped: `Theme` struct (fg + full-screen `Bg`), 16
+built-in presets (default, mono, high-contrast, dracula, nord, gruvbox-dark/light,
+solarized-dark/light, catppuccin-mocha/macchiato/frappe/latte,
+tokyonight/-storm/-day), in-app picker (`t`) with live preview + windowing for
+short terminals, randomize (`r`) / reset, and persistence to `config.toml`
+(`theme = "..."`). Full-screen background fill via `applyBackground` — re-asserts
+the bg escape after every inner reset and fills to terminal width+height, so the
+whole screen takes the theme color (not just where text sits).
+
+Deferred: per-field hex overrides under a `[theme]` table (presets only for now);
+routing overlay body text through `textStyle` (the terminal-fg bleed above —
+shared with M25).
 
 ### Milestone 27 detail
 
