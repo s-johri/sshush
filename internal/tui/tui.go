@@ -2654,12 +2654,13 @@ func (m Model) hostsLines(w int) []string {
 	start, end := m.window(paneHosts)
 	for i := start; i < end; i++ {
 		h := vis[i]
-		// Match blocks are surfaced read-only: show the criteria (already in
-		// h.Name) with a read-only tag instead of a connectable destination.
+		// Match blocks are surfaced read-only: the name column shows the match
+		// pattern (the "match" tag marks the block type) so it lines up with the
+		// destination column exactly like a normal host row.
 		if h.IsMatch {
-			nameCol := fmt.Sprintf("%-20s", h.Name)
-			plain := nameCol + " read-only"
-			styled := dimStyle.Render(nameCol) + " " + hostTagStyle.Render("read-only")
+			nameCol := padClip(matchLabel(h.MatchCriteria), 20)
+			plain := nameCol + " match · read-only"
+			styled := textStyle.Render(nameCol) + " " + dimStyle.Render("match · ") + hostTagStyle.Render("read-only")
 			lines = append(lines, m.listRow(paneHosts, i, plain, styled, w))
 			continue
 		}
@@ -2680,7 +2681,7 @@ func (m Model) hostsLines(w int) []string {
 			}
 			dest = fmt.Sprintf("%s  [%d %s]", dest, n, unit)
 		}
-		nameCol := fmt.Sprintf("%-20s", h.Name)
+		nameCol := padClip(h.Name, 20)
 		plain := nameCol + " " + dest
 		styled := textStyle.Render(nameCol) + " " + dimStyle.Render(dest)
 		lines = append(lines, m.listRow(paneHosts, i, plain, styled, w))
@@ -2689,6 +2690,27 @@ func (m Model) hostsLines(w int) []string {
 		lines = append(lines, fit(ind, w))
 	}
 	return lines
+}
+
+// matchLabel reduces a Match criteria string to its pattern for the name column,
+// dropping the "Match"/"Host" keywords (the row's "match" tag conveys the type):
+// "Match Host *.corp" → "*.corp"; "Match all" → "all".
+func matchLabel(crit string) string {
+	s := strings.TrimPrefix(crit, "Match ")
+	s = strings.TrimPrefix(s, "Host ")
+	return s
+}
+
+// padClip pads s with spaces to exactly n columns, or truncates it with an
+// ellipsis when it is wider, so fixed-column rows always line up.
+func padClip(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
+	if w := lipgloss.Width(s); w < n {
+		return s + strings.Repeat(" ", n-w)
+	}
+	return ansi.Truncate(s, n, "…")
 }
 
 // listRow renders one list row, truncated to width w. The active pane's cursor

@@ -220,8 +220,8 @@ func TestMatchHostReadOnly(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snap})
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
 
-	if v := m.View(); !strings.Contains(v, "Match Host *.corp") || !strings.Contains(v, "read-only") {
-		t.Errorf("Match block should render with a read-only tag:\n%s", v)
+	if v := m.View(); !strings.Contains(v, "*.corp") || !strings.Contains(v, "match · read-only") {
+		t.Errorf("Match block should render its pattern with a match/read-only tag:\n%s", v)
 	}
 
 	// Every host action is blocked and leaves no overlay/dispatch.
