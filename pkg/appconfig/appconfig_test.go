@@ -168,3 +168,21 @@ func TestUnknownKeysWarn(t *testing.T) {
 		t.Errorf("clean config should have no warnings: %v", s2.Warnings())
 	}
 }
+
+func TestMalformedConfigReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	// Invalid TOML (unterminated string) must surface as an error, not be
+	// silently swallowed — the caller decides to warn and fall back to defaults.
+	if err := os.WriteFile(path, []byte("theme = \"nord\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(path).Load(); err == nil {
+		t.Error("malformed config.toml should return an error from Load")
+	}
+
+	// A missing file is NOT an error (zero-value settings).
+	if _, err := New(filepath.Join(dir, "nope.toml")).Load(); err != nil {
+		t.Errorf("missing config should not error: %v", err)
+	}
+}

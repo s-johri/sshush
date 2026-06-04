@@ -150,7 +150,11 @@ func runTUI() {
 
 	// App settings (default identity, SSH dir/config overrides). Best-effort.
 	settings := appconfig.New("")
-	_, _ = settings.Load()
+	if _, err := settings.Load(); err != nil {
+		// Malformed config.toml: warn, then run with built-in defaults rather
+		// than refusing to start.
+		fmt.Fprintf(os.Stderr, "sshush: reading config: %v (using defaults)\n", err)
+	}
 	warnConfig(settings)
 
 	model := tui.New(newService(settings.SshDir(), settings.ConfigPath()))
