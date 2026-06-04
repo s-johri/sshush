@@ -228,6 +228,10 @@ matching disk keys to agent keys by SHA256 fingerprint. Config writes go through
 a round-tripping parser so comments, ordering, and unknown options survive
 edits. See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the per-release history.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
