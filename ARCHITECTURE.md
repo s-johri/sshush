@@ -176,7 +176,7 @@ users get value before 1.0; the API/config surface only freezes at the RC.
 | 27 | `Match` block + broader directive support (read/display, edit-safe) — *read-only display done; editing deferred* | medium |
 | 28 | Restore-from-backup (undo last write) command/action — *done (`R` + `sshush restore`)* | low |
 | 🏷 | **v0.6.0** — Match blocks read-only + restore-from-backup (Match editing deferred) | — |
-| 29 | Integration tests (real agent/keygen e2e) + CI matrix (linux/macOS) | low |
+| 29 | Integration tests (real agent/keygen e2e) + CI matrix (linux/macOS) — *done (`-tags e2e`, ubuntu+macOS matrix)* | low |
 | 30 | Packaging: Homebrew tap, AUR, shell completions, man page | low |
 | 🏷 | **v0.7.0** — e2e/CI hardening + packaging + install script + update-check | — |
 | 31 | v1.0 stabilization: error-handling audit, config schema freeze, docs/screenshots, CHANGELOG | low |
@@ -507,6 +507,14 @@ Unit tests are thorough; add e2e coverage behind a build tag: spin a real
 `ssh-agent`, generate a throwaway key, exercise load/unload/delete and a config
 edit against a temp `~/.ssh`. CI matrix (ubuntu + macOS) runs the full suite incl.
 e2e, plus the existing `gofmt`/`go vet` gates.
+
+**Status — done.** `pkg/service/e2e_test.go` (`//go:build e2e`) starts a private
+`ssh-agent`, generates a passphrase-less ed25519 key, and walks the real wiring
+(disk scanner + config repo + agent client): generate → load → assert
+`LoadedInAgent` (fingerprint match) → unload → edit a config host (asserting the
+write + `.bak`) → delete (asserting files gone). Run locally with
+`go test -tags e2e ./pkg/service/`. CI is now a `{ubuntu, macOS}` matrix running
+`gofmt`/`vet`/`go test ./...` then `go test -tags e2e ./...`.
 
 ### Milestone 30 detail
 

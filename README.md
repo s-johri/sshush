@@ -63,6 +63,10 @@ go build -o "$(go env GOPATH)/bin/sshush" ./cmd/sshush
 
 Make sure `$(go env GOPATH)/bin` is on your `PATH`.
 
+Run the tests with `go test ./...`. The end-to-end suite (a throwaway
+`ssh-agent`, key, and config) is behind a build tag — `go test -tags e2e ./...`
+— and needs `ssh-agent`/`ssh-add`/`ssh-keygen` on your `PATH`.
+
 ### go install
 
 ```bash

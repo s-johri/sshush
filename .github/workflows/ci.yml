@@ -7,7 +7,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,3 +27,8 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      # End-to-end: a throwaway ssh-agent, key, and config. The runners ship
+      # ssh-agent/ssh-add/ssh-keygen, so the e2e-tagged suite runs here too.
+      - name: Test (e2e)
+        run: go test -tags e2e ./...
