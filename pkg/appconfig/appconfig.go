@@ -1,10 +1,16 @@
 // Package appconfig persists sshush's own settings (distinct from the user's SSH
 // config) at $XDG_CONFIG_HOME/sshush/config.toml, falling back to
-// ~/.config/sshush/config.toml. It currently holds the default identity to load
-// into the agent on startup.
+// ~/.config/sshush/config.toml.
+//
+// Schema stability: the keys below are the frozen config.toml schema as of the
+// v0.9.0 release candidate. Within the v1.x line, keys are never removed or
+// repurposed — only added. Unknown keys are ignored (forward-compatible) and
+// surfaced via Warnings() so a typo or a stale key is visible without being
+// fatal.
 package appconfig
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,27 +55,36 @@ type MotionConfig struct {
 
 // Store reads and writes the settings file.
 type Store struct {
-	Path string // settings file path; empty resolves to the default location
-	cfg  Config
+	Path     string // settings file path; empty resolves to the default location
+	cfg      Config
+	warnings []string // non-fatal load warnings (e.g. unknown keys)
 }
 
 // New returns a Store for path. Empty path uses the default XDG location.
 func New(path string) *Store { return &Store{Path: path} }
 
 // Load reads the settings file into the store. A missing file is not an error;
-// it yields zero-value settings.
+// it yields zero-value settings. Unknown keys are ignored (forward-compatible)
+// and recorded in Warnings().
 func (s *Store) Load() (Config, error) {
+	s.warnings = nil
 	path, err := s.resolve()
 	if err != nil {
 		return Config{}, err
 	}
 	var cfg Config
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+	md, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
 		if os.IsNotExist(err) {
 			s.cfg = Config{}
 			return s.cfg, nil
 		}
 		return Config{}, err
+	}
+	// Surface keys present in the file but not in the schema. The legacy
+	// default_identity is part of the struct, so it never shows up here.
+	for _, k := range md.Undecoded() {
+		s.warnings = append(s.warnings, fmt.Sprintf("unknown setting %q (ignored)", k.String()))
 	}
 	// Migrate the legacy single default into the list.
 	if len(cfg.DefaultIdentities) == 0 && cfg.DefaultIdentity != "" {
@@ -79,6 +94,10 @@ func (s *Store) Load() (Config, error) {
 	s.cfg = cfg
 	return cfg, nil
 }
+
+// Warnings returns non-fatal issues from the last Load (e.g. unknown keys). The
+// caller decides how to surface them; sshush prints them to stderr at startup.
+func (s *Store) Warnings() []string { return s.warnings }
 
 // DefaultIdentities returns the configured default key names.
 func (s *Store) DefaultIdentities() []config.IdentityID {

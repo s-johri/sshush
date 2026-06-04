@@ -135,3 +135,36 @@ func TestCheckUpdatesDefaultAndOverride(t *testing.T) {
 		t.Error("check_updates = false should disable the update check")
 	}
 }
+
+func TestUnknownKeysWarn(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := "theme = \"nord\"\nbogus_key = 1\n[motion]\nenabled = true\nwat = \"x\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := New(path)
+	if _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	// Known keys parse; unknown ones are surfaced as warnings, not errors.
+	if s.ThemeName() != "nord" || !s.MotionEnabled() {
+		t.Errorf("known keys not parsed: theme=%q motion=%v", s.ThemeName(), s.MotionEnabled())
+	}
+	w := strings.Join(s.Warnings(), "\n")
+	if !strings.Contains(w, "bogus_key") || !strings.Contains(w, "motion.wat") {
+		t.Errorf("unknown keys not warned: %q", s.Warnings())
+	}
+	// A clean reload clears warnings.
+	clean := filepath.Join(dir, "clean.toml")
+	if err := os.WriteFile(clean, []byte("theme = \"nord\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s2 := New(clean)
+	if _, err := s2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if len(s2.Warnings()) != 0 {
+		t.Errorf("clean config should have no warnings: %v", s2.Warnings())
+	}
+}

@@ -151,6 +151,7 @@ func runTUI() {
 	// App settings (default identity, SSH dir/config overrides). Best-effort.
 	settings := appconfig.New("")
 	_, _ = settings.Load()
+	warnConfig(settings)
 
 	model := tui.New(newService(settings.SshDir(), settings.ConfigPath()))
 	model = model.WithSettings(settings).WithSshDir(settings.SshDir())
@@ -181,6 +182,7 @@ func restore() error {
 	if _, err := settings.Load(); err != nil {
 		return err
 	}
+	warnConfig(settings)
 	svc := newService(settings.SshDir(), settings.ConfigPath())
 	if _, err := svc.Refresh(); err != nil { // populates the config repo
 		return err
@@ -198,6 +200,15 @@ func restore() error {
 		fmt.Printf("  %s\n", f)
 	}
 	return nil
+}
+
+// warnConfig prints any non-fatal config warnings (e.g. unknown keys) from the
+// last Load to stderr. Used on the interactive and restore paths; skipped on the
+// frequently-run load-default path to avoid per-shell noise.
+func warnConfig(s *appconfig.Store) {
+	for _, w := range s.Warnings() {
+		fmt.Fprintf(os.Stderr, "sshush: %s\n", w)
+	}
 }
 
 // loadDefault loads the configured default identities into the agent and exits.

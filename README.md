@@ -216,6 +216,12 @@ export SSHUSH_SSH_DIR=~/work/.ssh
 export SSHUSH_CONFIG=~/work/.ssh/config
 ```
 
+The keys above are the stable `config.toml` schema (frozen as of the v0.9.0
+release candidate): within the 1.x line they are never removed or repurposed,
+only added. Parsing is forward-compatible — an unknown key is ignored, with a
+`sshush: unknown setting "…" (ignored)` warning on stderr at startup so typos and
+stale keys stay visible.
+
 ## How it works
 
 sshush merges three sources into one view on each refresh:
