@@ -62,6 +62,12 @@ type editDoneMsg struct {
 // keygenDoneMsg reports the outcome of an interactive ssh-keygen run.
 type keygenDoneMsg struct{ err error }
 
+// restoreDoneMsg reports the outcome of a restore-from-backup.
+type restoreDoneMsg struct {
+	files []string
+	err   error
+}
+
 // connectDoneMsg reports that an `ssh <alias>` session (run via ExecProcess)
 // has ended.
 type connectDoneMsg struct {
@@ -246,6 +252,7 @@ const (
 	modeCopy                    // choosing what to copy to the clipboard
 	modeHelp                    // full keybinding reference overlay
 	modeTheme                   // theme picker with live preview
+	modeConfirmRestore          // confirming a restore from backup
 )
 
 // coreFields are always offered for editing; a host's existing option keys are
@@ -618,6 +625,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		return m, tea.Batch(m.refresh, m.play(true, false))
 
+	case restoreDoneMsg:
+		if msg.err != nil {
+			m.status = "restore failed: " + msg.err.Error()
+			return m, m.play(false, false)
+		}
+		m.status = fmt.Sprintf("restored config from backup (%d file(s))", len(msg.files))
+		m.muteReloadUntil = time.Now().Add(reloadMuteWindow)
+		m.loading = true
+		return m, tea.Batch(m.refresh, m.play(true, false))
+
 	case connectDoneMsg:
 		if msg.err != nil {
 			m.status = "ssh " + msg.alias + ": " + msg.err.Error()
@@ -682,6 +699,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleHelpKey(msg)
 	case modeTheme:
 		return m.handleThemeKey(msg)
+	case modeConfirmRestore:
+		return m.handleRestoreConfirm(msg)
 	}
 
 	// The filter input (when focused) captures keys before pane navigation.
@@ -767,11 +786,39 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.toggleMotion()
 	case "t":
 		return m.beginTheme()
+	case "R":
+		return m.beginRestore()
 	case "r":
 		m.loading = true
 		return m, m.refresh
 	}
 	return m, nil
+}
+
+// beginRestore opens the restore-from-backup confirm gate, or reports when no
+// backup exists to revert to.
+func (m Model) beginRestore() (tea.Model, tea.Cmd) {
+	if !m.svc.CanRestore() {
+		m.status = "no backup to restore (sshush writes one before its first edit)"
+		return m, nil
+	}
+	m.mode = modeConfirmRestore
+	m.status = ""
+	return m, nil
+}
+
+// handleRestoreConfirm gates the restore: only "y" reverts the config.
+func (m Model) handleRestoreConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() != "y" && msg.String() != "Y" {
+		m.mode = modeNormal
+		m.status = "restore cancelled"
+		return m, nil
+	}
+	m.mode = modeNormal
+	return m, func() tea.Msg {
+		files, err := m.svc.RestoreBackup()
+		return restoreDoneMsg{files: files, err: err}
+	}
 }
 
 // sshCommand builds a shareable ssh invocation for a host: explicit when a
@@ -2008,6 +2055,8 @@ func (m Model) viewInner() string {
 		return m.card(m.viewHelp())
 	case modeTheme:
 		return m.card(m.viewTheme())
+	case modeConfirmRestore:
+		return m.card(m.viewConfirmRestore())
 	}
 
 	header := appTitleStyle.Render("sshush") + "   " + m.renderTabs()
@@ -2226,6 +2275,7 @@ var helpReference = []helpSection{
 	{"Tools", []helpItem{
 		{"P", "audit & fix file permissions"},
 		{"K", "browse / remove known_hosts entries"},
+		{"R", "restore config from backup (undo edits)"},
 		{"m", "toggle motion / animations"},
 		{"t", "switch theme"},
 	}},
@@ -2383,6 +2433,21 @@ func (m Model) viewTheme() string {
 	return b.String()
 }
 
+// viewConfirmRestore renders the restore-from-backup y/n gate, listing the
+// files that will be reverted.
+func (m Model) viewConfirmRestore() string {
+	var b strings.Builder
+	b.WriteString(errStyle.Render("Restore config from backup") + "\n\n")
+	b.WriteString("  Revert these file(s) to their .bak snapshot (taken before\n")
+	b.WriteString("  sshush's first edit), discarding changes made since:\n\n")
+	for _, p := range m.svc.BackupPaths() {
+		b.WriteString("  " + textStyle.Render(p) + dimStyle.Render(".bak → "+p) + "\n")
+	}
+	b.WriteString("\n  " + keyCap.Render("y") + " restore    " + keyCap.Render("n") + " cancel")
+	b.WriteString("\n")
+	return b.String()
+}
+
 // viewCopy renders the clipboard copy menu.
 func (m Model) viewCopy() string {
 	var b strings.Builder
@@ -2534,7 +2599,7 @@ type helpGroup struct {
 // helpGroups returns the keybinding hints for the active pane, grouped into
 // labeled categories for a less cluttered footer.
 func (m Model) helpGroups() []helpGroup {
-	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"P", "perms"}, {"K", "known_hosts"}, {"t", "theme"}, {"m", "motion"}, {"?", "help"}, {"tab", "panes"}, {"q", "quit"}}}
+	view := helpGroup{"view", []helpItem{{"/", "filter"}, {"P", "perms"}, {"K", "known_hosts"}, {"R", "restore"}, {"t", "theme"}, {"m", "motion"}, {"?", "help"}, {"tab", "panes"}, {"q", "quit"}}}
 	if m.active == paneKeys {
 		return []helpGroup{
 			{"agent", []helpItem{{"↵", "load/unload"}, {"U", "unload all"}, {"s", "default"}}},

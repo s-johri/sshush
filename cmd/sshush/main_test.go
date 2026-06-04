@@ -37,6 +37,9 @@ func (s *stubService) AuditPermissions() ([]perms.Issue, error) { return nil, ni
 func (s *stubService) FixPermissions([]perms.Issue) error       { return nil }
 func (s *stubService) KnownHosts() ([]knownhosts.Entry, error)  { return nil, nil }
 func (s *stubService) RemoveKnownHost(int) error                { return nil }
+func (s *stubService) CanRestore() bool                         { return false }
+func (s *stubService) BackupPaths() []string                    { return nil }
+func (s *stubService) RestoreBackup() ([]string, error)         { return nil, nil }
 
 func modelWith(id config.Identity) *config.SshConfigModel {
 	return &config.SshConfigModel{

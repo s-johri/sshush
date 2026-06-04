@@ -48,6 +48,12 @@ func main() {
 		case "version", "--version", "-v":
 			fmt.Printf("sshush %s\n", version)
 			return
+		case "restore":
+			if err := restore(); err != nil {
+				fmt.Fprintf(os.Stderr, "sshush: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "update":
 			if err := selfUpdate(context.Background()); err != nil {
 				fmt.Fprintf(os.Stderr, "sshush: %v\n", err)
@@ -135,6 +141,32 @@ func runTUI() {
 	}
 }
 
+// restore reverts the SSH config (and any Included files) to the ".bak"
+// snapshots sshush wrote before its first edit, then reports what changed.
+func restore() error {
+	settings := appconfig.New("")
+	if _, err := settings.Load(); err != nil {
+		return err
+	}
+	svc := newService(settings.SshDir(), settings.ConfigPath())
+	if _, err := svc.Refresh(); err != nil { // populates the config repo
+		return err
+	}
+	if !svc.CanRestore() {
+		fmt.Println("no backup to restore (sshush writes one before its first edit)")
+		return nil
+	}
+	files, err := svc.RestoreBackup()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("restored %d file(s) from backup:\n", len(files))
+	for _, f := range files {
+		fmt.Printf("  %s\n", f)
+	}
+	return nil
+}
+
 // loadDefault loads the configured default identities into the agent and exits.
 // Intended to run from a shell startup file (see `sshush shell-init`).
 func loadDefault() error {
@@ -174,6 +206,7 @@ Usage:
   sshush              launch the interactive TUI
   sshush load-default load the configured default identity into the agent
   sshush shell-init   print a shell snippet to load the default on shell start
+  sshush restore      revert the SSH config to the backup from before edits
   sshush update       update sshush to the latest release
   sshush version      print the version
   sshush help         show this help

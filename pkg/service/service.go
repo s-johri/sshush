@@ -38,6 +38,9 @@ type Service interface {
 	FixPermissions([]perms.Issue) error
 	KnownHosts() ([]knownhosts.Entry, error)
 	RemoveKnownHost(line int) error
+	CanRestore() bool
+	BackupPaths() []string
+	RestoreBackup() ([]string, error)
 }
 
 // App is the default Service, wiring the three repositories together.
@@ -229,6 +232,26 @@ func (a *App) diskIdentity(id config.IdentityID) (config.Identity, error) {
 		return config.Identity{}, fmt.Errorf("identity %q has no key file on disk", id)
 	}
 	return ident, nil
+}
+
+// CanRestore reports whether a backup exists to revert the config to.
+func (a *App) CanRestore() bool { return len(a.Config.BackupPaths()) > 0 }
+
+// BackupPaths lists the config files that have a ".bak" snapshot to restore.
+func (a *App) BackupPaths() []string { return a.Config.BackupPaths() }
+
+// RestoreBackup reverts the config file(s) to their ".bak" snapshots, then
+// refreshes the cached snapshot so callers see the reverted state. Returns the
+// restored file paths.
+func (a *App) RestoreBackup() ([]string, error) {
+	restored, err := a.Config.Restore()
+	if err != nil {
+		return restored, err
+	}
+	if _, err := a.Refresh(); err != nil {
+		return restored, err
+	}
+	return restored, nil
 }
 
 // EditHost sets field=val on host h, persists the change (backing up the file),

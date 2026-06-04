@@ -48,6 +48,9 @@ type fakeConfig struct {
 	attached     []config.HostID
 	detached     []config.HostID
 	saved        int
+	backups      []string
+	restored     bool
+	restoreErr   error
 }
 
 func (f *fakeConfig) Load() (*config.SshConfigModel, error) { return f.model, f.err }
@@ -72,7 +75,12 @@ func (f *fakeConfig) DeleteHost(h config.HostID) error {
 	f.deletedHosts = append(f.deletedHosts, h)
 	return nil
 }
-func (f *fakeConfig) Save() error { f.saved++; return nil }
+func (f *fakeConfig) Save() error           { f.saved++; return nil }
+func (f *fakeConfig) BackupPaths() []string { return f.backups }
+func (f *fakeConfig) Restore() ([]string, error) {
+	f.restored = true
+	return f.backups, f.restoreErr
+}
 
 type fakeAgent struct {
 	keys       []agent.AgentKey

@@ -34,6 +34,9 @@ type fakeService struct {
 	khEntries    []knownhosts.Entry
 	khErr        error
 	khRemoved    []int
+	backups      []string
+	restoreCalls int
+	restoreErr   error
 }
 
 func (f *fakeService) Refresh() (*config.SshConfigModel, error)   { return f.model, f.err }
@@ -89,6 +92,12 @@ func (f *fakeService) RemoveKnownHost(line int) error {
 	}
 	f.khEntries = kept
 	return nil
+}
+func (f *fakeService) CanRestore() bool      { return len(f.backups) > 0 }
+func (f *fakeService) BackupPaths() []string { return f.backups }
+func (f *fakeService) RestoreBackup() ([]string, error) {
+	f.restoreCalls++
+	return f.backups, f.restoreErr
 }
 
 func snapshot() *config.SshConfigModel {
@@ -203,6 +212,48 @@ func TestEditFlowConfirmWrites(t *testing.T) {
 	cmd() // execute the write command
 	if len(svc.edits) != 1 || svc.edits[0] != "web.User=deploy2" {
 		t.Errorf("edit not written correctly: %v", svc.edits)
+	}
+}
+
+func TestRestoreFlow(t *testing.T) {
+	// No backup: R reports and opens no overlay.
+	svc := &fakeService{model: snapshot()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("R"))
+	if m.mode != modeNormal || !strings.Contains(m.status, "no backup") {
+		t.Fatalf("R without backup: mode=%d status=%q", m.mode, m.status)
+	}
+
+	// With a backup: R opens a confirm listing the file; y dispatches restore.
+	svc2 := &fakeService{model: snapshot(), backups: []string{"/x/config"}}
+	m2 := New(svc2)
+	m2 = feed(m2, refreshedMsg{model: snapshot()})
+	m2 = feed(m2, key("R"))
+	if m2.mode != modeConfirmRestore {
+		t.Fatalf("R should open the restore confirm, got mode=%d", m2.mode)
+	}
+	if v := m2.View(); !strings.Contains(v, "/x/config") {
+		t.Errorf("confirm should list the backup file:\n%s", v)
+	}
+	out, cmd := m2.Update(key("y"))
+	m2 = out.(Model)
+	if cmd == nil {
+		t.Fatal("confirm should dispatch the restore")
+	}
+	cmd()
+	if svc2.restoreCalls != 1 {
+		t.Errorf("RestoreBackup not called: %d", svc2.restoreCalls)
+	}
+
+	// Cancel: n returns to normal without restoring.
+	svc3 := &fakeService{model: snapshot(), backups: []string{"/x/config"}}
+	m3 := New(svc3)
+	m3 = feed(m3, refreshedMsg{model: snapshot()})
+	m3 = feed(m3, key("R"))
+	m3 = feed(m3, key("n"))
+	if m3.mode != modeNormal || svc3.restoreCalls != 0 {
+		t.Errorf("cancel must not restore: mode=%d calls=%d", m3.mode, svc3.restoreCalls)
 	}
 }
 

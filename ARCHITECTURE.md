@@ -172,7 +172,7 @@ users get value before 1.0; the API/config surface only freezes at the RC.
 | 26 | Themes — palette config, in-app switcher, open-source presets, randomize/reset | low |
 | 🏷 | **v0.5.0** — help overlay + polish/motion + theming (M41 adaptive layout reverted) | — |
 | 27 | `Match` block + broader directive support (read/display, edit-safe) — *read-only display done; editing deferred* | medium |
-| 28 | Restore-from-backup (undo last write) command/action | low |
+| 28 | Restore-from-backup (undo last write) command/action — *done (`R` + `sshush restore`)* | low |
 | 🏷 | **v0.6.0** — Match/advanced directives + undo | — |
 | 29 | Integration tests (real agent/keygen e2e) + CI matrix (linux/macOS) | low |
 | 30 | Packaging: Homebrew tap, AUR, shell completions, man page | low |
@@ -488,6 +488,16 @@ Every write backs up to `<path>.bak` before the first change of a session (M7).
 Expose an undo: restore `<path>` from `<path>.bak` (confirm-gated), so a bad edit
 is one keystroke to revert. Surface in the TUI and as a `sshush restore`
 subcommand.
+
+**Status — done.** `FileRepo.BackupPaths()`/`Restore()` revert every loaded file
+(main + Includes) that has a sibling `.bak` to that pre-edit snapshot; the
+service exposes `CanRestore`/`BackupPaths`/`RestoreBackup` (restore + refresh).
+In the TUI, `R` opens a confirm gate listing the files to revert (or reports
+"no backup" when none); `sshush restore` does the same non-interactively. The
+`.bak` is the snapshot from before sshush's first edit of the session, so
+restore reverts the whole session's writes — coarser than per-edit undo, matching
+the backup model. Granularity note: a stack of timestamped backups for true
+step-by-step undo is possible later but unscoped.
 
 ### Milestone 29 detail
 

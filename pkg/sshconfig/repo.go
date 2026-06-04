@@ -39,6 +39,8 @@ type ConfigRepo interface {
 	AddHost(config.Host) error
 	DeleteHost(config.HostID) error
 	Save() error
+	BackupPaths() []string
+	Restore() ([]string, error)
 }
 
 // loadedFile is one parsed config file plus the bytes it was parsed from, so
@@ -513,6 +515,43 @@ func (r *FileRepo) Save() error {
 		r.dirty[lf.path] = false
 	}
 	return nil
+}
+
+// BackupPaths returns the loaded config files that have a sibling ".bak" to
+// restore from. A ".bak" is written before sshush's first edit of a file, so
+// its presence means there is a pre-edit snapshot to revert to.
+func (r *FileRepo) BackupPaths() []string {
+	var out []string
+	for _, lf := range r.files {
+		if _, err := os.Stat(lf.path + ".bak"); err == nil {
+			out = append(out, lf.path)
+		}
+	}
+	return out
+}
+
+// Restore overwrites each loaded file that has a ".bak" with the backup's
+// contents, reverting every change made since the backup was taken (sshush's
+// first edit this session). Returns the restored file paths. The in-memory AST
+// is left stale on purpose — callers reload (via Refresh) to pick up the
+// reverted content.
+func (r *FileRepo) Restore() ([]string, error) {
+	var restored []string
+	for _, lf := range r.files {
+		bak := lf.path + ".bak"
+		data, err := os.ReadFile(bak)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return restored, fmt.Errorf("read backup %s: %w", bak, err)
+		}
+		if err := os.WriteFile(lf.path, data, fileMode(lf.path)); err != nil {
+			return restored, fmt.Errorf("restore %s: %w", lf.path, err)
+		}
+		restored = append(restored, lf.path)
+	}
+	return restored, nil
 }
 
 // findHost locates the file and AST host block for a model HostID.

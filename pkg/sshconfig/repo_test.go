@@ -383,6 +383,47 @@ func TestSetHostFieldUnknown(t *testing.T) {
 	}
 }
 
+func TestRestoreFromBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	orig := "Host web\n    User old\n"
+	writeFile(t, path, orig)
+
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.BackupPaths()) != 0 {
+		t.Fatalf("no backup should exist before any edit: %v", r.BackupPaths())
+	}
+
+	// Edit + save writes <path>.bak (holding orig) then the new content.
+	if err := r.SetHostField("web", "User", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "Host web\n    User new\n" {
+		t.Fatalf("edit not saved: %q", got)
+	}
+	if len(r.BackupPaths()) != 1 {
+		t.Fatalf("backup should exist after save: %v", r.BackupPaths())
+	}
+
+	// Restore reverts the file to the backup snapshot.
+	files, err := r.Restore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0] != path {
+		t.Errorf("restored = %v, want [%s]", files, path)
+	}
+	if got, _ := os.ReadFile(path); string(got) != orig {
+		t.Errorf("not reverted: got %q want %q", got, orig)
+	}
+}
+
 func hostIDs(m *config.SshConfigModel) []config.HostID {
 	var out []config.HostID
 	for k := range m.Hosts {

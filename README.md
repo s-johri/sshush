@@ -24,6 +24,9 @@ edit your config without leaving the terminal.
   directive (e.g. `ForwardAgent yes`), add or delete whole hosts (guided wizard),
   and attach/detach keys to a host (`IdentityFile`). Formatting and comments are
   preserved; a backup is written first.
+- **Restore from backup** — `R` (or `sshush restore`) reverts the config to the
+  `.bak` snapshot written before the session's first edit, so a bad change is one
+  keystroke to undo.
 - **Generate & delete keys** — `ssh-keygen` wrapper; deleting a key also removes
   it from the agent.
 - **Default identity** — mark a key as default and have it auto-loaded into the
@@ -74,6 +77,7 @@ Prebuilt release binaries are planned (see ARCHITECTURE.md, milestone 15).
 sshush              # launch the interactive TUI
 sshush load-default # load the configured default identity into the agent
 sshush shell-init   # print a shell snippet to load the default on shell start
+sshush restore      # revert the SSH config to the backup from before edits
 sshush update       # update to the latest release
 sshush version      # print the installed version
 sshush help         # show help
@@ -110,6 +114,7 @@ sshush help         # show help
 | `PgUp` `PgDn`, `g` `G` | page / jump to top / bottom |
 | `/` | filter the active pane (`esc` clears) |
 | `P` / `K` | permission audit / known_hosts |
+| `R` | restore config from backup (undo edits since session start) |
 | `t` / `m` | switch theme / toggle motion |
 | `?` | full keybinding help |
 | `r` | refresh |
