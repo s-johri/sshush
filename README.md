@@ -22,14 +22,22 @@ edit your config without leaving the terminal.
 - **Agent integration** — load/unload a key (`ssh-add`), unload everything
   (`ssh-add -D`), and see agent-only keys that aren't on disk.
 - **Hosts pane** — hosts from `~/.ssh/config` and its `Include`d files with their
-  connection details (`user@hostname:port`), including wildcard (`Host *`) blocks.
-  Press `Enter` to `ssh` into the selected host.
+  connection details (`user@hostname:port`), including wildcard (`Host *`) and
+  read-only `Match` blocks.
+- **Connect to a host** — press `Enter` on a host to `ssh` into it; your own
+  config (`ProxyJump`, `IdentityFile`, …) applies, and the terminal is handed to
+  the session.
+- **Copy to clipboard** — `c` copies a key's public key or fingerprint, or a
+  host's ready-to-run `ssh` command (needs `xclip`/`wl-clipboard` on Linux).
 - **Scroll & search** — panes scroll for long lists (`PgUp`/`PgDn`, `g`/`G`); `/`
-  filters the active pane by name, host, comment, or algorithm.
+  filters the active pane (keys by name/comment/algorithm, hosts by
+  name/hostname/user).
 - **Edit config in place** — change `HostName`/`User`/`Port`, add/edit/delete any
   directive (e.g. `ForwardAgent yes`), add or delete whole hosts (guided wizard),
   and attach/detach keys to a host (`IdentityFile`). Formatting and comments are
   preserved; a backup is written first.
+- **Security checks** — audit and fix loose `~/.ssh`/key permissions (`P`), and
+  browse or remove `known_hosts` entries (`K`).
 - **Restore from backup** — `R` (or `sshush restore`) reverts the config to the
   `.bak` snapshot written before the session's first edit, so a bad change is one
   keystroke to undo.
@@ -37,6 +45,8 @@ edit your config without leaving the terminal.
   it from the agent.
 - **Default identity** — mark a key as default and have it auto-loaded into the
   agent on startup (in-app, or on every shell via `sshush shell-init`).
+- **Themes & motion** — 16 built-in color themes (foreground + background) with a
+  live in-app switcher (`t`), plus an opt-in motion/animation system (`m`).
 - **Hot reload** — external changes to your config or `~/.ssh` are picked up
   automatically.
 
@@ -45,6 +55,8 @@ edit your config without leaving the terminal.
 - Go 1.25+ (to build from source)
 - `ssh-agent`, `ssh-add`, `ssh-keygen` on your `PATH`
 - A running agent (`echo $SSH_AUTH_SOCK` should be non-empty) for agent features
+- (Linux) `xclip`, `xsel`, or `wl-clipboard` for clipboard copy (`c`); macOS and
+  Windows use the native pasteboard
 
 ## Install
 
@@ -103,8 +115,6 @@ Run the tests with `go test ./...`. The end-to-end suite (a throwaway
 go install github.com/s-johri/sshush/cmd/sshush@latest
 ```
 
-Prebuilt release binaries are planned (see ARCHITECTURE.md, milestone 15).
-
 ### Shell completions
 
 The Homebrew and AUR packages install completions automatically. For a manual
@@ -125,6 +135,7 @@ sshush shell-init   # print a shell snippet to load the default on shell start
 sshush restore      # revert the SSH config to the backup from before edits
 sshush update       # update to the latest release
 sshush version      # print the installed version
+sshush completion <shell>  # print a bash/zsh/fish completion script
 sshush help         # show help
 ```
 
@@ -137,6 +148,7 @@ sshush help         # show help
 | `↵` enter / space | load / unload the selected key in the agent |
 | `U` | unload all keys from the agent |
 | `s` | toggle the selected key in/out of the startup defaults |
+| `c` | copy the public key or fingerprint to the clipboard |
 | `n` | generate a new key (`ssh-keygen`) |
 | `d` | delete the selected key's files (irreversible) |
 
@@ -147,8 +159,12 @@ sshush help         # show help
 | `↵` enter | `ssh` into the selected host |
 | `e` | edit host directives (`tab` to cycle, `ctrl+o` add option, `ctrl+d` delete) |
 | `i` | attach / detach keys for the host |
+| `c` | copy a ready-to-run `ssh` command to the clipboard |
 | `n` | add a new host (guided wizard) |
 | `d` | delete the host |
+
+Read-only `Match` blocks are shown for reference; edit/connect actions are
+declined on them.
 
 **Anywhere**
 
