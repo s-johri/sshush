@@ -2,17 +2,19 @@
 
 Interactive CLI/TUI to switch SSH keys, inspect the agent, view hosts, and edit SSH config.
 
-**Status:** through `v0.5.0` (milestones 0–26, 39, 40) — full read/merge pipeline,
+**Status:** through `v0.6.0` (milestones 0–28, 39, 40) — full read/merge pipeline,
 agent switch (load/unload/unload-all), host directive + key/host CRUD with
-backup+confirm, wildcard hosts, key↔host association, hot reload, app config with
-multiple default identities + auto-load, configurable SSH dir/config path,
-multi-algorithm key generation, scrollable panes, live search/filter,
-connect-to-host, permission audit+fix, known_hosts management, clipboard copy,
-smart shell-init, help overlay, opt-in motion system, 16 color themes (fg+bg,
-in-app switcher), lipgloss styling, and a versioned self-update/release pipeline.
-Adaptive two-column layout (M41) was tried and reverted — full-height single
-pane reads better and avoids row truncation. Next windows: v0.6.0
-(Match/advanced directives + undo) → `v1.0.0`. Tests cover every `pkg`; see
+backup+confirm, wildcard hosts, read-only `Match` blocks, restore-from-backup,
+key↔host association, hot reload, app config with multiple default identities +
+auto-load, configurable SSH dir/config path, multi-algorithm key generation,
+scrollable panes, live search/filter, connect-to-host, permission audit+fix,
+known_hosts management, clipboard copy, smart shell-init, help overlay, opt-in
+motion system, 16 color themes (fg+bg, in-app switcher), lipgloss styling, and a
+versioned self-update/release pipeline. Adaptive two-column layout (M41) was
+tried and reverted — full-height single pane reads better and avoids row
+truncation. `Match`-block editing is deferred (surfaced read-only for now). Next
+windows: v0.7.0 (e2e/CI hardening + packaging + install script + update-check) →
+`v1.0.0`. Tests cover every `pkg`; see
 [README.md](README.md) for usage.
 
 ## Decisions (locked)
@@ -173,7 +175,7 @@ users get value before 1.0; the API/config surface only freezes at the RC.
 | 🏷 | **v0.5.0** — help overlay + polish/motion + theming (M41 adaptive layout reverted) | — |
 | 27 | `Match` block + broader directive support (read/display, edit-safe) — *read-only display done; editing deferred* | medium |
 | 28 | Restore-from-backup (undo last write) command/action — *done (`R` + `sshush restore`)* | low |
-| 🏷 | **v0.6.0** — Match/advanced directives + undo | — |
+| 🏷 | **v0.6.0** — Match blocks read-only + restore-from-backup (Match editing deferred) | — |
 | 29 | Integration tests (real agent/keygen e2e) + CI matrix (linux/macOS) | low |
 | 30 | Packaging: Homebrew tap, AUR, shell completions, man page | low |
 | 🏷 | **v0.7.0** — e2e/CI hardening + packaging + install script + update-check | — |
