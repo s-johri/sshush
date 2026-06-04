@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -50,6 +51,16 @@ func main() {
 			return
 		case "restore":
 			if err := restore(); err != nil {
+				fmt.Fprintf(os.Stderr, "sshush: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "completion":
+			if len(os.Args) < 3 {
+				fmt.Fprint(os.Stderr, completionUsage)
+				os.Exit(2)
+			}
+			if err := completion(os.Args[2]); err != nil {
 				fmt.Fprintf(os.Stderr, "sshush: %v\n", err)
 				os.Exit(1)
 			}
@@ -101,6 +112,22 @@ func selfUpdate(ctx context.Context) error {
 	return nil
 }
 
+// checkLatest reports the latest release tag and whether it is newer than this
+// build, for the TUI's launch update-check. Best-effort: any failure (offline,
+// rate-limited, private/auth-gated releases) yields ("", false) and no notice.
+func checkLatest() (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rel, found, err := selfupdate.DetectLatest(ctx, selfupdate.ParseSlug(repoSlug))
+	if err != nil || !found || rel == nil {
+		return "", false
+	}
+	if rel.LessOrEqual(version) {
+		return "", false
+	}
+	return rel.Version(), true
+}
+
 // newService builds the service against the configured SSH directory and config
 // path. Empty values fall back to ~/.ssh and ~/.ssh/config; the socket always
 // comes from $SSH_AUTH_SOCK.
@@ -127,6 +154,12 @@ func runTUI() {
 
 	model := tui.New(newService(settings.SshDir(), settings.ConfigPath()))
 	model = model.WithSettings(settings).WithSshDir(settings.SshDir())
+
+	// Async update-check on launch: skipped for dev builds (no version to
+	// compare) and when disabled via `check_updates = false`.
+	if version != "dev" && settings.CheckUpdates() {
+		model = model.WithUpdateCheck(checkLatest)
+	}
 
 	// Hot reload is best-effort: if the watcher can't start, run without it.
 	if w, err := watch.New(); err == nil {
@@ -209,5 +242,6 @@ Usage:
   sshush restore      revert the SSH config to the backup from before edits
   sshush update       update sshush to the latest release
   sshush version      print the version
+  sshush completion <shell>  print a bash/zsh/fish completion script
   sshush help         show this help
 `

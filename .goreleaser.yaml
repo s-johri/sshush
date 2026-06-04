@@ -28,9 +28,62 @@ archives:
     # Names include OS/arch so `sshush update` (go-selfupdate) can match the
     # asset for the running platform.
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    # Ship completions and the man page alongside the binary so packagers can
+    # install them from the archive.
+    files:
+      - src: cmd/sshush/completions/sshush.bash
+        dst: completions/sshush.bash
+      - src: cmd/sshush/completions/sshush.zsh
+        dst: completions/sshush.zsh
+      - src: cmd/sshush/completions/sshush.fish
+        dst: completions/sshush.fish
+      - src: man/sshush.1
+        dst: sshush.1
+      - LICENSE
+      - README.md
 
 checksum:
   name_template: "checksums.txt"
+
+# Homebrew tap. Requires a tap repo (github.com/s-johri/homebrew-tap) and a token
+# with push access to it exposed as HOMEBREW_TAP_TOKEN (the default GITHUB_TOKEN
+# can't push to a second repo).
+brews:
+  - name: sshush
+    repository:
+      owner: s-johri
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/s-johri/sshush"
+    description: "Interactive TUI for SSH keys, the agent, and ~/.ssh/config"
+    license: "MIT"
+    install: |
+      bin.install "sshush"
+      bash_completion.install "completions/sshush.bash" => "sshush"
+      zsh_completion.install "completions/sshush.zsh" => "_sshush"
+      fish_completion.install "completions/sshush.fish"
+      man1.install "sshush.1"
+    test: |
+      system "#{bin}/sshush", "version"
+
+# AUR (binary package). Requires an AUR account, the package registered as
+# sshush-bin, and the AUR SSH private key exposed as AUR_KEY.
+aurs:
+  - name: sshush-bin
+    homepage: "https://github.com/s-johri/sshush"
+    description: "Interactive TUI for SSH keys, the agent, and ~/.ssh/config"
+    license: "MIT"
+    maintainers:
+      - "Saurabh Johri <saurabhxj@gmail.com>"
+    private_key: "{{ .Env.AUR_KEY }}"
+    git_url: "ssh://aur@aur.archlinux.org/sshush-bin.git"
+    package: |-
+      install -Dm755 "./sshush" "${pkgdir}/usr/bin/sshush"
+      install -Dm644 "./completions/sshush.bash" "${pkgdir}/usr/share/bash-completion/completions/sshush"
+      install -Dm644 "./completions/sshush.zsh" "${pkgdir}/usr/share/zsh/site-functions/_sshush"
+      install -Dm644 "./completions/sshush.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/sshush.fish"
+      install -Dm644 "./sshush.1" "${pkgdir}/usr/share/man/man1/sshush.1"
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/sshush-bin/LICENSE"
 
 release:
   github:

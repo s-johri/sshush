@@ -2,20 +2,21 @@
 
 Interactive CLI/TUI to switch SSH keys, inspect the agent, view hosts, and edit SSH config.
 
-**Status:** through `v0.6.0` (milestones 0–28, 39, 40) — full read/merge pipeline,
-agent switch (load/unload/unload-all), host directive + key/host CRUD with
-backup+confirm, wildcard hosts, read-only `Match` blocks, restore-from-backup,
+**Status:** through `v0.7.0` (milestones 0–30, 39, 40, 42, 43) — full read/merge
+pipeline, agent switch (load/unload/unload-all), host directive + key/host CRUD
+with backup+confirm, wildcard hosts, read-only `Match` blocks, restore-from-backup,
 key↔host association, hot reload, app config with multiple default identities +
 auto-load, configurable SSH dir/config path, multi-algorithm key generation,
 scrollable panes, live search/filter, connect-to-host, permission audit+fix,
 known_hosts management, clipboard copy, smart shell-init, help overlay, opt-in
-motion system, 16 color themes (fg+bg, in-app switcher), lipgloss styling, and a
-versioned self-update/release pipeline. Adaptive two-column layout (M41) was
-tried and reverted — full-height single pane reads better and avoids row
-truncation. `Match`-block editing is deferred (surfaced read-only for now). Next
-windows: v0.7.0 (e2e/CI hardening + packaging + install script + update-check) →
-`v1.0.0`. Tests cover every `pkg`; see
-[README.md](README.md) for usage.
+motion system, 16 color themes (fg+bg, in-app switcher), launch update-check,
+lipgloss styling, e2e suite + ubuntu/macOS CI, packaging (completions, man page,
+install script, brew/AUR config), and a versioned self-update/release pipeline.
+Adaptive two-column layout (M41) was tried and reverted — full-height single pane
+reads better and avoids row truncation. `Match`-block editing is deferred
+(surfaced read-only for now); brew/AUR/install-script publishing awaits public
+releases + tap/AUR secrets. Next window: v0.9.0 (v1.0 stabilization) → `v1.0.0`.
+Tests cover every `pkg`; see [README.md](README.md) for usage.
 
 ## Decisions (locked)
 
@@ -177,8 +178,8 @@ users get value before 1.0; the API/config surface only freezes at the RC.
 | 28 | Restore-from-backup (undo last write) command/action — *done (`R` + `sshush restore`)* | low |
 | 🏷 | **v0.6.0** — Match blocks read-only + restore-from-backup (Match editing deferred) | — |
 | 29 | Integration tests (real agent/keygen e2e) + CI matrix (linux/macOS) — *done (`-tags e2e`, ubuntu+macOS matrix)* | low |
-| 30 | Packaging: Homebrew tap, AUR, shell completions, man page | low |
-| 🏷 | **v0.7.0** — e2e/CI hardening + packaging + install script + update-check | — |
+| 30 | Packaging: Homebrew tap, AUR, shell completions, man page — *config + assets done; tap/AUR publishing needs secrets* | low |
+| 🏷 | **v0.7.0** — e2e/CI matrix + packaging (completions/man/brew/AUR) + install script + update-check | — |
 | 31 | v1.0 stabilization: error-handling audit, config schema freeze, docs/screenshots, CHANGELOG | low |
 | 🏷 | **v0.9.0** — release candidate (feature-complete, schema frozen) | — |
 | — | soak period: bug-fix-only patch releases (v0.9.x) from real-world use | — |
@@ -212,8 +213,8 @@ the existing windows above (not a separate phase).
 | 39 | Multiple default identities | auto-load several keys on startup, not just one — teams juggle work+personal+deploy keys. `default_identities = [...]` in `config.toml`; `s` toggles membership; `load-default` loads all | v0.4.0 |
 | 40 | Smart `shell-init` | detect whether the snippet is already in `~/.bashrc`/`~/.zshrc`: nudge to add it when a default is set (only if absent), and warn on `shell-init` if a stub is already present (avoid duplicates) | v0.4.0 |
 | 41 | Adaptive layout | ~~wide → two-column (Keys + Hosts side by side); tall → fill vertical space~~ **Reverted.** Two-column was built then removed: side-by-side panes truncated host tags + default status, and felt cramped. Kept the tall half only — full-height single pane that grows to fit, no pagination | v0.5.0 (reverted) |
-| 42 | Auto update-check on launch | async, non-blocking: check latest release in a `tea.Cmd`, surface "update available → run `sshush update`" as a transient status. Off for `dev` builds; respects a `check_updates = false` setting | v0.7.0 |
-| 43 | `curl \| bash` install script | host an `install.sh` (detect OS/arch → download the right release asset + checksum verify → drop `sshush` on PATH); one-line install in the README | v0.7.0 |
+| 42 | Auto update-check on launch | async, non-blocking: check latest release in a `tea.Cmd`, surface "update available → run `sshush update`" as a transient status. Off for `dev` builds; respects a `check_updates = false` setting — *done* | v0.7.0 |
+| 43 | `curl \| bash` install script | host an `install.sh` (detect OS/arch → download the right release asset + checksum verify → drop `sshush` on PATH); one-line install in the README — *done; needs public releases (repo is private, so assets are auth-gated)* | v0.7.0 |
 
 ### Beyond v1.0 — fun & flair
 
@@ -521,6 +522,22 @@ write + `.bak`) → delete (asserting files gone). Run locally with
 Distribution: a Homebrew tap (goreleaser publishes the formula), an AUR
 `PKGBUILD`, shell completions (bash/zsh/fish from the subcommand set), and a man
 page. Mostly goreleaser config + a tap repo.
+
+**Status — config + assets done; publishing needs infra.** Shipped: static
+completions under `cmd/sshush/completions/` (embedded, printed by
+`sshush completion <bash|zsh|fish>`, packaged in release archives), a roff man
+page `man/sshush.1`, and goreleaser `brews:`/`aurs:` blocks plus archive `files:`
+that bundle completions + man + LICENSE. The Homebrew formula installs the
+binary, all three completions, and the man page; the AUR `sshush-bin` package
+does the same under standard prefixes.
+
+Remaining (user infra, can't be done from the repo): create the tap repo
+`s-johri/homebrew-tap` and add a `HOMEBREW_TAP_TOKEN` secret (the default
+`GITHUB_TOKEN` can't push to a second repo); register the AUR `sshush-bin`
+package and add the `AUR_KEY` secret. Both are wired into `release.yml` and
+no-op until the secrets exist. Note: goreleaser deprecates `brews` in favor of
+`homebrew_casks`; the formula path still works under `~> v2` and is conventional
+for a CLI — migrate if a future v2 drops it.
 
 ### Milestone 31 detail
 

@@ -35,6 +35,10 @@ type Config struct {
 
 	// ThemeName selects a built-in color theme (empty = default).
 	ThemeName string `toml:"theme,omitempty"`
+
+	// CheckUpdates toggles the async update-check on launch. A pointer so an
+	// unset value defaults to on; set `check_updates = false` to disable.
+	CheckUpdates *bool `toml:"check_updates,omitempty"`
 }
 
 // MotionConfig is the [motion] table: off by default.
@@ -172,6 +176,14 @@ func (s *Store) SetMotion(enabled bool, intensity string) error {
 		s.cfg.Motion.Intensity = intensity
 	}
 	return s.save()
+}
+
+// CheckUpdates reports whether the launch update-check is enabled (default on).
+func (s *Store) CheckUpdates() bool {
+	if s.cfg.CheckUpdates != nil {
+		return *s.cfg.CheckUpdates
+	}
+	return true
 }
 
 // ThemeName returns the configured theme name (empty = default).

@@ -1,0 +1,99 @@
+.TH SSHUSH 1 "2026" "sshush" "User Commands"
+.SH NAME
+sshush \- interactive terminal UI for SSH keys, the agent, and ssh_config
+.SH SYNOPSIS
+.B sshush
+.RI [ command ]
+.SH DESCRIPTION
+.B sshush
+is an interactive terminal UI for managing SSH keys, the ssh-agent, and your
+.IR ~/.ssh/config :
+switch keys, see what is loaded in the agent, browse hosts, and edit the config
+without leaving the terminal.
+.PP
+Run with no arguments to launch the interactive UI. Config edits are gated behind
+a confirmation and a
+.I .bak
+backup is written before the first change of a session.
+.SH COMMANDS
+.TP
+.B load-default
+Load the configured default identities into the agent and exit. Intended for
+shell startup files (see
+.BR shell-init ).
+.TP
+.B shell-init
+Print a shell snippet that loads the default identities on shell start. Append it
+to your shell rc, e.g.
+.IR ~/.bashrc " or " ~/.zshrc .
+.TP
+.B restore
+Revert the SSH config (and any Included files) to the
+.I .bak
+snapshot written before sshush's first edit of the session.
+.TP
+.B update
+Update sshush to the latest release in place. Only available for released builds.
+.TP
+.B version
+Print the installed version.
+.TP
+.B "completion " \fIshell\fR
+Print a shell completion script for
+.IR bash ", " zsh ", or " fish .
+.TP
+.B help
+Show usage.
+.SH KEYBINDINGS
+In the interactive UI: arrow keys or
+.IR k / j
+move,
+.I tab
+switches panes,
+.I /
+filters,
+.I enter
+loads a key or connects to a host,
+.I n / d
+create or delete,
+.I e
+edits a host,
+.I i
+attaches keys,
+.I R
+restores from backup,
+.I t / m
+switch theme or toggle motion, and
+.I ?
+shows the full keybinding reference. Press
+.I q
+to quit.
+.SH FILES
+.TP
+.I ~/.ssh/config
+The SSH client configuration sshush reads and edits (following
+.B Include
+directives).
+.TP
+.I ~/.config/sshush/config.toml
+sshush's own settings: default identities, SSH dir/config overrides, color theme,
+and motion preferences.
+.SH ENVIRONMENT
+.TP
+.B SSH_AUTH_SOCK
+The ssh-agent socket used for agent features.
+.TP
+.B SSHUSH_SSH_DIR
+Override the SSH directory (default
+.IR ~/.ssh ).
+.TP
+.B SSHUSH_CONFIG
+Override the SSH config file path.
+.TP
+.B NO_COLOR
+Disable colored output.
+.SH SEE ALSO
+.BR ssh (1),
+.BR ssh-add (1),
+.BR ssh-keygen (1),
+.BR ssh_config (5)

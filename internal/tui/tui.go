@@ -68,6 +68,12 @@ type restoreDoneMsg struct {
 	err   error
 }
 
+// updateCheckMsg carries the result of the async launch update-check.
+type updateCheckMsg struct {
+	tag       string // latest release tag, when newer
+	available bool
+}
+
 // connectDoneMsg reports that an `ssh <alias>` session (run via ExecProcess)
 // has ended.
 type connectDoneMsg struct {
@@ -366,6 +372,10 @@ type Model struct {
 	autoLoaded bool   // startup auto-load of the default identity has run
 	sshDir     string // configured SSH dir to watch (empty => ~/.ssh)
 
+	// checkUpdates, when set, returns (latest tag, newer-available) for the
+	// async launch update-check. nil disables it (dev build / opted out).
+	checkUpdates func() (string, bool)
+
 	width, height int
 }
 
@@ -499,11 +509,35 @@ func (m Model) WithSshDir(dir string) Model {
 	return m
 }
 
+// WithUpdateCheck enables the async launch update-check. check returns the
+// latest release tag and whether it is newer than the running build. Passing
+// nil (or never calling this) disables the check.
+func (m Model) WithUpdateCheck(check func() (string, bool)) Model {
+	m.checkUpdates = check
+	return m
+}
+
+// updateCheckCmd runs the update-check off the UI goroutine, or nil when no
+// checker is configured.
+func (m Model) updateCheckCmd() tea.Cmd {
+	if m.checkUpdates == nil {
+		return nil
+	}
+	check := m.checkUpdates
+	return func() tea.Msg {
+		tag, ok := check()
+		return updateCheckMsg{tag: tag, available: ok}
+	}
+}
+
 // Init kicks off the first refresh, the status ticker, and (if present) the
 // file-watch listener.
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.refresh, tick()}
 	if c := m.waitForChange(); c != nil {
+		cmds = append(cmds, c)
+	}
+	if c := m.updateCheckCmd(); c != nil {
 		cmds = append(cmds, c)
 	}
 	return tea.Batch(cmds...)
@@ -650,6 +684,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "clipboard unavailable (install xclip/wl-clipboard): " + msg.err.Error()
 		} else {
 			m.status = "copied " + msg.label
+		}
+		return m, nil
+
+	case updateCheckMsg:
+		// Best-effort: only surface a positive result, never an error/no-op.
+		if msg.available && msg.tag != "" {
+			m.status = "update available: " + msg.tag + " — run `sshush update`"
 		}
 		return m, nil
 

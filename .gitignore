@@ -1,5 +1,5 @@
-# Binary
-sshush
+# Binary (root build output only — not the cmd/sshush/ package dir)
+/sshush
 
 # Build output
 /dist/

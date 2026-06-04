@@ -215,6 +215,37 @@ func TestEditFlowConfirmWrites(t *testing.T) {
 	}
 }
 
+func TestUpdateCheckSurfacesNotice(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, updateCheckMsg{tag: "v9.9.9", available: true})
+	if !strings.Contains(m.status, "update available") || !strings.Contains(m.status, "v9.9.9") {
+		t.Errorf("update notice not shown: %q", m.status)
+	}
+
+	// No notice when nothing newer (or on error).
+	m2 := New(&fakeService{model: snapshot()})
+	m2 = feed(m2, updateCheckMsg{available: false})
+	if m2.status != "" {
+		t.Errorf("no notice expected when not available: %q", m2.status)
+	}
+}
+
+func TestUpdateCheckCmd(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	if m.updateCheckCmd() != nil {
+		t.Error("no checker configured → nil cmd")
+	}
+	m = m.WithUpdateCheck(func() (string, bool) { return "v9.9.9", true })
+	cmd := m.updateCheckCmd()
+	if cmd == nil {
+		t.Fatal("checker set → cmd expected")
+	}
+	msg, ok := cmd().(updateCheckMsg)
+	if !ok || !msg.available || msg.tag != "v9.9.9" {
+		t.Errorf("cmd produced %+v", msg)
+	}
+}
+
 func TestRestoreFlow(t *testing.T) {
 	// No backup: R reports and opens no overlay.
 	svc := &fakeService{model: snapshot()}

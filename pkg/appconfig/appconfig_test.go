@@ -115,3 +115,23 @@ func TestLegacyMigration(t *testing.T) {
 		t.Errorf("legacy default_identity should be dropped after save:\n%s", data)
 	}
 }
+
+func TestCheckUpdatesDefaultAndOverride(t *testing.T) {
+	// Unset → defaults to on.
+	if !New("").CheckUpdates() {
+		t.Error("CheckUpdates should default to true when unset")
+	}
+	// check_updates = false from disk disables it.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("check_updates = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := New(path)
+	if _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if s.CheckUpdates() {
+		t.Error("check_updates = false should disable the update check")
+	}
+}

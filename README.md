@@ -42,6 +42,30 @@ edit your config without leaving the terminal.
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
+```bash
+brew install s-johri/tap/sshush
+```
+
+### Arch Linux (AUR)
+
+```bash
+yay -S sshush-bin   # or: paru -S sshush-bin
+```
+
+Both ship shell completions and the man page (`man sshush`).
+
+### Install script
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/s-johri/sshush/main/install.sh | sh
+```
+
+Detects your OS/arch, downloads the matching release archive, verifies its
+checksum, and installs `sshush` to `~/.local/bin` (override with `INSTALL_DIR`).
+Pin a version with `SSHUSH_VERSION=v0.7.0`.
+
 ### Prebuilt binary
 
 Download the archive for your OS/arch from the
@@ -74,6 +98,17 @@ go install github.com/s-johri/sshush/cmd/sshush@latest
 ```
 
 Prebuilt release binaries are planned (see ARCHITECTURE.md, milestone 15).
+
+### Shell completions
+
+The Homebrew and AUR packages install completions automatically. For a manual
+install, print the script for your shell:
+
+```bash
+sshush completion bash > /etc/bash_completion.d/sshush
+sshush completion zsh  > "${fpath[1]}/_sshush"
+sshush completion fish > ~/.config/fish/completions/sshush.fish
+```
 
 ## Usage
 
@@ -161,6 +196,10 @@ config_path = "~/.ssh/config"
 # catppuccin-macchiato, catppuccin-frappe, catppuccin-latte, tokyonight,
 # tokyonight-storm, tokyonight-day.
 theme = "default"
+
+# Optional: check for a newer release on launch (default true). The check is
+# async and best-effort; a notice appears in the status line if an update exists.
+check_updates = true
 
 # Optional: opt-in motion/animation (off by default). Toggle in-app with `m`.
 [motion]

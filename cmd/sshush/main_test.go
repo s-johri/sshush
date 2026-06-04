@@ -83,3 +83,14 @@ func TestApplyDefaultsNoOps(t *testing.T) {
 		t.Errorf("already-loaded should not reload: %v", svc.added)
 	}
 }
+
+func TestCompletionScripts(t *testing.T) {
+	for _, sh := range []string{"bash", "zsh", "fish"} {
+		if err := completion(sh); err != nil {
+			t.Errorf("completion(%q): %v", sh, err)
+		}
+	}
+	if err := completion("tcsh"); err == nil {
+		t.Error("unknown shell should error")
+	}
+}
