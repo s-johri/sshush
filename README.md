@@ -8,6 +8,12 @@ edit your config without leaving the terminal.
 > confirmation and a `.bak` backup is written before the first change, but treat
 > it as pre-1.0 software.
 
+## Demo
+
+![sshush demo](docs/demo.gif)
+
+<!-- Regenerate with: vhs docs/demo.tape  (see docs/demo.tape) -->
+
 ## Features
 
 - **Keys pane** — every key pair in `~/.ssh`, its algorithm, fingerprint, agent
