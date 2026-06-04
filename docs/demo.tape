@@ -5,7 +5,8 @@
 #
 # Install vhs: https://github.com/charmbracelet/vhs (`brew install vhs`).
 # Run against a populated ~/.ssh (or an SSHUSH_SSH_DIR fixture) so the panes
-# have keys and hosts to show.
+# have keys and hosts to show. The theme switch below assumes the configured
+# start theme is "tokyonight" (so it lands on tokyonight-day with two presses).
 
 Output docs/demo.gif
 
@@ -14,52 +15,67 @@ Set FontSize 16
 Set Width 1120
 Set Height 720
 Set Padding 20
-Set Theme "Catppuccin Mocha"
+Set Theme "TokyoNight"
+Set TypingSpeed 110ms
 
 # Launch (hide the typing of the command itself).
 Hide
 Type "sshush"
 Enter
-Sleep 1s
+Sleep 1.5s
 Show
 
+# Keys pane — hold so the loaded badges, default star, and host tags are legible.
+Sleep 2.5s
+Down
+Sleep 1300ms
+Down
+Sleep 1300ms
+Down
 Sleep 1500ms
 
-# Browse the Keys pane.
-Down
-Sleep 600ms
-Down
-Sleep 800ms
-
-# Switch to the Hosts pane.
+# Hosts pane — browse destinations and the read-only Match blocks.
 Tab
-Sleep 1s
+Sleep 2s
 Down
-Sleep 700ms
+Sleep 1100ms
+Down
+Sleep 1100ms
+Down
+Sleep 1100ms
+Down
+Sleep 1300ms
+Down
+Sleep 1500ms
 
 # Filter the active pane.
 Type "/"
-Sleep 400ms
-Type "prod"
-Sleep 1200ms
-Escape
-Sleep 700ms
-
-# Live theme switcher.
-Type "t"
-Sleep 800ms
-Down
-Down
-Sleep 700ms
-Enter
 Sleep 900ms
-
-# Full keybinding help.
-Type "?"
-Sleep 1800ms
+Type "prod"
+Sleep 2s
 Escape
-Sleep 600ms
+Sleep 1300ms
+
+# Back to the Keys pane for the theme demo.
+Tab
+Sleep 1300ms
+
+# Live theme switch: tokyonight -> tokyonight-day (dark to light).
+Type "t"
+Sleep 1800ms
+Down
+Sleep 1200ms
+Down
+Sleep 1500ms
+Enter
+Sleep 2800ms
+
+# Full keybinding help — hold long enough to read.
+Type "?"
+Sleep 3200ms
+Escape
+Sleep 1300ms
 
 # Quit.
 Type "q"
-Sleep 1s
+Sleep 1300ms
