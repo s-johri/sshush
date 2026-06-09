@@ -24,7 +24,6 @@ import (
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
-	"github.com/s-johri/sshush/pkg/perms"
 	"github.com/s-johri/sshush/pkg/service"
 	"github.com/s-johri/sshush/pkg/shellinit"
 	"github.com/s-johri/sshush/pkg/watch"
@@ -250,9 +249,6 @@ const (
 	modeConfirmDelHost          // confirming whole-host removal
 	modeConfirmDelKey           // confirming key-file deletion (irreversible)
 	modeKeyPicker               // attaching/detaching keys to a host
-	modePerms                   // reviewing/fixing permission issues
-	modeHelp                    // full keybinding reference overlay
-	modeConfirmRestore          // confirming a restore from backup
 )
 
 // coreFields are always offered for editing; a host's existing option keys are
@@ -332,12 +328,6 @@ type Model struct {
 
 	// key picker (attach/detach identities to pendingHost)
 	pickerCursor int
-
-	// permission audit
-	permIssues []perms.Issue
-
-	// help overlay scroll offset (when it's taller than the terminal)
-	helpScroll int
 
 	// motion: the currently-active visual effect (zero value = none)
 	fx activeFX
@@ -723,12 +713,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleDeleteConfirm(msg)
 	case modeKeyPicker:
 		return m.handlePicker(msg)
-	case modePerms:
-		return m.handlePermsKey(msg)
-	case modeHelp:
-		return m.handleHelpKey(msg)
-	case modeConfirmRestore:
-		return m.handleRestoreConfirm(msg)
 	}
 
 	// The filter input (when focused) captures keys before pane navigation.
@@ -797,8 +781,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		return m.beginCopy()
 	case "?":
-		m.mode = modeHelp
-		m.helpScroll = 0
+		m.modal = &helpOverlay{}
 		return m, nil
 	case "m":
 		return m.toggleMotion()
@@ -820,23 +803,9 @@ func (m Model) beginRestore() (tea.Model, tea.Cmd) {
 		m.status = "no backup to restore (sshush writes one before its first edit)"
 		return m, nil
 	}
-	m.mode = modeConfirmRestore
+	m.modal = &restoreOverlay{}
 	m.status = ""
 	return m, nil
-}
-
-// handleRestoreConfirm gates the restore: only "y" reverts the config.
-func (m Model) handleRestoreConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() != "y" && msg.String() != "Y" {
-		m.mode = modeNormal
-		m.status = "restore cancelled"
-		return m, nil
-	}
-	m.mode = modeNormal
-	return m, func() tea.Msg {
-		files, err := m.svc.RestoreBackup()
-		return restoreDoneMsg{files: files, err: err}
-	}
 }
 
 // sshCommand builds a shareable ssh invocation for a host: explicit when a
@@ -900,8 +869,7 @@ func (m Model) beginPermsAudit() (tea.Model, tea.Cmd) {
 		m.status = "permissions OK"
 		return m, nil
 	}
-	m.permIssues = issues
-	m.mode = modePerms
+	m.modal = &permsOverlay{issues: issues}
 	m.status = ""
 	return m, nil
 }
@@ -919,25 +887,6 @@ func (m Model) beginKnownHosts() (tea.Model, tea.Cmd) {
 	}
 	m.modal = &knownHostsOverlay{entries: entries}
 	m.status = ""
-	return m, nil
-}
-
-// handlePermsKey gates the chmod fix: only "y" applies it.
-func (m Model) handlePermsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() != "y" && msg.String() != "Y" {
-		m.mode = modeNormal
-		m.status = "permissions unchanged"
-		return m, nil
-	}
-	n := len(m.permIssues)
-	err := m.svc.FixPermissions(m.permIssues)
-	m.mode = modeNormal
-	m.permIssues = nil
-	if err != nil {
-		m.status = "fix failed: " + err.Error()
-		return m, nil
-	}
-	m.status = fmt.Sprintf("fixed permissions on %d file(s)", n)
 	return m, nil
 }
 
@@ -1868,12 +1817,6 @@ func (m Model) viewInner() string {
 		return m.card(m.viewDeleteConfirm(true))
 	case modeKeyPicker:
 		return m.card(m.viewPicker())
-	case modePerms:
-		return m.card(m.viewPerms())
-	case modeHelp:
-		return m.card(m.viewHelp())
-	case modeConfirmRestore:
-		return m.card(m.viewConfirmRestore())
 	}
 
 	header := appTitleStyle.Render("sshush") + "   " + m.renderTabs()
@@ -2121,109 +2064,6 @@ func (m Model) helpLines() []string {
 		out = append(out, sectionLines(s)...)
 	}
 	return out
-}
-
-// helpCapacity is how many body rows fit in the help card for the terminal
-// height. Rows available = height minus the card's top/bottom margin (2) +
-// borders (2) + title, blank, and footer (3). Large when height is unknown.
-func (m Model) helpCapacity() int {
-	if m.height <= 0 {
-		return 1 << 30
-	}
-	if c := m.height - 8; c > 1 {
-		return c
-	}
-	return 1
-}
-
-// helpMaxScroll is the furthest the help body can scroll.
-func (m Model) helpMaxScroll() int {
-	if n := len(m.helpLines()) - m.helpCapacity(); n > 0 {
-		return n
-	}
-	return 0
-}
-
-// viewHelp renders the reference, windowed to the terminal height when it would
-// otherwise overflow (scroll with ↑/↓).
-func (m Model) viewHelp() string {
-	lines := m.helpLines()
-	cap := m.helpCapacity()
-	start, end := clampWindow(m.helpScroll, len(lines), cap)
-
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("sshush — keybindings") + "\n\n")
-	b.WriteString(strings.Join(lines[start:end], "\n"))
-	b.WriteString("\n\n")
-	if start > 0 || end < len(lines) {
-		b.WriteString(dimStyle.Render(fmt.Sprintf("  %d–%d of %d · ↑/↓ scroll · any other key close",
-			start+1, end, len(lines))))
-	} else {
-		b.WriteString(dimStyle.Render("  press any key to close"))
-	}
-	return b.String()
-}
-
-// handleHelpKey scrolls the help overlay; any non-scroll key closes it.
-func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "up", "k":
-		if m.helpScroll > 0 {
-			m.helpScroll--
-		}
-	case "down", "j":
-		m.helpScroll++ // clamped in viewHelp
-	case "pgup", "ctrl+u":
-		m.helpScroll -= 5
-		if m.helpScroll < 0 {
-			m.helpScroll = 0
-		}
-	case "pgdown", "ctrl+d":
-		m.helpScroll += 5
-	default:
-		m.mode = modeNormal
-		return m, nil
-	}
-	// Clamp to the real range so scrolling back up responds immediately at the
-	// bottom (no overshoot/lag).
-	if maxScroll := m.helpMaxScroll(); m.helpScroll > maxScroll {
-		m.helpScroll = maxScroll
-	}
-	if m.helpScroll < 0 {
-		m.helpScroll = 0
-	}
-	return m, nil
-}
-
-// viewConfirmRestore renders the restore-from-backup y/n gate, listing the
-// files that will be reverted.
-func (m Model) viewConfirmRestore() string {
-	var b strings.Builder
-	b.WriteString(errStyle.Render("Restore config from backup") + "\n\n")
-	b.WriteString("  Revert these file(s) to their .bak snapshot (taken before\n")
-	b.WriteString("  sshush's first edit), discarding changes made since:\n\n")
-	for _, p := range m.svc.BackupPaths() {
-		b.WriteString("  " + textStyle.Render(p) + dimStyle.Render(".bak → "+p) + "\n")
-	}
-	b.WriteString("\n  " + keyCap.Render("y") + " restore    " + keyCap.Render("n") + " cancel")
-	b.WriteString("\n")
-	return b.String()
-}
-
-// viewPerms lists the permission issues found and gates the chmod fix.
-func (m Model) viewPerms() string {
-	var b strings.Builder
-	b.WriteString(errStyle.Render("Permission issues — ssh may reject these") + "\n\n")
-	for _, i := range m.permIssues {
-		b.WriteString(fmt.Sprintf("  %s  %s→%s  %s\n",
-			i.Path,
-			dimStyle.Render(fmt.Sprintf("%04o", i.Got)),
-			starStyle.Render(fmt.Sprintf("%04o", i.Want)),
-			dimStyle.Render(i.Why)))
-	}
-	b.WriteString("\n  " + keyCap.Render("y") + " fix all (chmod)    " + keyCap.Render("n") + " cancel")
-	b.WriteString("\n")
-	return b.String()
 }
 
 // viewPrompt renders a single-line text prompt (new host / new key).
