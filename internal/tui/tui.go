@@ -23,7 +23,6 @@ import (
 	// All other IO goes through service.Service.
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/config"
-	"github.com/s-johri/sshush/pkg/keys"
 	"github.com/s-johri/sshush/pkg/service"
 	"github.com/s-johri/sshush/pkg/shellinit"
 	"github.com/s-johri/sshush/pkg/watch"
@@ -243,9 +242,6 @@ const (
 	modeNewHost                // typing a new host alias / basic field
 	modeNewHostOptKey          // new-host wizard: typing a custom option name
 	modeNewHostOptVal          // new-host wizard: typing a custom option value
-	modeNewKeyAlgo             // picking a key algorithm
-	modeNewKeyBits             // picking rsa bits / ecdsa curve
-	modeNewKeyGen              // typing a new key file name
 )
 
 // coreFields are always offered for editing; a host's existing option keys are
@@ -315,12 +311,6 @@ type Model struct {
 	hostStep    int
 	draftHost   config.Host
 	draftOptKey string // custom option name awaiting its value
-
-	// new-key wizard
-	keyAlgo    config.KeyAlgorithm
-	keyBits    int
-	algoCursor int
-	bitsCursor int
 
 	// motion: the currently-active visual effect (zero value = none)
 	fx activeFX
@@ -696,12 +686,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleNewHostOptKey(msg)
 	case modeNewHostOptVal:
 		return m.handleNewHostOptVal(msg)
-	case modeNewKeyAlgo:
-		return m.handleNewKeyAlgo(msg)
-	case modeNewKeyBits:
-		return m.handleNewKeyBits(msg)
-	case modeNewKeyGen:
-		return m.handleNewKeyGen(msg)
 	}
 
 	// The filter input (when focused) captures keys before pane navigation.
@@ -883,78 +867,16 @@ func (m Model) beginKnownHosts() (tea.Model, tea.Cmd) {
 // the Keys pane.
 func (m Model) beginNew() (tea.Model, tea.Cmd) {
 	m.status = ""
-	m.input.SetValue("")
-	m.input.Focus()
 	if m.active == paneHosts {
+		m.input.SetValue("")
+		m.input.Focus()
 		m.mode = modeNewHost
 		m.hostStep = 0
 		m.draftHost = config.Host{}
-	} else {
-		m.mode = modeNewKeyAlgo
-		m.algoCursor = 0
+		return m, textinput.Blink
 	}
-	return m, textinput.Blink
-}
-
-// handleNewKeyAlgo selects the key algorithm, then advances to bits/curve
-// selection (rsa/ecdsa) or straight to the filename (ed25519).
-func (m Model) handleNewKeyAlgo(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		return m.cancelOverlay("cancelled")
-	case "up", "k":
-		if m.algoCursor > 0 {
-			m.algoCursor--
-		}
-		return m, nil
-	case "down", "j":
-		if m.algoCursor < len(keyAlgos)-1 {
-			m.algoCursor++
-		}
-		return m, nil
-	case "enter":
-		m.keyAlgo = keyAlgos[m.algoCursor].algo
-		m.keyBits = 0
-		if len(bitsOptions(m.keyAlgo)) > 0 {
-			m.bitsCursor = 0
-			m.mode = modeNewKeyBits
-			return m, nil
-		}
-		return m.toFilenameStep()
-	}
+	m.modal = newNewKeyWizard()
 	return m, nil
-}
-
-// handleNewKeyBits selects rsa bits / ecdsa curve, then advances to the filename.
-func (m Model) handleNewKeyBits(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	opts := bitsOptions(m.keyAlgo)
-	switch msg.String() {
-	case "esc":
-		return m.cancelOverlay("cancelled")
-	case "up", "k":
-		if m.bitsCursor > 0 {
-			m.bitsCursor--
-		}
-		return m, nil
-	case "down", "j":
-		if m.bitsCursor < len(opts)-1 {
-			m.bitsCursor++
-		}
-		return m, nil
-	case "enter":
-		m.keyBits = opts[m.bitsCursor]
-		return m.toFilenameStep()
-	}
-	return m, nil
-}
-
-// toFilenameStep opens the filename prompt with a sensible default name.
-func (m Model) toFilenameStep() (tea.Model, tea.Cmd) {
-	m.mode = modeNewKeyGen
-	m.input.SetValue("id_" + string(m.keyAlgo))
-	m.input.CursorEnd()
-	m.input.Focus()
-	return m, textinput.Blink
 }
 
 // beginDelete opens a confirm gate to delete the selected host or key.
@@ -1090,35 +1012,6 @@ func (m Model) createDraftHost() (tea.Model, tea.Cmd) {
 	m.input.Blur()
 	m.status = "creating host…"
 	return m, func() tea.Msg { return editDoneMsg{verb: "host added", err: m.svc.AddHost(host)} }
-}
-
-// handleNewKeyGen collects a key file name and runs ssh-keygen interactively
-// (via ExecProcess) so it can prompt for a passphrase.
-func (m Model) handleNewKeyGen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		return m.cancelOverlay("cancelled")
-	case "enter":
-		name := strings.TrimSpace(m.input.Value())
-		if name == "" {
-			m.status = "key name cannot be empty"
-			return m, nil
-		}
-		m.mode = modeNormal
-		m.input.Blur()
-		m.status = "running ssh-keygen…"
-		cmd, _, err := keys.GenerateCommand(keys.GenerateOpts{
-			Name: name, Algorithm: m.keyAlgo, Bits: m.keyBits, Comment: name,
-		})
-		if err != nil {
-			m.status = "keygen error: " + err.Error()
-			return m, nil
-		}
-		return m, tea.ExecProcess(cmd, func(err error) tea.Msg { return keygenDoneMsg{err: err} })
-	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	return m, cmd
 }
 
 // beginEdit opens the edit overlay on the selected host. Only directives the
@@ -1735,13 +1628,6 @@ func (m Model) viewInner() string {
 			"option name (e.g. ForwardAgent) — enter blank to finish"))
 	case modeNewHostOptVal:
 		return m.card(m.viewPrompt("New host: add option", m.draftOptKey+" value"))
-	case modeNewKeyAlgo:
-		return m.card(m.viewKeyAlgo())
-	case modeNewKeyBits:
-		return m.card(m.viewKeyBits())
-	case modeNewKeyGen:
-		return m.card(m.viewPrompt("Generate key ("+m.keySummary()+")",
-			"file name — may prompt for a passphrase"))
 	}
 
 	header := appTitleStyle.Render("sshush") + "   " + m.renderTabs()
@@ -1846,55 +1732,6 @@ func (m Model) viewNewKey() string {
 	b.WriteString("  " + m.input.View() + "\n\n")
 	b.WriteString(dimStyle.Render("  enter next · esc cancel"))
 	b.WriteString("\n")
-	return b.String()
-}
-
-// keySummary describes the chosen algorithm (+ bits/curve) for the filename step.
-func (m Model) keySummary() string {
-	if m.keyBits > 0 {
-		unit := "bits"
-		if m.keyAlgo == config.AlgECDSA {
-			unit = "curve"
-		}
-		return fmt.Sprintf("%s, %d %s", m.keyAlgo, m.keyBits, unit)
-	}
-	return string(m.keyAlgo)
-}
-
-func (m Model) viewKeyAlgo() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("New key: algorithm") + "\n\n")
-	for i, a := range keyAlgos {
-		if i == m.algoCursor {
-			b.WriteString(selectedRow.Render("▸ "+a.label) + "\n")
-		} else {
-			b.WriteString("  " + a.label + "\n")
-		}
-	}
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ move · enter select · esc cancel") + "\n")
-	return b.String()
-}
-
-func (m Model) viewKeyBits() string {
-	opts := bitsOptions(m.keyAlgo)
-	label := "size (bits)"
-	if m.keyAlgo == config.AlgECDSA {
-		label = "curve"
-	}
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("New "+string(m.keyAlgo)+" key: "+label) + "\n\n")
-	for i, n := range opts {
-		line := strconv.Itoa(n)
-		if i == 0 {
-			line += "  (default)"
-		}
-		if i == m.bitsCursor {
-			b.WriteString(selectedRow.Render("▸ "+line) + "\n")
-		} else {
-			b.WriteString("  " + line + "\n")
-		}
-	}
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ move · enter select · esc cancel") + "\n")
 	return b.String()
 }
 

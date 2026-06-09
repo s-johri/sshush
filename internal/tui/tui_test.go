@@ -609,24 +609,26 @@ func TestNewKeyGenEd25519SkipsBits(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()}) // Keys pane
 
 	m = feed(m, key("n"))
-	if m.mode != modeNewKeyAlgo {
-		t.Fatalf("expected modeNewKeyAlgo, got %d", m.mode)
+	w, ok := m.modal.(*newKeyWizard)
+	if !ok {
+		t.Fatalf("expected newKeyWizard, got %T", m.modal)
 	}
 	// ed25519 is first; selecting it skips the bits step and prefills the name.
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.mode != modeNewKeyGen {
-		t.Fatalf("ed25519 should go straight to filename, got mode %d", m.mode)
+	w = m.modal.(*newKeyWizard)
+	if w.phase != nkPhaseName {
+		t.Fatalf("ed25519 should go straight to filename, got phase %d", w.phase)
 	}
-	if m.keyAlgo != config.AlgED25519 || m.keyBits != 0 {
-		t.Errorf("algo=%q bits=%d", m.keyAlgo, m.keyBits)
+	if w.algo != config.AlgED25519 || w.bits != 0 {
+		t.Errorf("algo=%q bits=%d", w.algo, w.bits)
 	}
-	if m.input.Value() != "id_ed25519" {
-		t.Errorf("filename default = %q", m.input.Value())
+	if w.input.Value() != "id_ed25519" {
+		t.Errorf("filename default = %q", w.input.Value())
 	}
 	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = out.(Model)
-	if cmd == nil || m.mode != modeNormal {
-		t.Error("should dispatch keygen and reset mode")
+	if cmd == nil || m.modal != nil {
+		t.Error("should dispatch keygen and close the wizard")
 	}
 }
 
@@ -638,13 +640,15 @@ func TestNewKeyGenRsaPicksBits(t *testing.T) {
 	m = feed(m, key("n"))
 	m = feed(m, key("j"))                       // ed25519 -> rsa
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // select rsa -> bits step
-	if m.mode != modeNewKeyBits || m.keyAlgo != config.AlgRSA {
-		t.Fatalf("expected rsa bits step, mode=%d algo=%q", m.mode, m.keyAlgo)
+	w := m.modal.(*newKeyWizard)
+	if w.phase != nkPhaseBits || w.algo != config.AlgRSA {
+		t.Fatalf("expected rsa bits step, phase=%d algo=%q", w.phase, w.algo)
 	}
 	m = feed(m, key("j"))                       // 3072 -> 4096
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // select 4096 -> filename
-	if m.mode != modeNewKeyGen || m.keyBits != 4096 {
-		t.Fatalf("bits not selected: mode=%d bits=%d", m.mode, m.keyBits)
+	w = m.modal.(*newKeyWizard)
+	if w.phase != nkPhaseName || w.bits != 4096 {
+		t.Fatalf("bits not selected: phase=%d bits=%d", w.phase, w.bits)
 	}
 	if !strings.Contains(m.View(), "rsa, 4096 bits") {
 		t.Errorf("filename step should summarize algo/bits:\n%s", m.View())
