@@ -302,10 +302,9 @@ type Model struct {
 	svc service.Service
 
 	active  pane
-	cursor  [numPanes]int
-	scroll  [numPanes]int     // first visible row index per pane (viewport offset)
-	ids     []config.Identity // sorted for stable display
-	hosts   []config.Host     // sorted for stable display
+	vp      [numPanes]viewport // cursor + scroll per pane (see CONTEXT.md)
+	ids     []config.Identity  // sorted for stable display
+	hosts   []config.Host      // sorted for stable display
 	srcFile string
 
 	loading     bool
@@ -341,9 +340,8 @@ type Model struct {
 
 	// known_hosts browser
 	khEntries []knownhosts.Entry
-	khCursor  int
-	khScroll  int
-	khConfirm bool // confirming removal of the selected entry
+	khVP      viewport // cursor + scroll over khEntries
+	khConfirm bool     // confirming removal of the selected entry
 
 	// clipboard copy menu
 	copyOpts []copyOption
@@ -442,7 +440,7 @@ func matchAny(q string, fields ...string) bool {
 // selectedKey returns the highlighted identity in the (filtered) Keys pane.
 func (m Model) selectedKey() (config.Identity, bool) {
 	v := m.visibleIDs()
-	i := m.cursor[paneKeys]
+	i := m.vp[paneKeys].cursor
 	if i < 0 || i >= len(v) {
 		return config.Identity{}, false
 	}
@@ -474,14 +472,8 @@ func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // afterFilterChange keeps the cursor/scroll valid for the (possibly smaller)
 // filtered list of the active pane.
 func (m *Model) afterFilterChange() {
-	n := m.rowCountFor(m.active)
-	if m.cursor[m.active] >= n {
-		m.cursor[m.active] = n - 1
-	}
-	if m.cursor[m.active] < 0 {
-		m.cursor[m.active] = 0
-	}
-	m.scroll[m.active] = 0
+	m.vp[m.active].clampCursor(m.rowCountFor(m.active))
+	m.vp[m.active].scroll = 0
 	m.ensureVisible(m.active)
 }
 
@@ -769,16 +761,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensureVisible(m.active)
 		return m, nil
 	case "up", "k":
-		if m.cursor[m.active] > 0 {
-			m.cursor[m.active]--
-		}
-		m.ensureVisible(m.active)
+		m.moveCursor(m.active, -1)
 		return m, nil
 	case "down", "j":
-		if m.cursor[m.active] < m.rowCount()-1 {
-			m.cursor[m.active]++
-		}
-		m.ensureVisible(m.active)
+		m.moveCursor(m.active, 1)
 		return m, nil
 	case "pgup", "ctrl+u":
 		m.moveCursor(m.active, -m.listCapacity())
@@ -787,14 +773,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveCursor(m.active, m.listCapacity())
 		return m, nil
 	case "home", "g":
-		m.cursor[m.active] = 0
-		m.ensureVisible(m.active)
+		m.setCursor(m.active, 0)
 		return m, nil
 	case "end", "G":
-		if n := m.rowCount(); n > 0 {
-			m.cursor[m.active] = n - 1
-		}
-		m.ensureVisible(m.active)
+		m.setCursor(m.active, m.rowCount()-1)
 		return m, nil
 	case "enter", " ":
 		if m.active == paneHosts {
@@ -959,8 +941,7 @@ func (m Model) beginKnownHosts() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.khEntries = entries
-	m.khCursor = 0
-	m.khScroll = 0
+	m.khVP = viewport{}
 	m.khConfirm = false
 	m.mode = modeKnownHosts
 	m.status = ""
@@ -982,15 +963,9 @@ func (m Model) handleKnownHostsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeNormal
 		return m, nil
 	case "up", "k":
-		if m.khCursor > 0 {
-			m.khCursor--
-		}
-		m.khEnsureVisible()
+		m.khVP.moveCursor(-1, len(m.khEntries), m.khCapacity())
 	case "down", "j":
-		if m.khCursor < len(m.khEntries)-1 {
-			m.khCursor++
-		}
-		m.khEnsureVisible()
+		m.khVP.moveCursor(1, len(m.khEntries), m.khCapacity())
 	case "d", "enter":
 		if len(m.khEntries) > 0 {
 			m.khConfirm = true
@@ -1001,7 +976,7 @@ func (m Model) handleKnownHostsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // removeSelectedKnownHost deletes the highlighted entry and reloads the list.
 func (m Model) removeSelectedKnownHost() (tea.Model, tea.Cmd) {
-	ent := m.khEntries[m.khCursor]
+	ent := m.khEntries[m.khVP.cursor]
 	m.khConfirm = false
 	if err := m.svc.RemoveKnownHost(ent.Line); err != nil {
 		m.status = "remove failed: " + err.Error()
@@ -1010,12 +985,7 @@ func (m Model) removeSelectedKnownHost() (tea.Model, tea.Cmd) {
 	}
 	entries, _ := m.svc.KnownHosts()
 	m.khEntries = entries
-	if m.khCursor >= len(entries) {
-		m.khCursor = len(entries) - 1
-	}
-	if m.khCursor < 0 {
-		m.khCursor = 0
-	}
+	m.khVP.clampCursor(len(entries))
 	m.khEnsureVisible()
 	m.status = "removed known_hosts entry (backup written)"
 	if len(entries) == 0 {
@@ -1024,8 +994,8 @@ func (m Model) removeSelectedKnownHost() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// khCapacity / khWindow / khEnsureVisible mirror the pane viewport logic for the
-// known_hosts overlay.
+// khCapacity is the visible-row budget for the known_hosts overlay; khWindow and
+// khEnsureVisible bind khVP to it (the arithmetic lives in viewport.go).
 func (m Model) khCapacity() int {
 	if m.height <= 0 {
 		return 1 << 30
@@ -1037,33 +1007,11 @@ func (m Model) khCapacity() int {
 }
 
 func (m Model) khWindow() (int, int) {
-	cap := m.khCapacity()
-	n := len(m.khEntries)
-	start := m.khScroll
-	if start > n-cap {
-		start = n - cap
-	}
-	if start < 0 {
-		start = 0
-	}
-	end := start + cap
-	if end > n {
-		end = n
-	}
-	return start, end
+	return m.khVP.window(len(m.khEntries), m.khCapacity())
 }
 
 func (m *Model) khEnsureVisible() {
-	cap := m.khCapacity()
-	if m.khCursor < m.khScroll {
-		m.khScroll = m.khCursor
-	}
-	if m.khCursor >= m.khScroll+cap {
-		m.khScroll = m.khCursor - cap + 1
-	}
-	if m.khScroll < 0 {
-		m.khScroll = 0
-	}
+	m.khVP.ensureVisible(len(m.khEntries), m.khCapacity())
 }
 
 // handlePermsKey gates the chmod fix: only "y" applies it.
@@ -1658,7 +1606,7 @@ func (m Model) unloadAll() (tea.Model, tea.Cmd) {
 
 func (m Model) selectedHost() (config.Host, bool) {
 	v := m.visibleHosts()
-	i := m.cursor[paneHosts]
+	i := m.vp[paneHosts].cursor
 	if i < 0 || i >= len(v) {
 		return config.Host{}, false
 	}
@@ -1928,61 +1876,26 @@ func (m Model) listCapacity() int {
 }
 
 // moveCursor shifts the cursor by delta (clamped) and keeps it visible.
+// moveCursor / setCursor / ensureVisible / window / clampCursor bind pane p's
+// viewport to its row count and the screen-dependent list capacity — the Model
+// is the adapter that supplies capacity; the arithmetic lives in viewport.go.
+
 func (m *Model) moveCursor(p pane, delta int) {
-	n := m.rowCountFor(p)
-	cur := m.cursor[p] + delta
-	if cur < 0 {
-		cur = 0
-	}
-	if cur > n-1 {
-		cur = n - 1
-	}
-	if cur < 0 {
-		cur = 0
-	}
-	m.cursor[p] = cur
-	m.ensureVisible(p)
+	m.vp[p].moveCursor(delta, m.rowCountFor(p), m.listCapacity())
+}
+
+func (m *Model) setCursor(p pane, i int) {
+	m.vp[p].setCursor(i, m.rowCountFor(p), m.listCapacity())
 }
 
 // ensureVisible scrolls pane p so its cursor row is within the viewport.
 func (m *Model) ensureVisible(p pane) {
-	cap := m.listCapacity()
-	n := m.rowCountFor(p)
-	if n == 0 {
-		m.scroll[p] = 0
-		return
-	}
-	cur := m.cursor[p]
-	if cur < m.scroll[p] {
-		m.scroll[p] = cur
-	}
-	if cur >= m.scroll[p]+cap {
-		m.scroll[p] = cur - cap + 1
-	}
-	if max := n - cap; m.scroll[p] > max {
-		m.scroll[p] = max
-	}
-	if m.scroll[p] < 0 {
-		m.scroll[p] = 0
-	}
+	m.vp[p].ensureVisible(m.rowCountFor(p), m.listCapacity())
 }
 
 // window returns the [start, end) row range visible for pane p.
 func (m Model) window(p pane) (int, int) {
-	cap := m.listCapacity()
-	n := m.rowCountFor(p)
-	start := m.scroll[p]
-	if start > n-cap {
-		start = n - cap
-	}
-	if start < 0 {
-		start = 0
-	}
-	end := start + cap
-	if end > n {
-		end = n
-	}
-	return start, end
+	return m.vp[p].window(m.rowCountFor(p), m.listCapacity())
 }
 
 // scrollIndicator is a dim "rows X–Y of N" line shown when a pane overflows.
@@ -2010,12 +1923,7 @@ func (m *Model) clampCursors() {
 
 // clampCursor keeps pane p's cursor within [0, rowCount).
 func (m *Model) clampCursor(p pane) {
-	if max := m.rowCountFor(p); m.cursor[p] >= max {
-		m.cursor[p] = max - 1
-	}
-	if m.cursor[p] < 0 {
-		m.cursor[p] = 0
-	}
+	m.vp[p].clampCursor(m.rowCountFor(p))
 }
 
 func (m Model) rowCount() int { return m.rowCountFor(m.active) }
@@ -2373,17 +2281,7 @@ func (m Model) helpMaxScroll() int {
 func (m Model) viewHelp() string {
 	lines := m.helpLines()
 	cap := m.helpCapacity()
-	start := m.helpScroll
-	if start > len(lines)-cap {
-		start = len(lines) - cap
-	}
-	if start < 0 {
-		start = 0
-	}
-	end := start + cap
-	if end > len(lines) {
-		end = len(lines)
-	}
+	start, end := clampWindow(m.helpScroll, len(lines), cap)
 
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("sshush — keybindings") + "\n\n")
@@ -2444,17 +2342,8 @@ func (m Model) viewTheme() string {
 			cap = 2
 		}
 	}
-	start := m.themeCursor - cap/2
-	if start > len(presets)-cap {
-		start = len(presets) - cap
-	}
-	if start < 0 {
-		start = 0
-	}
-	end := start + cap
-	if end > len(presets) {
-		end = len(presets)
-	}
+	// Centre the cursor in the window (clampWindow handles the edges).
+	start, end := clampWindow(m.themeCursor-cap/2, len(presets), cap)
 	for i := start; i < end; i++ {
 		if i == m.themeCursor {
 			b.WriteString(selectedRow.Render("▸ "+presets[i].name) + "\n")
@@ -2517,7 +2406,7 @@ func (m Model) viewKnownHosts() string {
 			host = dimStyle.Render(host)
 		}
 		line := fmt.Sprintf("%-28s %-20s %s", host, e.KeyType, dimStyle.Render(e.Fingerprint))
-		if i == m.khCursor {
+		if i == m.khVP.cursor {
 			b.WriteString(selectedRow.Render("▸ "+line) + "\n")
 		} else {
 			b.WriteString("  " + line + "\n")
@@ -2529,7 +2418,7 @@ func (m Model) viewKnownHosts() string {
 
 	b.WriteString("\n")
 	if m.khConfirm {
-		sel := m.khEntries[m.khCursor]
+		sel := m.khEntries[m.khVP.cursor]
 		b.WriteString(errStyle.Render(fmt.Sprintf("  remove key for %s?  ", sel.Display())) +
 			keyCap.Render("y") + " yes  " + keyCap.Render("n") + " no")
 	} else {
@@ -2824,7 +2713,7 @@ func padClip(s string, n int) string {
 // spans would reset the background mid-row); other rows use the styled text.
 // The inactive pane's cursor still gets a dim marker so its position is visible.
 func (m Model) listRow(p pane, i int, plain, styled string, w int) string {
-	if p == m.active && i == m.cursor[p] {
+	if p == m.active && i == m.vp[p].cursor {
 		s := selectedRow
 		if w > 0 {
 			s = s.Width(w)
@@ -2832,7 +2721,7 @@ func (m Model) listRow(p pane, i int, plain, styled string, w int) string {
 		return s.Render(fit("▸ "+plain, w))
 	}
 	prefix := "  "
-	if i == m.cursor[p] {
+	if i == m.vp[p].cursor {
 		prefix = dimStyle.Render("▸ ") // inactive pane cursor
 	}
 	return prefix + fit(styled, w-2)
