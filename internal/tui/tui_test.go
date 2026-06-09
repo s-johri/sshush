@@ -849,6 +849,29 @@ func TestReloadDeferredDuringOverlay(t *testing.T) {
 	}
 }
 
+// A new-seam overlay (m.modal) also defers reloads, even though it leaves
+// m.mode == modeNormal.
+func TestReloadDeferredDuringModalOverlay(t *testing.T) {
+	fw := &fakeWatcher{ch: make(chan struct{}, 1)}
+	m := New(&fakeService{model: snapshot()}).WithWatcher(fw)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m.modal = &copyOverlay{opts: []copyOption{{"p", "public key", "x"}}}
+
+	out, _ := m.Update(reloadMsg{})
+	m = out.(Model)
+	if !m.pendingReload || m.loading {
+		t.Errorf("reload during a modal overlay should defer: pending=%v loading=%v",
+			m.pendingReload, m.loading)
+	}
+
+	m.modal = nil // overlay closed
+	out, cmd := m.Update(tickMsg{})
+	m = out.(Model)
+	if m.pendingReload || !m.loading || cmd == nil {
+		t.Error("tick should flush the pending reload once the overlay closes")
+	}
+}
+
 func contains(ss []string, want string) bool {
 	for _, s := range ss {
 		if s == want {
@@ -1676,8 +1699,8 @@ func TestThemeSwitcherApply(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()})
 
 	m = feed(m, key("t"))
-	if m.mode != modeTheme {
-		t.Fatalf("t should open theme picker, got %d", m.mode)
+	if _, ok := m.modal.(*themeOverlay); !ok {
+		t.Fatalf("t should open the theme picker, got %T", m.modal)
 	}
 	if v := m.View(); !strings.Contains(v, "dracula") || !strings.Contains(v, "nord") {
 		t.Errorf("theme picker should list presets:\n%s", v)
@@ -1686,8 +1709,8 @@ func TestThemeSwitcherApply(t *testing.T) {
 	m = feed(m, key("j"))
 	want := presets[1].name
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if fs.themeName != want || m.mode != modeNormal {
-		t.Errorf("apply: themeName=%q mode=%d, want %q/normal", fs.themeName, m.mode, want)
+	if fs.themeName != want || m.modal != nil {
+		t.Errorf("apply: themeName=%q modal=%v, want %q/closed", fs.themeName, m.modal, want)
 	}
 }
 

@@ -6,7 +6,6 @@ package tui
 import (
 	"fmt"
 	"math"
-	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -255,7 +254,6 @@ const (
 	modePerms                   // reviewing/fixing permission issues
 	modeKnownHosts              // browsing/removing known_hosts entries
 	modeHelp                    // full keybinding reference overlay
-	modeTheme                   // theme picker with live preview
 	modeConfirmRestore          // confirming a restore from backup
 )
 
@@ -350,10 +348,6 @@ type Model struct {
 
 	// motion: the currently-active visual effect (zero value = none)
 	fx activeFX
-
-	// theme switcher
-	themeCursor int
-	themeOrig   string // theme to revert to on cancel
 
 	// hot reload
 	watcher         fileWatcher
@@ -534,6 +528,13 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// overlayOpen reports whether any modal screen is up — a new-seam overlay
+// (m.modal) or a legacy mode-based one. Used to defer hot reloads so an open
+// overlay is never clobbered.
+func (m Model) overlayOpen() bool {
+	return m.modal != nil || m.mode != modeNormal
+}
+
 // waitForChange blocks on the watcher until a change arrives, then yields a
 // reloadMsg. Returns nil when no watcher is attached.
 func (m Model) waitForChange() tea.Cmd {
@@ -586,7 +587,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ""
 		}
 		// Apply a deferred reload once any overlay is closed.
-		if m.pendingReload && m.mode == modeNormal && !m.loading {
+		if m.pendingReload && !m.overlayOpen() && !m.loading {
 			m.pendingReload = false
 			m.loading = true
 			return m, tea.Batch(tick(), m.refresh)
@@ -602,7 +603,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Only refresh when idle so an open overlay or in-flight load is never
 		// clobbered.
-		if m.mode != modeNormal || m.loading {
+		if m.overlayOpen() || m.loading {
 			m.pendingReload = true
 			return m, next
 		}
@@ -735,8 +736,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleKnownHostsKey(msg)
 	case modeHelp:
 		return m.handleHelpKey(msg)
-	case modeTheme:
-		return m.handleThemeKey(msg)
 	case modeConfirmRestore:
 		return m.handleRestoreConfirm(msg)
 	}
@@ -1523,60 +1522,23 @@ func (m Model) toggleMotion() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// beginTheme opens the theme picker, previewing the current theme.
+// beginTheme opens the theme picker, previewing the current theme. The picker's
+// state and behaviour live in themeOverlay (overlay_theme.go).
 func (m Model) beginTheme() (tea.Model, tea.Cmd) {
 	if m.settings == nil {
 		m.status = "no settings file configured"
 		return m, nil
 	}
-	m.themeOrig = m.settings.ThemeName()
-	m.themeCursor = 0
+	o := &themeOverlay{orig: m.settings.ThemeName()}
 	for i, p := range presets {
-		if p.name == m.themeOrig {
-			m.themeCursor = i
+		if p.name == o.orig {
+			o.cursor = i
 			break
 		}
 	}
-	applyTheme(presets[m.themeCursor].theme)
-	m.mode = modeTheme
+	applyTheme(presets[o.cursor].theme)
+	m.modal = o
 	m.status = ""
-	return m, nil
-}
-
-// handleThemeKey drives the theme picker: ↑/↓ live-preview, r randomize,
-// enter applies + persists, esc reverts.
-func (m Model) handleThemeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "up", "k":
-		if m.themeCursor > 0 {
-			m.themeCursor--
-		}
-	case "down", "j":
-		if m.themeCursor < len(presets)-1 {
-			m.themeCursor++
-		}
-	case "r":
-		m.themeCursor = rand.Intn(len(presets))
-	case "enter":
-		name := presets[m.themeCursor].name
-		m.mode = modeNormal
-		if err := m.settings.SetTheme(name); err != nil {
-			m.status = "theme applied (not saved): " + err.Error()
-			return m, nil
-		}
-		m.status = "theme: " + name
-		return m, nil
-	case "esc", "q":
-		t, ok := themeByName(m.themeOrig)
-		if !ok {
-			t = defaultTheme
-		}
-		applyTheme(t)
-		m.mode = modeNormal
-		m.status = "theme unchanged"
-		return m, nil
-	}
-	applyTheme(presets[m.themeCursor].theme) // live preview
 	return m, nil
 }
 
@@ -1990,8 +1952,6 @@ func (m Model) viewInner() string {
 		return m.card(m.viewKnownHosts())
 	case modeHelp:
 		return m.card(m.viewHelp())
-	case modeTheme:
-		return m.card(m.viewTheme())
 	case modeConfirmRestore:
 		return m.card(m.viewConfirmRestore())
 	}
@@ -2313,42 +2273,6 @@ func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.helpScroll = 0
 	}
 	return m, nil
-}
-
-// viewTheme renders the theme picker with a live preview swatch (the swatch
-// reflects the currently-applied/previewed theme).
-func (m Model) viewTheme() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("Theme") + "\n\n")
-
-	// Window the list around the cursor so it never overflows a short terminal.
-	cap := len(presets)
-	if m.height > 0 {
-		if c := m.height - 12; c > 2 {
-			cap = c
-		} else {
-			cap = 2
-		}
-	}
-	// Centre the cursor in the window (clampWindow handles the edges).
-	start, end := clampWindow(m.themeCursor-cap/2, len(presets), cap)
-	for i := start; i < end; i++ {
-		if i == m.themeCursor {
-			b.WriteString(selectedRow.Render("▸ "+presets[i].name) + "\n")
-		} else {
-			b.WriteString("  " + textStyle.Render(presets[i].name) + "\n")
-		}
-	}
-	if start > 0 || end < len(presets) {
-		b.WriteString(dimStyle.Render(fmt.Sprintf("  %d–%d of %d", start+1, end, len(presets))) + "\n")
-	}
-	// Preview swatch using the live styles.
-	swatch := loadedBadge.Render("●") + " " + textStyle.Render("loaded") + "   " +
-		starStyle.Render("★ default") + "   " + hostTagStyle.Render("↪ host") + "   " +
-		errStyle.Render("error")
-	b.WriteString("\n  " + swatch + "\n")
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ preview · enter apply · r random · esc cancel") + "\n")
-	return b.String()
 }
 
 // viewConfirmRestore renders the restore-from-backup y/n gate, listing the
