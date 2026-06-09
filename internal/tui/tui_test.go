@@ -261,8 +261,8 @@ func TestRestoreFlow(t *testing.T) {
 	m2 := New(svc2)
 	m2 = feed(m2, refreshedMsg{model: snapshot()})
 	m2 = feed(m2, key("R"))
-	if m2.mode != modeConfirmRestore {
-		t.Fatalf("R should open the restore confirm, got mode=%d", m2.mode)
+	if _, ok := m2.modal.(*restoreOverlay); !ok {
+		t.Fatalf("R should open the restore confirm, got %T", m2.modal)
 	}
 	if v := m2.View(); !strings.Contains(v, "/x/config") {
 		t.Errorf("confirm should list the backup file:\n%s", v)
@@ -1335,8 +1335,8 @@ func TestPermsAuditAndFix(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()})
 
 	m = feed(m, key("P"))
-	if m.mode != modePerms {
-		t.Fatalf("expected modePerms, got %d", m.mode)
+	if _, ok := m.modal.(*permsOverlay); !ok {
+		t.Fatalf("expected permsOverlay, got %T", m.modal)
 	}
 	if !strings.Contains(m.View(), "id_rsa") || !strings.Contains(m.View(), "0600") {
 		t.Errorf("perms overlay should list the issue:\n%s", m.View())
@@ -1346,8 +1346,8 @@ func TestPermsAuditAndFix(t *testing.T) {
 	if svc.fixedPerms != 1 {
 		t.Errorf("FixPermissions called for %d issues, want 1", svc.fixedPerms)
 	}
-	if m.mode != modeNormal || !strings.Contains(m.status, "fixed permissions") {
-		t.Errorf("after fix: mode=%d status=%q", m.mode, m.status)
+	if m.modal != nil || !strings.Contains(m.status, "fixed permissions") {
+		t.Errorf("after fix: modal=%v status=%q", m.modal, m.status)
 	}
 }
 
@@ -1356,8 +1356,8 @@ func TestPermsNoIssues(t *testing.T) {
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()})
 	m = feed(m, key("P"))
-	if m.mode != modeNormal || !strings.Contains(m.status, "permissions OK") {
-		t.Errorf("clean audit: mode=%d status=%q", m.mode, m.status)
+	if m.modal != nil || !strings.Contains(m.status, "permissions OK") {
+		t.Errorf("clean audit: modal=%v status=%q", m.modal, m.status)
 	}
 }
 
@@ -1372,8 +1372,8 @@ func TestPermsCancelNoFix(t *testing.T) {
 	if svc.fixedPerms != 0 {
 		t.Errorf("cancel must not fix: %d", svc.fixedPerms)
 	}
-	if m.mode != modeNormal {
-		t.Errorf("cancel should return to normal: %d", m.mode)
+	if m.modal != nil {
+		t.Errorf("cancel should close the overlay: %v", m.modal)
 	}
 }
 
@@ -1509,8 +1509,8 @@ func TestHelpOverlay(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()})
 
 	m = feed(m, key("?"))
-	if m.mode != modeHelp {
-		t.Fatalf("? should open help, got mode %d", m.mode)
+	if _, ok := m.modal.(*helpOverlay); !ok {
+		t.Fatalf("? should open help, got %T", m.modal)
 	}
 	v := m.View()
 	for _, want := range []string{"keybindings", "Navigation", "Keys pane", "Hosts pane", "known_hosts"} {
@@ -1520,8 +1520,8 @@ func TestHelpOverlay(t *testing.T) {
 	}
 	// Any key closes it.
 	m = feed(m, key("x"))
-	if m.mode != modeNormal {
-		t.Errorf("a key should close help, got mode %d", m.mode)
+	if m.modal != nil {
+		t.Errorf("a key should close help, got %T", m.modal)
 	}
 }
 
