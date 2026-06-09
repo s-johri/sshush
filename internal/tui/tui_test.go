@@ -139,12 +139,12 @@ func TestNavClampAndTab(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()})
 
 	m = feed(m, key("j")) // down -> 1
-	if m.cursor[paneKeys] != 1 {
-		t.Fatalf("cursor = %d, want 1", m.cursor[paneKeys])
+	if m.vp[paneKeys].cursor != 1 {
+		t.Fatalf("cursor = %d, want 1", m.vp[paneKeys].cursor)
 	}
 	m = feed(m, key("j")) // clamp at last row
-	if m.cursor[paneKeys] != 1 {
-		t.Fatalf("cursor over-advanced to %d", m.cursor[paneKeys])
+	if m.vp[paneKeys].cursor != 1 {
+		t.Fatalf("cursor over-advanced to %d", m.vp[paneKeys].cursor)
 	}
 
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -1023,15 +1023,15 @@ func TestScrollKeepsCursorVisible(t *testing.T) {
 	for i := 0; i <= cap; i++ {
 		m = feed(m, key("j"))
 	}
-	if m.cursor[paneKeys] != cap+1 {
-		t.Fatalf("cursor = %d, want %d", m.cursor[paneKeys], cap+1)
+	if m.vp[paneKeys].cursor != cap+1 {
+		t.Fatalf("cursor = %d, want %d", m.vp[paneKeys].cursor, cap+1)
 	}
-	if m.scroll[paneKeys] == 0 {
+	if m.vp[paneKeys].scroll == 0 {
 		t.Error("scroll should advance once cursor passes the first window")
 	}
 	start, end := m.window(paneKeys)
-	if !(m.cursor[paneKeys] >= start && m.cursor[paneKeys] < end) {
-		t.Errorf("cursor %d not in window [%d,%d)", m.cursor[paneKeys], start, end)
+	if !(m.vp[paneKeys].cursor >= start && m.vp[paneKeys].cursor < end) {
+		t.Errorf("cursor %d not in window [%d,%d)", m.vp[paneKeys].cursor, start, end)
 	}
 	if end-start != cap {
 		t.Errorf("window size %d, want %d", end-start, cap)
@@ -1049,20 +1049,20 @@ func TestPageAndEndKeys(t *testing.T) {
 
 	cap := m.listCapacity()
 	m = feed(m, tea.KeyMsg{Type: tea.KeyPgDown})
-	if m.cursor[paneKeys] != cap {
-		t.Errorf("pgdown cursor = %d, want %d", m.cursor[paneKeys], cap)
+	if m.vp[paneKeys].cursor != cap {
+		t.Errorf("pgdown cursor = %d, want %d", m.vp[paneKeys].cursor, cap)
 	}
 	m = feed(m, key("G")) // jump to end
-	if m.cursor[paneKeys] != 29 {
-		t.Errorf("end cursor = %d, want 29", m.cursor[paneKeys])
+	if m.vp[paneKeys].cursor != 29 {
+		t.Errorf("end cursor = %d, want 29", m.vp[paneKeys].cursor)
 	}
 	start, end := m.window(paneKeys)
-	if end != 30 || m.cursor[paneKeys] < start {
+	if end != 30 || m.vp[paneKeys].cursor < start {
 		t.Errorf("end-of-list window wrong: [%d,%d)", start, end)
 	}
 	m = feed(m, key("g")) // jump home
-	if m.cursor[paneKeys] != 0 || m.scroll[paneKeys] != 0 {
-		t.Errorf("home not at top: cursor=%d scroll=%d", m.cursor[paneKeys], m.scroll[paneKeys])
+	if m.vp[paneKeys].cursor != 0 || m.vp[paneKeys].scroll != 0 {
+		t.Errorf("home not at top: cursor=%d scroll=%d", m.vp[paneKeys].cursor, m.vp[paneKeys].scroll)
 	}
 }
 
@@ -1176,8 +1176,8 @@ func TestFilterClampsCursor(t *testing.T) {
 	if n := m.rowCountFor(paneKeys); n != 1 {
 		t.Fatalf("expected 1 match, got %d", n)
 	}
-	if m.cursor[paneKeys] != 0 {
-		t.Errorf("cursor not clamped after filter: %d", m.cursor[paneKeys])
+	if m.vp[paneKeys].cursor != 0 {
+		t.Errorf("cursor not clamped after filter: %d", m.vp[paneKeys].cursor)
 	}
 }
 
@@ -1253,8 +1253,8 @@ func TestPaneSwitchClampsCursorUnderFilter(t *testing.T) {
 
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // -> Hosts
 	m = feed(m, key("G"))                     // cursor at prod (index 4 of 5)
-	if m.cursor[paneHosts] != 4 {
-		t.Fatalf("setup: hosts cursor = %d, want 4", m.cursor[paneHosts])
+	if m.vp[paneHosts].cursor != 4 {
+		t.Fatalf("setup: hosts cursor = %d, want 4", m.vp[paneHosts].cursor)
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // -> Keys
 
@@ -1267,7 +1267,7 @@ func TestPaneSwitchClampsCursorUnderFilter(t *testing.T) {
 
 	// Switching back to Hosts must clamp the now-out-of-range cursor.
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
-	if got := m.cursor[paneHosts]; got != 3 {
+	if got := m.vp[paneHosts].cursor; got != 3 {
 		t.Errorf("hosts cursor after switch = %d, want 3 (clamped)", got)
 	}
 	if h, ok := m.selectedHost(); !ok || h.Name != "web3" {
@@ -1299,8 +1299,8 @@ func TestEndKeyOnEmptyList(t *testing.T) {
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = feed(m, key("G"))
-	if m.cursor[paneKeys] != 0 {
-		t.Errorf("end on empty list left cursor at %d, want 0", m.cursor[paneKeys])
+	if m.vp[paneKeys].cursor != 0 {
+		t.Errorf("end on empty list left cursor at %d, want 0", m.vp[paneKeys].cursor)
 	}
 }
 
@@ -1372,8 +1372,8 @@ func TestKnownHostsBrowseAndRemove(t *testing.T) {
 
 	// Select second entry, request delete, confirm.
 	m = feed(m, key("j"))
-	if m.khCursor != 1 {
-		t.Fatalf("cursor = %d, want 1", m.khCursor)
+	if m.khVP.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1", m.khVP.cursor)
 	}
 	m = feed(m, key("d"))
 	if !m.khConfirm {
