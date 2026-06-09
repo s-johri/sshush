@@ -24,7 +24,6 @@ import (
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
-	"github.com/s-johri/sshush/pkg/knownhosts"
 	"github.com/s-johri/sshush/pkg/perms"
 	"github.com/s-johri/sshush/pkg/service"
 	"github.com/s-johri/sshush/pkg/shellinit"
@@ -252,7 +251,6 @@ const (
 	modeConfirmDelKey           // confirming key-file deletion (irreversible)
 	modeKeyPicker               // attaching/detaching keys to a host
 	modePerms                   // reviewing/fixing permission issues
-	modeKnownHosts              // browsing/removing known_hosts entries
 	modeHelp                    // full keybinding reference overlay
 	modeConfirmRestore          // confirming a restore from backup
 )
@@ -337,11 +335,6 @@ type Model struct {
 
 	// permission audit
 	permIssues []perms.Issue
-
-	// known_hosts browser
-	khEntries []knownhosts.Entry
-	khVP      viewport // cursor + scroll over khEntries
-	khConfirm bool     // confirming removal of the selected entry
 
 	// help overlay scroll offset (when it's taller than the terminal)
 	helpScroll int
@@ -732,8 +725,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePicker(msg)
 	case modePerms:
 		return m.handlePermsKey(msg)
-	case modeKnownHosts:
-		return m.handleKnownHostsKey(msg)
 	case modeHelp:
 		return m.handleHelpKey(msg)
 	case modeConfirmRestore:
@@ -926,78 +917,9 @@ func (m Model) beginKnownHosts() (tea.Model, tea.Cmd) {
 		m.status = "no known_hosts entries"
 		return m, nil
 	}
-	m.khEntries = entries
-	m.khVP = viewport{}
-	m.khConfirm = false
-	m.mode = modeKnownHosts
+	m.modal = &knownHostsOverlay{entries: entries}
 	m.status = ""
 	return m, nil
-}
-
-// handleKnownHostsKey drives the known_hosts overlay: navigate, and remove the
-// selected entry (confirm-gated).
-func (m Model) handleKnownHostsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.khConfirm {
-		if msg.String() == "y" || msg.String() == "Y" {
-			return m.removeSelectedKnownHost()
-		}
-		m.khConfirm = false
-		return m, nil
-	}
-	switch msg.String() {
-	case "esc", "q":
-		m.mode = modeNormal
-		return m, nil
-	case "up", "k":
-		m.khVP.moveCursor(-1, len(m.khEntries), m.khCapacity())
-	case "down", "j":
-		m.khVP.moveCursor(1, len(m.khEntries), m.khCapacity())
-	case "d", "enter":
-		if len(m.khEntries) > 0 {
-			m.khConfirm = true
-		}
-	}
-	return m, nil
-}
-
-// removeSelectedKnownHost deletes the highlighted entry and reloads the list.
-func (m Model) removeSelectedKnownHost() (tea.Model, tea.Cmd) {
-	ent := m.khEntries[m.khVP.cursor]
-	m.khConfirm = false
-	if err := m.svc.RemoveKnownHost(ent.Line); err != nil {
-		m.status = "remove failed: " + err.Error()
-		m.mode = modeNormal
-		return m, nil
-	}
-	entries, _ := m.svc.KnownHosts()
-	m.khEntries = entries
-	m.khVP.clampCursor(len(entries))
-	m.khEnsureVisible()
-	m.status = "removed known_hosts entry (backup written)"
-	if len(entries) == 0 {
-		m.mode = modeNormal
-	}
-	return m, nil
-}
-
-// khCapacity is the visible-row budget for the known_hosts overlay; khWindow and
-// khEnsureVisible bind khVP to it (the arithmetic lives in viewport.go).
-func (m Model) khCapacity() int {
-	if m.height <= 0 {
-		return 1 << 30
-	}
-	if c := m.height - 9; c > 1 {
-		return c
-	}
-	return 1
-}
-
-func (m Model) khWindow() (int, int) {
-	return m.khVP.window(len(m.khEntries), m.khCapacity())
-}
-
-func (m *Model) khEnsureVisible() {
-	m.khVP.ensureVisible(len(m.khEntries), m.khCapacity())
 }
 
 // handlePermsKey gates the chmod fix: only "y" applies it.
@@ -1948,8 +1870,6 @@ func (m Model) viewInner() string {
 		return m.card(m.viewPicker())
 	case modePerms:
 		return m.card(m.viewPerms())
-	case modeKnownHosts:
-		return m.card(m.viewKnownHosts())
 	case modeHelp:
 		return m.card(m.viewHelp())
 	case modeConfirmRestore:
@@ -2286,41 +2206,6 @@ func (m Model) viewConfirmRestore() string {
 		b.WriteString("  " + textStyle.Render(p) + dimStyle.Render(".bak → "+p) + "\n")
 	}
 	b.WriteString("\n  " + keyCap.Render("y") + " restore    " + keyCap.Render("n") + " cancel")
-	b.WriteString("\n")
-	return b.String()
-}
-
-// viewKnownHosts renders the known_hosts browser with a removal confirm gate.
-func (m Model) viewKnownHosts() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render(fmt.Sprintf("known_hosts — %d entries", len(m.khEntries))) + "\n\n")
-
-	start, end := m.khWindow()
-	for i := start; i < end; i++ {
-		e := m.khEntries[i]
-		host := e.Display()
-		if e.Hashed {
-			host = dimStyle.Render(host)
-		}
-		line := fmt.Sprintf("%-28s %-20s %s", host, e.KeyType, dimStyle.Render(e.Fingerprint))
-		if i == m.khVP.cursor {
-			b.WriteString(selectedRow.Render("▸ "+line) + "\n")
-		} else {
-			b.WriteString("  " + line + "\n")
-		}
-	}
-	if start > 0 || end < len(m.khEntries) {
-		b.WriteString(dimStyle.Render(fmt.Sprintf("  rows %d–%d of %d\n", start+1, end, len(m.khEntries))))
-	}
-
-	b.WriteString("\n")
-	if m.khConfirm {
-		sel := m.khEntries[m.khVP.cursor]
-		b.WriteString(errStyle.Render(fmt.Sprintf("  remove key for %s?  ", sel.Display())) +
-			keyCap.Render("y") + " yes  " + keyCap.Render("n") + " no")
-	} else {
-		b.WriteString(dimStyle.Render("  ↑/↓ move · d remove · esc close"))
-	}
 	b.WriteString("\n")
 	return b.String()
 }
