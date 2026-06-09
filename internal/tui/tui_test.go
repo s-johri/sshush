@@ -544,8 +544,8 @@ func TestDeleteHostFlow(t *testing.T) {
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
 
 	m = feed(m, key("d"))
-	if m.mode != modeConfirmDelHost {
-		t.Fatalf("expected modeConfirmDelHost, got %d", m.mode)
+	if o, ok := m.modal.(*deleteConfirmOverlay); !ok || o.host != "web" {
+		t.Fatalf("expected host delete confirm, got %T %+v", m.modal, m.modal)
 	}
 	out, cmd := m.Update(key("y"))
 	m = out.(Model)
@@ -569,8 +569,8 @@ func TestDeleteKeyFlowConfirm(t *testing.T) {
 	m = feed(m, refreshedMsg{model: diskKeySnap()}) // Keys pane is default
 
 	m = feed(m, key("d"))
-	if m.mode != modeConfirmDelKey {
-		t.Fatalf("expected modeConfirmDelKey, got %d", m.mode)
+	if o, ok := m.modal.(*deleteConfirmOverlay); !ok || o.key != "id_ed" {
+		t.Fatalf("expected key delete confirm, got %T %+v", m.modal, m.modal)
 	}
 	if !strings.Contains(m.View(), "IRREVERSIBLE") {
 		t.Error("key delete confirm should warn it is irreversible")
@@ -595,7 +595,7 @@ func TestDeleteAgentOnlyKeyRejected(t *testing.T) {
 
 	out, cmd := m.Update(key("d"))
 	m = out.(Model)
-	if m.mode != modeNormal || cmd != nil {
+	if m.modal != nil || cmd != nil {
 		t.Error("agent-only key delete should be rejected, not confirmed")
 	}
 	if !strings.Contains(m.status, "agent-only") {
@@ -711,8 +711,8 @@ func TestKeyPickerAttachDetach(t *testing.T) {
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
 
 	m = feed(m, key("i"))
-	if m.mode != modeKeyPicker {
-		t.Fatalf("expected modeKeyPicker, got %d", m.mode)
+	if _, ok := m.modal.(*pickerOverlay); !ok {
+		t.Fatalf("expected pickerOverlay, got %T", m.modal)
 	}
 	// disk keys sorted: id_a (attached), id_b (not). Cursor 0 = id_a -> detach.
 	if !strings.Contains(m.View(), "●") {
@@ -724,7 +724,7 @@ func TestKeyPickerAttachDetach(t *testing.T) {
 	if len(svc.detached) != 1 || svc.detached[0] != "web/id_a" {
 		t.Errorf("enter on attached key should detach: %v", svc.detached)
 	}
-	if m.mode != modeKeyPicker {
+	if _, ok := m.modal.(*pickerOverlay); !ok {
 		t.Error("picker should stay open after a toggle")
 	}
 
