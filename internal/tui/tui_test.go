@@ -1433,8 +1433,8 @@ func TestCopyKeyPublicAndFingerprint(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snap})
 
 	m = feed(m, key("c"))
-	if m.mode != modeCopy {
-		t.Fatalf("expected modeCopy, got %d", m.mode)
+	if _, ok := m.modal.(*copyOverlay); !ok {
+		t.Fatalf("expected copyOverlay active, got %T", m.modal)
 	}
 	v := m.View()
 	if !strings.Contains(v, "public key") || !strings.Contains(v, "fingerprint") {
