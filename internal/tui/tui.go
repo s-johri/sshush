@@ -235,20 +235,17 @@ func tick() tea.Cmd {
 type editMode int
 
 const (
-	modeNormal         editMode = iota
-	modeNewKey                  // typing a new option name (within edit)
-	modeEdit                    // typing a value
-	modeConfirm                 // confirming a write
-	modeConfirmDelete           // confirming a directive removal
-	modeNewHost                 // typing a new host alias / basic field
-	modeNewHostOptKey           // new-host wizard: typing a custom option name
-	modeNewHostOptVal           // new-host wizard: typing a custom option value
-	modeNewKeyAlgo              // picking a key algorithm
-	modeNewKeyBits              // picking rsa bits / ecdsa curve
-	modeNewKeyGen               // typing a new key file name
-	modeConfirmDelHost          // confirming whole-host removal
-	modeConfirmDelKey           // confirming key-file deletion (irreversible)
-	modeKeyPicker               // attaching/detaching keys to a host
+	modeNormal        editMode = iota
+	modeNewKey                 // typing a new option name (within edit)
+	modeEdit                   // typing a value
+	modeConfirm                // confirming a write
+	modeConfirmDelete          // confirming a directive removal
+	modeNewHost                // typing a new host alias / basic field
+	modeNewHostOptKey          // new-host wizard: typing a custom option name
+	modeNewHostOptVal          // new-host wizard: typing a custom option value
+	modeNewKeyAlgo             // picking a key algorithm
+	modeNewKeyBits             // picking rsa bits / ecdsa curve
+	modeNewKeyGen              // typing a new key file name
 )
 
 // coreFields are always offered for editing; a host's existing option keys are
@@ -313,7 +310,6 @@ type Model struct {
 	fieldIdx    int      // index into editFields
 	newKey      string   // option name being added (modeNewKey/modeEdit)
 	pendingHost config.HostID
-	pendingKey  config.IdentityID // key targeted for deletion
 
 	// new-host wizard
 	hostStep    int
@@ -325,9 +321,6 @@ type Model struct {
 	keyBits    int
 	algoCursor int
 	bitsCursor int
-
-	// key picker (attach/detach identities to pendingHost)
-	pickerCursor int
 
 	// motion: the currently-active visual effect (zero value = none)
 	fx activeFX
@@ -709,10 +702,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleNewKeyBits(msg)
 	case modeNewKeyGen:
 		return m.handleNewKeyGen(msg)
-	case modeConfirmDelHost, modeConfirmDelKey:
-		return m.handleDeleteConfirm(msg)
-	case modeKeyPicker:
-		return m.handlePicker(msg)
 	}
 
 	// The filter input (when focused) captures keys before pane navigation.
@@ -980,8 +969,7 @@ func (m Model) beginDelete() (tea.Model, tea.Cmd) {
 			m.status = "Match block — read-only"
 			return m, nil
 		}
-		m.pendingHost = host.ID
-		m.mode = modeConfirmDelHost
+		m.modal = &deleteConfirmOverlay{host: host.ID}
 		return m, nil
 	}
 	// Keys pane: only on-disk keys have files to delete.
@@ -993,8 +981,7 @@ func (m Model) beginDelete() (tea.Model, tea.Cmd) {
 		m.status = "cannot delete agent-only key (no file on disk)"
 		return m, nil
 	}
-	m.pendingKey = sel.ID
-	m.mode = modeConfirmDelKey
+	m.modal = &deleteConfirmOverlay{key: sel.ID}
 	return m, nil
 }
 
@@ -1132,23 +1119,6 @@ func (m Model) handleNewKeyGen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
-}
-
-// handleDeleteConfirm gates host/key deletion: only "y" proceeds.
-func (m Model) handleDeleteConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	mode := m.mode
-	if msg.String() != "y" && msg.String() != "Y" {
-		return m.cancelOverlay("deletion cancelled")
-	}
-	m.mode = modeNormal
-	m.status = "deleting…"
-	shake := m.play(true, true) // destructive: flash + a forced shake at any level
-	if mode == modeConfirmDelHost {
-		h := m.pendingHost
-		return m, tea.Batch(shake, func() tea.Msg { return editDoneMsg{verb: "host removed", err: m.svc.DeleteHost(h)} })
-	}
-	id := m.pendingKey
-	return m, tea.Batch(shake, func() tea.Msg { return editDoneMsg{verb: "key deleted", err: m.svc.DeleteKey(id)} })
 }
 
 // beginEdit opens the edit overlay on the selected host. Only directives the
@@ -1516,47 +1486,8 @@ func (m Model) beginKeyPicker() (tea.Model, tea.Cmd) {
 		m.status = "no on-disk keys to associate"
 		return m, nil
 	}
-	m.pendingHost = host.ID
-	m.pickerCursor = 0
-	m.mode = modeKeyPicker
+	m.modal = &pickerOverlay{host: host.ID}
 	m.status = ""
-	return m, nil
-}
-
-// handlePicker drives the attach/detach overlay. enter toggles association of
-// the highlighted key with the host; the overlay stays open for more changes.
-func (m Model) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	disk := m.diskKeys()
-	switch msg.String() {
-	case "esc", "q":
-		m.mode = modeNormal
-		return m, nil
-	case "up", "k":
-		if m.pickerCursor > 0 {
-			m.pickerCursor--
-		}
-		return m, nil
-	case "down", "j":
-		if m.pickerCursor < len(disk)-1 {
-			m.pickerCursor++
-		}
-		return m, nil
-	case "enter", " ":
-		if m.pickerCursor >= len(disk) {
-			return m, nil
-		}
-		host, ok := m.hostByID(m.pendingHost)
-		if !ok {
-			m.mode = modeNormal
-			return m, nil
-		}
-		sel := disk[m.pickerCursor]
-		h := m.pendingHost
-		if hostHasIdentity(host, sel.ID) {
-			return m, func() tea.Msg { return editDoneMsg{verb: "key detached", err: m.svc.DetachKey(h, sel.ID)} }
-		}
-		return m, func() tea.Msg { return editDoneMsg{verb: "key attached", err: m.svc.AttachKey(h, sel.ID)} }
-	}
 	return m, nil
 }
 
@@ -1811,12 +1742,6 @@ func (m Model) viewInner() string {
 	case modeNewKeyGen:
 		return m.card(m.viewPrompt("Generate key ("+m.keySummary()+")",
 			"file name — may prompt for a passphrase"))
-	case modeConfirmDelHost:
-		return m.card(m.viewDeleteConfirm(false))
-	case modeConfirmDelKey:
-		return m.card(m.viewDeleteConfirm(true))
-	case modeKeyPicker:
-		return m.card(m.viewPicker())
 	}
 
 	header := appTitleStyle.Render("sshush") + "   " + m.renderTabs()
@@ -1920,32 +1845,6 @@ func (m Model) viewNewKey() string {
 	b.WriteString("  option name (e.g. ForwardAgent)\n")
 	b.WriteString("  " + m.input.View() + "\n\n")
 	b.WriteString(dimStyle.Render("  enter next · esc cancel"))
-	b.WriteString("\n")
-	return b.String()
-}
-
-// viewPicker renders the attach/detach overlay: disk keys with a ✓ for those
-// associated with the host via IdentityFile.
-func (m Model) viewPicker() string {
-	host, _ := m.hostByID(m.pendingHost)
-	disk := m.diskKeys()
-	var b strings.Builder
-	b.WriteString(tabActive.Render("Keys for host: "+string(m.pendingHost)) + "\n\n")
-	for i, id := range disk {
-		attached := hostHasIdentity(host, id.ID)
-		glyph := glyphUnloaded
-		glyphStyle := dimStyle
-		if attached {
-			glyph, glyphStyle = glyphLoaded, loadedBadge
-		}
-		if i == m.pickerCursor {
-			b.WriteString(selectedRow.Render("▸ "+glyph+" "+id.Name) + "\n")
-		} else {
-			b.WriteString("  " + glyphStyle.Render(glyph) + " " + id.Name + "\n")
-		}
-	}
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  ↑/↓ move · enter attach/detach · esc close"))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -2073,26 +1972,6 @@ func (m Model) viewPrompt(title, hint string) string {
 	b.WriteString("  " + hint + "\n")
 	b.WriteString("  " + m.input.View() + "\n\n")
 	b.WriteString(dimStyle.Render("  enter confirm · esc cancel"))
-	b.WriteString("\n")
-	return b.String()
-}
-
-// viewDeleteConfirm renders a y/n gate; key deletion is flagged irreversible.
-func (m Model) viewDeleteConfirm(key bool) string {
-	var b strings.Builder
-	if key {
-		b.WriteString(errStyle.Render("Delete key files — IRREVERSIBLE") + "\n\n")
-		b.WriteString(fmt.Sprintf("  Permanently delete %s and its .pub from disk\n", m.pendingKey))
-		b.WriteString(errStyle.Render("  the private key cannot be recovered") + "\n\n")
-	} else {
-		b.WriteString(errStyle.Render("Delete host") + "\n\n")
-		b.WriteString(fmt.Sprintf("  Remove host %s from the config\n", m.pendingHost))
-		if h, ok := m.hostByID(m.pendingHost); ok && h.IsPattern {
-			b.WriteString(errStyle.Render("  this is a wildcard block — removes defaults for every matching connection") + "\n")
-		}
-		b.WriteString(dimStyle.Render("  (a .bak backup of the config file is written first)") + "\n\n")
-	}
-	b.WriteString("  " + keyCap.Render("y") + " delete    " + keyCap.Render("n") + " cancel")
 	b.WriteString("\n")
 	return b.String()
 }
