@@ -1386,8 +1386,9 @@ func TestKnownHostsBrowseAndRemove(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()})
 
 	m = feed(m, key("K"))
-	if m.mode != modeKnownHosts {
-		t.Fatalf("expected modeKnownHosts, got %d", m.mode)
+	kh, ok := m.modal.(*knownHostsOverlay)
+	if !ok {
+		t.Fatalf("expected knownHostsOverlay, got %T", m.modal)
 	}
 	if !strings.Contains(m.View(), "github.com") || !strings.Contains(m.View(), "gitlab.com") {
 		t.Errorf("known_hosts overlay should list entries:\n%s", m.View())
@@ -1395,19 +1396,21 @@ func TestKnownHostsBrowseAndRemove(t *testing.T) {
 
 	// Select second entry, request delete, confirm.
 	m = feed(m, key("j"))
-	if m.khVP.cursor != 1 {
-		t.Fatalf("cursor = %d, want 1", m.khVP.cursor)
+	kh = m.modal.(*knownHostsOverlay)
+	if kh.vp.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1", kh.vp.cursor)
 	}
 	m = feed(m, key("d"))
-	if !m.khConfirm {
+	if !m.modal.(*knownHostsOverlay).confirm {
 		t.Fatal("d should ask for confirmation")
 	}
 	m = feed(m, key("y"))
 	if len(svc.khRemoved) != 1 || svc.khRemoved[0] != 1 {
 		t.Errorf("removed lines = %v, want [1]", svc.khRemoved)
 	}
-	if len(m.khEntries) != 1 || m.khEntries[0].Hosts[0] != "github.com" {
-		t.Errorf("list not reloaded after remove: %+v", m.khEntries)
+	kh = m.modal.(*knownHostsOverlay)
+	if len(kh.entries) != 1 || kh.entries[0].Hosts[0] != "github.com" {
+		t.Errorf("list not reloaded after remove: %+v", kh.entries)
 	}
 }
 
@@ -1415,8 +1418,8 @@ func TestKnownHostsEmpty(t *testing.T) {
 	m := New(&fakeService{model: snapshot()}) // no entries
 	m = feed(m, refreshedMsg{model: snapshot()})
 	m = feed(m, key("K"))
-	if m.mode != modeNormal || !strings.Contains(m.status, "no known_hosts") {
-		t.Errorf("empty known_hosts: mode=%d status=%q", m.mode, m.status)
+	if m.modal != nil || !strings.Contains(m.status, "no known_hosts") {
+		t.Errorf("empty known_hosts: modal=%v status=%q", m.modal, m.status)
 	}
 }
 
@@ -1429,14 +1432,14 @@ func TestKnownHostsCancelDelete(t *testing.T) {
 	m = feed(m, key("K"))
 	m = feed(m, key("d"))
 	m = feed(m, key("n")) // cancel confirm
-	if m.khConfirm {
+	if m.modal.(*knownHostsOverlay).confirm {
 		t.Error("n should cancel the confirm")
 	}
 	if len(svc.khRemoved) != 0 {
 		t.Errorf("cancel must not remove: %v", svc.khRemoved)
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEsc}) // close
-	if m.mode != modeNormal {
+	if m.modal != nil {
 		t.Error("esc should close the overlay")
 	}
 }
