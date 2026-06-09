@@ -23,7 +23,6 @@ import (
 	// tea.ExecProcess, which yields the terminal so a passphrase prompt works.
 	// All other IO goes through service.Service.
 	"github.com/s-johri/sshush/pkg/agent"
-	"github.com/s-johri/sshush/pkg/clip"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
 	"github.com/s-johri/sshush/pkg/knownhosts"
@@ -255,7 +254,6 @@ const (
 	modeKeyPicker               // attaching/detaching keys to a host
 	modePerms                   // reviewing/fixing permission issues
 	modeKnownHosts              // browsing/removing known_hosts entries
-	modeCopy                    // choosing what to copy to the clipboard
 	modeHelp                    // full keybinding reference overlay
 	modeTheme                   // theme picker with live preview
 	modeConfirmRestore          // confirming a restore from backup
@@ -312,6 +310,10 @@ type Model struct {
 	status      string    // transient feedback (e.g. last agent action)
 	statusSetAt time.Time // when status last changed; status expires after statusTTL
 
+	// modal is the current modal overlay (new seam), or nil for the panes.
+	// Legacy mode-based overlays are migrating to this one at a time.
+	modal overlay
+
 	// host edit overlay
 	mode        editMode
 	input       textinput.Model
@@ -342,9 +344,6 @@ type Model struct {
 	khEntries []knownhosts.Entry
 	khVP      viewport // cursor + scroll over khEntries
 	khConfirm bool     // confirming removal of the selected entry
-
-	// clipboard copy menu
-	copyOpts []copyOption
 
 	// help overlay scroll offset (when it's taller than the terminal)
 	helpScroll int
@@ -698,6 +697,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	// An active overlay (new seam) captures input first. Legacy mode-based
+	// overlays below are being migrated to this one screen at a time.
+	if m.modal != nil {
+		next, cmd := m.modal.Update(msg, &m)
+		m.modal = next
+		return m, cmd
+	}
+
 	// Overlay modes capture input first.
 	switch m.mode {
 	case modeNewKey:
@@ -726,8 +733,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePermsKey(msg)
 	case modeKnownHosts:
 		return m.handleKnownHostsKey(msg)
-	case modeCopy:
-		return m.handleCopyKey(msg)
 	case modeHelp:
 		return m.handleHelpKey(msg)
 	case modeTheme:
@@ -888,26 +893,8 @@ func (m Model) beginCopy() (tea.Model, tea.Cmd) {
 		m.status = "nothing to copy"
 		return m, nil
 	}
-	m.copyOpts = opts
-	m.mode = modeCopy
+	m.modal = &copyOverlay{opts: opts}
 	m.status = ""
-	return m, nil
-}
-
-// handleCopyKey picks a copy option by its hotkey and dispatches the copy.
-func (m Model) handleCopyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc", "c":
-		m.mode = modeNormal
-		return m, nil
-	}
-	for _, o := range m.copyOpts {
-		if msg.String() == o.key {
-			label, content := o.label, o.content
-			m.mode = modeNormal
-			return m, func() tea.Msg { return clipDoneMsg{label: label, err: clip.Write(content)} }
-		}
-	}
 	return m, nil
 }
 
@@ -1965,6 +1952,9 @@ func (m Model) View() string {
 
 // viewInner renders the current pane or active overlay (no bg/shake).
 func (m Model) viewInner() string {
+	if m.modal != nil {
+		return m.card(m.modal.View(&m))
+	}
 	switch m.mode {
 	case modeNewKey:
 		return m.card(m.viewNewKey())
@@ -1998,8 +1988,6 @@ func (m Model) viewInner() string {
 		return m.card(m.viewPerms())
 	case modeKnownHosts:
 		return m.card(m.viewKnownHosts())
-	case modeCopy:
-		return m.card(m.viewCopy())
 	case modeHelp:
 		return m.card(m.viewHelp())
 	case modeTheme:
@@ -2375,21 +2363,6 @@ func (m Model) viewConfirmRestore() string {
 	}
 	b.WriteString("\n  " + keyCap.Render("y") + " restore    " + keyCap.Render("n") + " cancel")
 	b.WriteString("\n")
-	return b.String()
-}
-
-// viewCopy renders the clipboard copy menu.
-func (m Model) viewCopy() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("Copy to clipboard") + "\n\n")
-	for _, o := range m.copyOpts {
-		preview := o.content
-		if len(preview) > 48 {
-			preview = preview[:48] + "…"
-		}
-		b.WriteString("  " + keyCap.Render(o.key) + "  " + o.label + "  " + dimStyle.Render(preview) + "\n")
-	}
-	b.WriteString("\n" + dimStyle.Render("  press a letter · esc cancel") + "\n")
 	return b.String()
 }
 
