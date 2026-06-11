@@ -239,9 +239,6 @@ const (
 	modeEdit                   // typing a value
 	modeConfirm                // confirming a write
 	modeConfirmDelete          // confirming a directive removal
-	modeNewHost                // typing a new host alias / basic field
-	modeNewHostOptKey          // new-host wizard: typing a custom option name
-	modeNewHostOptVal          // new-host wizard: typing a custom option value
 )
 
 // coreFields are always offered for editing; a host's existing option keys are
@@ -271,15 +268,6 @@ func bitsOptions(a config.KeyAlgorithm) []int {
 	return nil
 }
 
-// hostSteps drives the new-host wizard: an alias (required) then optional basic
-// fields. Empty answers are skipped.
-var hostSteps = []struct{ field, hint string }{
-	{"alias", "host alias (e.g. prod-web) — required"},
-	{"HostName", "hostname / IP (optional, enter to skip)"},
-	{"User", "user (optional, enter to skip)"},
-	{"Port", "port (optional number, enter to skip)"},
-}
-
 // Model is the BubbleTea model for sshush.
 type Model struct {
 	svc service.Service
@@ -306,11 +294,6 @@ type Model struct {
 	fieldIdx    int      // index into editFields
 	newKey      string   // option name being added (modeNewKey/modeEdit)
 	pendingHost config.HostID
-
-	// new-host wizard
-	hostStep    int
-	draftHost   config.Host
-	draftOptKey string // custom option name awaiting its value
 
 	// motion: the currently-active visual effect (zero value = none)
 	fx activeFX
@@ -680,12 +663,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEditKey(msg)
 	case modeConfirm, modeConfirmDelete:
 		return m.handleConfirmKey(msg)
-	case modeNewHost:
-		return m.handleNewHost(msg)
-	case modeNewHostOptKey:
-		return m.handleNewHostOptKey(msg)
-	case modeNewHostOptVal:
-		return m.handleNewHostOptVal(msg)
 	}
 
 	// The filter input (when focused) captures keys before pane navigation.
@@ -868,11 +845,7 @@ func (m Model) beginKnownHosts() (tea.Model, tea.Cmd) {
 func (m Model) beginNew() (tea.Model, tea.Cmd) {
 	m.status = ""
 	if m.active == paneHosts {
-		m.input.SetValue("")
-		m.input.Focus()
-		m.mode = modeNewHost
-		m.hostStep = 0
-		m.draftHost = config.Host{}
+		m.modal = newNewHostWizard()
 		return m, textinput.Blink
 	}
 	m.modal = newNewKeyWizard()
@@ -905,113 +878,6 @@ func (m Model) beginDelete() (tea.Model, tea.Cmd) {
 	}
 	m.modal = &deleteConfirmOverlay{key: sel.ID}
 	return m, nil
-}
-
-// handleNewHost walks the new-host wizard: alias then optional basic fields,
-// skipping empties. The final step dispatches AddHost.
-func (m Model) handleNewHost(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "esc" {
-		return m.cancelOverlay("cancelled")
-	}
-	if msg.String() != "enter" {
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		return m, cmd
-	}
-
-	val := strings.TrimSpace(m.input.Value())
-	switch hostSteps[m.hostStep].field {
-	case "alias":
-		if val == "" {
-			m.status = "host alias cannot be empty"
-			return m, nil
-		}
-		m.draftHost.ID = config.HostID(val)
-		m.draftHost.Name = val
-	case "HostName":
-		if val != "" {
-			m.draftHost.Hostname = val
-		}
-	case "User":
-		if val != "" {
-			m.draftHost.User = val
-		}
-	case "Port":
-		if val != "" {
-			p, err := strconv.Atoi(val)
-			if err != nil {
-				m.status = "port must be a number"
-				return m, nil
-			}
-			m.draftHost.Port = p
-		}
-	}
-
-	if m.hostStep == len(hostSteps)-1 {
-		// Basic fields done; move on to optional custom options.
-		m.mode = modeNewHostOptKey
-		m.input.SetValue("")
-		return m, nil
-	}
-	m.hostStep++
-	m.input.SetValue("")
-	return m, nil
-}
-
-// handleNewHostOptKey collects a custom option name; a blank name finishes the
-// wizard and creates the host.
-func (m Model) handleNewHostOptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		return m.cancelOverlay("cancelled")
-	case "enter":
-		key := strings.TrimSpace(m.input.Value())
-		if key == "" {
-			return m.createDraftHost()
-		}
-		m.draftOptKey = key
-		m.mode = modeNewHostOptVal
-		m.input.SetValue("")
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	return m, cmd
-}
-
-// handleNewHostOptVal stores a custom option value, then loops back for more.
-func (m Model) handleNewHostOptVal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		return m.cancelOverlay("cancelled")
-	case "enter":
-		val := strings.TrimSpace(m.input.Value())
-		if val == "" {
-			m.status = "value cannot be empty"
-			return m, nil
-		}
-		if m.draftHost.Options == nil {
-			m.draftHost.Options = map[string]string{}
-		}
-		m.draftHost.Options[m.draftOptKey] = val
-		m.status = m.draftOptKey + " added"
-		m.draftOptKey = ""
-		m.mode = modeNewHostOptKey
-		m.input.SetValue("")
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	return m, cmd
-}
-
-// createDraftHost dispatches AddHost for the accumulated draft.
-func (m Model) createDraftHost() (tea.Model, tea.Cmd) {
-	host := m.draftHost
-	m.mode = modeNormal
-	m.input.Blur()
-	m.status = "creating host…"
-	return m, func() tea.Msg { return editDoneMsg{verb: "host added", err: m.svc.AddHost(host)} }
 }
 
 // beginEdit opens the edit overlay on the selected host. Only directives the
@@ -1619,15 +1485,6 @@ func (m Model) viewInner() string {
 		return m.card(m.viewEdit())
 	case modeConfirm, modeConfirmDelete:
 		return m.card(m.viewConfirm())
-	case modeNewHost:
-		step := hostSteps[m.hostStep]
-		title := fmt.Sprintf("New host (%d/%d)", m.hostStep+1, len(hostSteps))
-		return m.card(m.viewPrompt(title, step.field+" — "+step.hint))
-	case modeNewHostOptKey:
-		return m.card(m.viewPrompt("New host: add option",
-			"option name (e.g. ForwardAgent) — enter blank to finish"))
-	case modeNewHostOptVal:
-		return m.card(m.viewPrompt("New host: add option", m.draftOptKey+" value"))
 	}
 
 	header := appTitleStyle.Render("sshush") + "   " + m.renderTabs()
@@ -1800,17 +1657,6 @@ func (m Model) helpLines() []string {
 		out = append(out, sectionLines(s)...)
 	}
 	return out
-}
-
-// viewPrompt renders a single-line text prompt (new host / new key).
-func (m Model) viewPrompt(title, hint string) string {
-	var b strings.Builder
-	b.WriteString(tabActive.Render(title) + "\n\n")
-	b.WriteString("  " + hint + "\n")
-	b.WriteString("  " + m.input.View() + "\n\n")
-	b.WriteString(dimStyle.Render("  enter confirm · esc cancel"))
-	b.WriteString("\n")
-	return b.String()
 }
 
 func (m Model) viewEdit() string {
