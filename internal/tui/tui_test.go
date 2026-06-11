@@ -433,8 +433,8 @@ func TestNewHostFlow(t *testing.T) {
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
 
 	m = feed(m, key("n"))
-	if m.mode != modeNewHost {
-		t.Fatalf("expected modeNewHost, got %d", m.mode)
+	if _, ok := m.modal.(*newHostWizard); !ok {
+		t.Fatalf("expected newHostWizard, got %T", m.modal)
 	}
 	// step 0: alias
 	for _, r := range "db" {
@@ -452,8 +452,8 @@ func TestNewHostFlow(t *testing.T) {
 		m = feed(m, key(string(r)))
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // basic fields done -> options loop
-	if m.mode != modeNewHostOptKey {
-		t.Fatalf("expected options loop, got mode %d", m.mode)
+	if w := m.modal.(*newHostWizard); w.phase != nhPhaseOptKey {
+		t.Fatalf("expected options loop, got phase %d", w.phase)
 	}
 	// blank option name finishes the wizard
 	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -490,15 +490,15 @@ func TestNewHostWithCustomOption(t *testing.T) {
 		m = feed(m, key(string(r)))
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // name -> value
-	if m.mode != modeNewHostOptVal {
-		t.Fatalf("expected option value mode, got %d", m.mode)
+	if w := m.modal.(*newHostWizard); w.phase != nhPhaseOptVal {
+		t.Fatalf("expected option value phase, got %d", w.phase)
 	}
 	for _, r := range "yes" {
 		m = feed(m, key(string(r)))
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // value stored -> back to option name
-	if m.mode != modeNewHostOptKey {
-		t.Fatalf("expected to loop back for another option, got %d", m.mode)
+	if w := m.modal.(*newHostWizard); w.phase != nhPhaseOptKey {
+		t.Fatalf("expected to loop back for another option, got %d", w.phase)
 	}
 	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // blank -> finish
 	m = out.(Model)
@@ -529,7 +529,8 @@ func TestNewHostInvalidPort(t *testing.T) {
 	}
 	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = out.(Model)
-	if cmd != nil || m.mode != modeNewHost {
+	w, ok := m.modal.(*newHostWizard)
+	if cmd != nil || !ok || w.phase != nhPhaseBasics {
 		t.Error("invalid port should not dispatch; should stay on Port step")
 	}
 	if !strings.Contains(m.status, "port must be a number") {
