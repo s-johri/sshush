@@ -139,12 +139,12 @@ func TestNavClampAndTab(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()})
 
 	m = feed(m, key("j")) // down -> 1
-	if m.cursor[paneKeys] != 1 {
-		t.Fatalf("cursor = %d, want 1", m.cursor[paneKeys])
+	if m.vp[paneKeys].cursor != 1 {
+		t.Fatalf("cursor = %d, want 1", m.vp[paneKeys].cursor)
 	}
 	m = feed(m, key("j")) // clamp at last row
-	if m.cursor[paneKeys] != 1 {
-		t.Fatalf("cursor over-advanced to %d", m.cursor[paneKeys])
+	if m.vp[paneKeys].cursor != 1 {
+		t.Fatalf("cursor over-advanced to %d", m.vp[paneKeys].cursor)
 	}
 
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -194,14 +194,14 @@ func TestEditFlowConfirmWrites(t *testing.T) {
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // switch to Hosts pane
 
 	m = feed(m, key("e")) // open editor
-	if m.mode != modeEdit {
-		t.Fatalf("expected modeEdit, got %d", m.mode)
+	if _, ok := m.modal.(*editOverlay); !ok {
+		t.Fatalf("expected editOverlay, got %T", m.modal)
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // HostName -> User (prefilled "deploy")
 	m = feed(m, key("2"))                     // -> "deploy2"
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.mode != modeConfirm {
-		t.Fatalf("expected modeConfirm, got %d", m.mode)
+	if o := m.modal.(*editOverlay); o.phase != edPhaseConfirm {
+		t.Fatalf("expected confirm phase, got %d", o.phase)
 	}
 
 	out, cmd := m.Update(key("y"))
@@ -252,8 +252,8 @@ func TestRestoreFlow(t *testing.T) {
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()})
 	m = feed(m, key("R"))
-	if m.mode != modeNormal || !strings.Contains(m.status, "no backup") {
-		t.Fatalf("R without backup: mode=%d status=%q", m.mode, m.status)
+	if m.modal != nil || !strings.Contains(m.status, "no backup") {
+		t.Fatalf("R without backup: modal=%v status=%q", m.modal, m.status)
 	}
 
 	// With a backup: R opens a confirm listing the file; y dispatches restore.
@@ -261,8 +261,8 @@ func TestRestoreFlow(t *testing.T) {
 	m2 := New(svc2)
 	m2 = feed(m2, refreshedMsg{model: snapshot()})
 	m2 = feed(m2, key("R"))
-	if m2.mode != modeConfirmRestore {
-		t.Fatalf("R should open the restore confirm, got mode=%d", m2.mode)
+	if _, ok := m2.modal.(*restoreOverlay); !ok {
+		t.Fatalf("R should open the restore confirm, got %T", m2.modal)
 	}
 	if v := m2.View(); !strings.Contains(v, "/x/config") {
 		t.Errorf("confirm should list the backup file:\n%s", v)
@@ -283,8 +283,8 @@ func TestRestoreFlow(t *testing.T) {
 	m3 = feed(m3, refreshedMsg{model: snapshot()})
 	m3 = feed(m3, key("R"))
 	m3 = feed(m3, key("n"))
-	if m3.mode != modeNormal || svc3.restoreCalls != 0 {
-		t.Errorf("cancel must not restore: mode=%d calls=%d", m3.mode, svc3.restoreCalls)
+	if m3.modal != nil || svc3.restoreCalls != 0 {
+		t.Errorf("cancel must not restore: modal=%v calls=%d", m3.modal, svc3.restoreCalls)
 	}
 }
 
@@ -310,8 +310,8 @@ func TestMatchHostReadOnly(t *testing.T) {
 	for _, k := range []string{"e", "d", "i"} {
 		out, cmd := m.Update(key(k))
 		mm := out.(Model)
-		if mm.mode != modeNormal {
-			t.Errorf("%q opened an overlay on a Match block (mode=%d)", k, mm.mode)
+		if mm.modal != nil {
+			t.Errorf("%q opened an overlay on a Match block (%T)", k, mm.modal)
 		}
 		if cmd != nil {
 			t.Errorf("%q dispatched a command on a Match block", k)
@@ -338,8 +338,8 @@ func TestEditFlowCancelNoWrite(t *testing.T) {
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // to confirm
 	m = feed(m, key("n"))                       // cancel
 
-	if m.mode != modeNormal {
-		t.Errorf("cancel should return to normal mode, got %d", m.mode)
+	if m.modal != nil {
+		t.Errorf("cancel should close the overlay, got %T", m.modal)
 	}
 	if len(svc.edits) != 0 {
 		t.Errorf("cancel must not write: %v", svc.edits)
@@ -354,16 +354,16 @@ func TestAddOptionFlow(t *testing.T) {
 
 	m = feed(m, key("e"))                       // open edit overlay
 	m = feed(m, tea.KeyMsg{Type: tea.KeyCtrlO}) // add option from inside edit
-	if m.mode != modeNewKey {
-		t.Fatalf("expected modeNewKey, got %d", m.mode)
+	if o := m.modal.(*editOverlay); o.phase != edPhaseOptName {
+		t.Fatalf("expected option-name phase, got %d", o.phase)
 	}
 	// type "ForwardAgent"
 	for _, r := range "ForwardAgent" {
 		m = feed(m, key(string(r)))
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // name -> value entry
-	if m.mode != modeEdit || m.newKey != "ForwardAgent" {
-		t.Fatalf("after key entry: mode=%d newKey=%q", m.mode, m.newKey)
+	if o := m.modal.(*editOverlay); o.phase != edPhaseValue || o.newKey != "ForwardAgent" {
+		t.Fatalf("after key entry: phase=%d newKey=%q", o.phase, o.newKey)
 	}
 	for _, r := range "yes" {
 		m = feed(m, key(string(r)))
@@ -395,12 +395,12 @@ func TestDeleteDirectiveFlow(t *testing.T) {
 
 	m = feed(m, key("e"))                     // edit; present fields = [User, ForwardAgent]
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // User -> ForwardAgent
-	if m.activeField() != "ForwardAgent" {
-		t.Fatalf("expected ForwardAgent active, got %q", m.activeField())
+	if o := m.modal.(*editOverlay); o.activeField() != "ForwardAgent" {
+		t.Fatalf("expected ForwardAgent active, got %q", o.activeField())
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyCtrlD}) // request delete
-	if m.mode != modeConfirmDelete {
-		t.Fatalf("expected modeConfirmDelete, got %d", m.mode)
+	if o := m.modal.(*editOverlay); o.phase != edPhaseConfirmDel {
+		t.Fatalf("expected delete-confirm phase, got %d", o.phase)
 	}
 	out, cmd := m.Update(key("y"))
 	m = out.(Model)
@@ -433,8 +433,8 @@ func TestNewHostFlow(t *testing.T) {
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
 
 	m = feed(m, key("n"))
-	if m.mode != modeNewHost {
-		t.Fatalf("expected modeNewHost, got %d", m.mode)
+	if _, ok := m.modal.(*newHostWizard); !ok {
+		t.Fatalf("expected newHostWizard, got %T", m.modal)
 	}
 	// step 0: alias
 	for _, r := range "db" {
@@ -452,8 +452,8 @@ func TestNewHostFlow(t *testing.T) {
 		m = feed(m, key(string(r)))
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // basic fields done -> options loop
-	if m.mode != modeNewHostOptKey {
-		t.Fatalf("expected options loop, got mode %d", m.mode)
+	if w := m.modal.(*newHostWizard); w.phase != nhPhaseOptKey {
+		t.Fatalf("expected options loop, got phase %d", w.phase)
 	}
 	// blank option name finishes the wizard
 	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -490,15 +490,15 @@ func TestNewHostWithCustomOption(t *testing.T) {
 		m = feed(m, key(string(r)))
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // name -> value
-	if m.mode != modeNewHostOptVal {
-		t.Fatalf("expected option value mode, got %d", m.mode)
+	if w := m.modal.(*newHostWizard); w.phase != nhPhaseOptVal {
+		t.Fatalf("expected option value phase, got %d", w.phase)
 	}
 	for _, r := range "yes" {
 		m = feed(m, key(string(r)))
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // value stored -> back to option name
-	if m.mode != modeNewHostOptKey {
-		t.Fatalf("expected to loop back for another option, got %d", m.mode)
+	if w := m.modal.(*newHostWizard); w.phase != nhPhaseOptKey {
+		t.Fatalf("expected to loop back for another option, got %d", w.phase)
 	}
 	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // blank -> finish
 	m = out.(Model)
@@ -529,7 +529,8 @@ func TestNewHostInvalidPort(t *testing.T) {
 	}
 	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = out.(Model)
-	if cmd != nil || m.mode != modeNewHost {
+	w, ok := m.modal.(*newHostWizard)
+	if cmd != nil || !ok || w.phase != nhPhaseBasics {
 		t.Error("invalid port should not dispatch; should stay on Port step")
 	}
 	if !strings.Contains(m.status, "port must be a number") {
@@ -544,8 +545,8 @@ func TestDeleteHostFlow(t *testing.T) {
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
 
 	m = feed(m, key("d"))
-	if m.mode != modeConfirmDelHost {
-		t.Fatalf("expected modeConfirmDelHost, got %d", m.mode)
+	if o, ok := m.modal.(*deleteConfirmOverlay); !ok || o.host != "web" {
+		t.Fatalf("expected host delete confirm, got %T %+v", m.modal, m.modal)
 	}
 	out, cmd := m.Update(key("y"))
 	m = out.(Model)
@@ -569,8 +570,8 @@ func TestDeleteKeyFlowConfirm(t *testing.T) {
 	m = feed(m, refreshedMsg{model: diskKeySnap()}) // Keys pane is default
 
 	m = feed(m, key("d"))
-	if m.mode != modeConfirmDelKey {
-		t.Fatalf("expected modeConfirmDelKey, got %d", m.mode)
+	if o, ok := m.modal.(*deleteConfirmOverlay); !ok || o.key != "id_ed" {
+		t.Fatalf("expected key delete confirm, got %T %+v", m.modal, m.modal)
 	}
 	if !strings.Contains(m.View(), "IRREVERSIBLE") {
 		t.Error("key delete confirm should warn it is irreversible")
@@ -595,7 +596,7 @@ func TestDeleteAgentOnlyKeyRejected(t *testing.T) {
 
 	out, cmd := m.Update(key("d"))
 	m = out.(Model)
-	if m.mode != modeNormal || cmd != nil {
+	if m.modal != nil || cmd != nil {
 		t.Error("agent-only key delete should be rejected, not confirmed")
 	}
 	if !strings.Contains(m.status, "agent-only") {
@@ -609,24 +610,26 @@ func TestNewKeyGenEd25519SkipsBits(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()}) // Keys pane
 
 	m = feed(m, key("n"))
-	if m.mode != modeNewKeyAlgo {
-		t.Fatalf("expected modeNewKeyAlgo, got %d", m.mode)
+	w, ok := m.modal.(*newKeyWizard)
+	if !ok {
+		t.Fatalf("expected newKeyWizard, got %T", m.modal)
 	}
 	// ed25519 is first; selecting it skips the bits step and prefills the name.
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.mode != modeNewKeyGen {
-		t.Fatalf("ed25519 should go straight to filename, got mode %d", m.mode)
+	w = m.modal.(*newKeyWizard)
+	if w.phase != nkPhaseName {
+		t.Fatalf("ed25519 should go straight to filename, got phase %d", w.phase)
 	}
-	if m.keyAlgo != config.AlgED25519 || m.keyBits != 0 {
-		t.Errorf("algo=%q bits=%d", m.keyAlgo, m.keyBits)
+	if w.algo != config.AlgED25519 || w.bits != 0 {
+		t.Errorf("algo=%q bits=%d", w.algo, w.bits)
 	}
-	if m.input.Value() != "id_ed25519" {
-		t.Errorf("filename default = %q", m.input.Value())
+	if w.input.Value() != "id_ed25519" {
+		t.Errorf("filename default = %q", w.input.Value())
 	}
 	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = out.(Model)
-	if cmd == nil || m.mode != modeNormal {
-		t.Error("should dispatch keygen and reset mode")
+	if cmd == nil || m.modal != nil {
+		t.Error("should dispatch keygen and close the wizard")
 	}
 }
 
@@ -638,13 +641,15 @@ func TestNewKeyGenRsaPicksBits(t *testing.T) {
 	m = feed(m, key("n"))
 	m = feed(m, key("j"))                       // ed25519 -> rsa
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // select rsa -> bits step
-	if m.mode != modeNewKeyBits || m.keyAlgo != config.AlgRSA {
-		t.Fatalf("expected rsa bits step, mode=%d algo=%q", m.mode, m.keyAlgo)
+	w := m.modal.(*newKeyWizard)
+	if w.phase != nkPhaseBits || w.algo != config.AlgRSA {
+		t.Fatalf("expected rsa bits step, phase=%d algo=%q", w.phase, w.algo)
 	}
 	m = feed(m, key("j"))                       // 3072 -> 4096
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // select 4096 -> filename
-	if m.mode != modeNewKeyGen || m.keyBits != 4096 {
-		t.Fatalf("bits not selected: mode=%d bits=%d", m.mode, m.keyBits)
+	w = m.modal.(*newKeyWizard)
+	if w.phase != nkPhaseName || w.bits != 4096 {
+		t.Fatalf("bits not selected: phase=%d bits=%d", w.phase, w.bits)
 	}
 	if !strings.Contains(m.View(), "rsa, 4096 bits") {
 		t.Errorf("filename step should summarize algo/bits:\n%s", m.View())
@@ -711,8 +716,8 @@ func TestKeyPickerAttachDetach(t *testing.T) {
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
 
 	m = feed(m, key("i"))
-	if m.mode != modeKeyPicker {
-		t.Fatalf("expected modeKeyPicker, got %d", m.mode)
+	if _, ok := m.modal.(*pickerOverlay); !ok {
+		t.Fatalf("expected pickerOverlay, got %T", m.modal)
 	}
 	// disk keys sorted: id_a (attached), id_b (not). Cursor 0 = id_a -> detach.
 	if !strings.Contains(m.View(), "●") {
@@ -724,7 +729,7 @@ func TestKeyPickerAttachDetach(t *testing.T) {
 	if len(svc.detached) != 1 || svc.detached[0] != "web/id_a" {
 		t.Errorf("enter on attached key should detach: %v", svc.detached)
 	}
-	if m.mode != modeKeyPicker {
+	if _, ok := m.modal.(*pickerOverlay); !ok {
 		t.Error("picker should stay open after a toggle")
 	}
 
@@ -829,23 +834,20 @@ func TestReloadDeferredDuringOverlay(t *testing.T) {
 	fw := &fakeWatcher{ch: make(chan struct{}, 1)}
 	m := New(&fakeService{model: snapshot()}).WithWatcher(fw)
 	m = feed(m, refreshedMsg{model: snapshot()})
-	m.mode = modeEdit // pretend an overlay is open
+	m.modal = &copyOverlay{opts: []copyOption{{"p", "public key", "x"}}}
 
 	out, _ := m.Update(reloadMsg{})
 	m = out.(Model)
-	if !m.pendingReload {
-		t.Error("reload during overlay should be deferred")
-	}
-	if m.loading {
-		t.Error("must not refresh while an overlay is open")
+	if !m.pendingReload || m.loading {
+		t.Errorf("reload during an overlay should defer: pending=%v loading=%v",
+			m.pendingReload, m.loading)
 	}
 
-	// Returning to normal and ticking flushes the deferred reload.
-	m.mode = modeNormal
+	m.modal = nil // overlay closed
 	out, cmd := m.Update(tickMsg{})
 	m = out.(Model)
 	if m.pendingReload || !m.loading || cmd == nil {
-		t.Error("tick should flush a pending reload once idle")
+		t.Error("tick should flush the pending reload once the overlay closes")
 	}
 }
 
@@ -1023,15 +1025,15 @@ func TestScrollKeepsCursorVisible(t *testing.T) {
 	for i := 0; i <= cap; i++ {
 		m = feed(m, key("j"))
 	}
-	if m.cursor[paneKeys] != cap+1 {
-		t.Fatalf("cursor = %d, want %d", m.cursor[paneKeys], cap+1)
+	if m.vp[paneKeys].cursor != cap+1 {
+		t.Fatalf("cursor = %d, want %d", m.vp[paneKeys].cursor, cap+1)
 	}
-	if m.scroll[paneKeys] == 0 {
+	if m.vp[paneKeys].scroll == 0 {
 		t.Error("scroll should advance once cursor passes the first window")
 	}
 	start, end := m.window(paneKeys)
-	if !(m.cursor[paneKeys] >= start && m.cursor[paneKeys] < end) {
-		t.Errorf("cursor %d not in window [%d,%d)", m.cursor[paneKeys], start, end)
+	if !(m.vp[paneKeys].cursor >= start && m.vp[paneKeys].cursor < end) {
+		t.Errorf("cursor %d not in window [%d,%d)", m.vp[paneKeys].cursor, start, end)
 	}
 	if end-start != cap {
 		t.Errorf("window size %d, want %d", end-start, cap)
@@ -1049,20 +1051,20 @@ func TestPageAndEndKeys(t *testing.T) {
 
 	cap := m.listCapacity()
 	m = feed(m, tea.KeyMsg{Type: tea.KeyPgDown})
-	if m.cursor[paneKeys] != cap {
-		t.Errorf("pgdown cursor = %d, want %d", m.cursor[paneKeys], cap)
+	if m.vp[paneKeys].cursor != cap {
+		t.Errorf("pgdown cursor = %d, want %d", m.vp[paneKeys].cursor, cap)
 	}
 	m = feed(m, key("G")) // jump to end
-	if m.cursor[paneKeys] != 29 {
-		t.Errorf("end cursor = %d, want 29", m.cursor[paneKeys])
+	if m.vp[paneKeys].cursor != 29 {
+		t.Errorf("end cursor = %d, want 29", m.vp[paneKeys].cursor)
 	}
 	start, end := m.window(paneKeys)
-	if end != 30 || m.cursor[paneKeys] < start {
+	if end != 30 || m.vp[paneKeys].cursor < start {
 		t.Errorf("end-of-list window wrong: [%d,%d)", start, end)
 	}
 	m = feed(m, key("g")) // jump home
-	if m.cursor[paneKeys] != 0 || m.scroll[paneKeys] != 0 {
-		t.Errorf("home not at top: cursor=%d scroll=%d", m.cursor[paneKeys], m.scroll[paneKeys])
+	if m.vp[paneKeys].cursor != 0 || m.vp[paneKeys].scroll != 0 {
+		t.Errorf("home not at top: cursor=%d scroll=%d", m.vp[paneKeys].cursor, m.vp[paneKeys].scroll)
 	}
 }
 
@@ -1176,8 +1178,8 @@ func TestFilterClampsCursor(t *testing.T) {
 	if n := m.rowCountFor(paneKeys); n != 1 {
 		t.Fatalf("expected 1 match, got %d", n)
 	}
-	if m.cursor[paneKeys] != 0 {
-		t.Errorf("cursor not clamped after filter: %d", m.cursor[paneKeys])
+	if m.vp[paneKeys].cursor != 0 {
+		t.Errorf("cursor not clamped after filter: %d", m.vp[paneKeys].cursor)
 	}
 }
 
@@ -1253,8 +1255,8 @@ func TestPaneSwitchClampsCursorUnderFilter(t *testing.T) {
 
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // -> Hosts
 	m = feed(m, key("G"))                     // cursor at prod (index 4 of 5)
-	if m.cursor[paneHosts] != 4 {
-		t.Fatalf("setup: hosts cursor = %d, want 4", m.cursor[paneHosts])
+	if m.vp[paneHosts].cursor != 4 {
+		t.Fatalf("setup: hosts cursor = %d, want 4", m.vp[paneHosts].cursor)
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // -> Keys
 
@@ -1267,7 +1269,7 @@ func TestPaneSwitchClampsCursorUnderFilter(t *testing.T) {
 
 	// Switching back to Hosts must clamp the now-out-of-range cursor.
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
-	if got := m.cursor[paneHosts]; got != 3 {
+	if got := m.vp[paneHosts].cursor; got != 3 {
 		t.Errorf("hosts cursor after switch = %d, want 3 (clamped)", got)
 	}
 	if h, ok := m.selectedHost(); !ok || h.Name != "web3" {
@@ -1299,8 +1301,8 @@ func TestEndKeyOnEmptyList(t *testing.T) {
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = feed(m, key("G"))
-	if m.cursor[paneKeys] != 0 {
-		t.Errorf("end on empty list left cursor at %d, want 0", m.cursor[paneKeys])
+	if m.vp[paneKeys].cursor != 0 {
+		t.Errorf("end on empty list left cursor at %d, want 0", m.vp[paneKeys].cursor)
 	}
 }
 
@@ -1312,8 +1314,8 @@ func TestPermsAuditAndFix(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()})
 
 	m = feed(m, key("P"))
-	if m.mode != modePerms {
-		t.Fatalf("expected modePerms, got %d", m.mode)
+	if _, ok := m.modal.(*permsOverlay); !ok {
+		t.Fatalf("expected permsOverlay, got %T", m.modal)
 	}
 	if !strings.Contains(m.View(), "id_rsa") || !strings.Contains(m.View(), "0600") {
 		t.Errorf("perms overlay should list the issue:\n%s", m.View())
@@ -1323,8 +1325,8 @@ func TestPermsAuditAndFix(t *testing.T) {
 	if svc.fixedPerms != 1 {
 		t.Errorf("FixPermissions called for %d issues, want 1", svc.fixedPerms)
 	}
-	if m.mode != modeNormal || !strings.Contains(m.status, "fixed permissions") {
-		t.Errorf("after fix: mode=%d status=%q", m.mode, m.status)
+	if m.modal != nil || !strings.Contains(m.status, "fixed permissions") {
+		t.Errorf("after fix: modal=%v status=%q", m.modal, m.status)
 	}
 }
 
@@ -1333,8 +1335,8 @@ func TestPermsNoIssues(t *testing.T) {
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()})
 	m = feed(m, key("P"))
-	if m.mode != modeNormal || !strings.Contains(m.status, "permissions OK") {
-		t.Errorf("clean audit: mode=%d status=%q", m.mode, m.status)
+	if m.modal != nil || !strings.Contains(m.status, "permissions OK") {
+		t.Errorf("clean audit: modal=%v status=%q", m.modal, m.status)
 	}
 }
 
@@ -1349,8 +1351,8 @@ func TestPermsCancelNoFix(t *testing.T) {
 	if svc.fixedPerms != 0 {
 		t.Errorf("cancel must not fix: %d", svc.fixedPerms)
 	}
-	if m.mode != modeNormal {
-		t.Errorf("cancel should return to normal: %d", m.mode)
+	if m.modal != nil {
+		t.Errorf("cancel should close the overlay: %v", m.modal)
 	}
 }
 
@@ -1363,8 +1365,9 @@ func TestKnownHostsBrowseAndRemove(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()})
 
 	m = feed(m, key("K"))
-	if m.mode != modeKnownHosts {
-		t.Fatalf("expected modeKnownHosts, got %d", m.mode)
+	kh, ok := m.modal.(*knownHostsOverlay)
+	if !ok {
+		t.Fatalf("expected knownHostsOverlay, got %T", m.modal)
 	}
 	if !strings.Contains(m.View(), "github.com") || !strings.Contains(m.View(), "gitlab.com") {
 		t.Errorf("known_hosts overlay should list entries:\n%s", m.View())
@@ -1372,19 +1375,21 @@ func TestKnownHostsBrowseAndRemove(t *testing.T) {
 
 	// Select second entry, request delete, confirm.
 	m = feed(m, key("j"))
-	if m.khCursor != 1 {
-		t.Fatalf("cursor = %d, want 1", m.khCursor)
+	kh = m.modal.(*knownHostsOverlay)
+	if kh.vp.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1", kh.vp.cursor)
 	}
 	m = feed(m, key("d"))
-	if !m.khConfirm {
+	if !m.modal.(*knownHostsOverlay).confirm {
 		t.Fatal("d should ask for confirmation")
 	}
 	m = feed(m, key("y"))
 	if len(svc.khRemoved) != 1 || svc.khRemoved[0] != 1 {
 		t.Errorf("removed lines = %v, want [1]", svc.khRemoved)
 	}
-	if len(m.khEntries) != 1 || m.khEntries[0].Hosts[0] != "github.com" {
-		t.Errorf("list not reloaded after remove: %+v", m.khEntries)
+	kh = m.modal.(*knownHostsOverlay)
+	if len(kh.entries) != 1 || kh.entries[0].Hosts[0] != "github.com" {
+		t.Errorf("list not reloaded after remove: %+v", kh.entries)
 	}
 }
 
@@ -1392,8 +1397,8 @@ func TestKnownHostsEmpty(t *testing.T) {
 	m := New(&fakeService{model: snapshot()}) // no entries
 	m = feed(m, refreshedMsg{model: snapshot()})
 	m = feed(m, key("K"))
-	if m.mode != modeNormal || !strings.Contains(m.status, "no known_hosts") {
-		t.Errorf("empty known_hosts: mode=%d status=%q", m.mode, m.status)
+	if m.modal != nil || !strings.Contains(m.status, "no known_hosts") {
+		t.Errorf("empty known_hosts: modal=%v status=%q", m.modal, m.status)
 	}
 }
 
@@ -1406,14 +1411,14 @@ func TestKnownHostsCancelDelete(t *testing.T) {
 	m = feed(m, key("K"))
 	m = feed(m, key("d"))
 	m = feed(m, key("n")) // cancel confirm
-	if m.khConfirm {
+	if m.modal.(*knownHostsOverlay).confirm {
 		t.Error("n should cancel the confirm")
 	}
 	if len(svc.khRemoved) != 0 {
 		t.Errorf("cancel must not remove: %v", svc.khRemoved)
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEsc}) // close
-	if m.mode != modeNormal {
+	if m.modal != nil {
 		t.Error("esc should close the overlay")
 	}
 }
@@ -1433,8 +1438,8 @@ func TestCopyKeyPublicAndFingerprint(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snap})
 
 	m = feed(m, key("c"))
-	if m.mode != modeCopy {
-		t.Fatalf("expected modeCopy, got %d", m.mode)
+	if _, ok := m.modal.(*copyOverlay); !ok {
+		t.Fatalf("expected copyOverlay active, got %T", m.modal)
 	}
 	v := m.View()
 	if !strings.Contains(v, "public key") || !strings.Contains(v, "fingerprint") {
@@ -1483,8 +1488,8 @@ func TestHelpOverlay(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()})
 
 	m = feed(m, key("?"))
-	if m.mode != modeHelp {
-		t.Fatalf("? should open help, got mode %d", m.mode)
+	if _, ok := m.modal.(*helpOverlay); !ok {
+		t.Fatalf("? should open help, got %T", m.modal)
 	}
 	v := m.View()
 	for _, want := range []string{"keybindings", "Navigation", "Keys pane", "Hosts pane", "known_hosts"} {
@@ -1494,8 +1499,8 @@ func TestHelpOverlay(t *testing.T) {
 	}
 	// Any key closes it.
 	m = feed(m, key("x"))
-	if m.mode != modeNormal {
-		t.Errorf("a key should close help, got mode %d", m.mode)
+	if m.modal != nil {
+		t.Errorf("a key should close help, got %T", m.modal)
 	}
 }
 
@@ -1530,7 +1535,7 @@ func TestHelpFitsAndScrolls(t *testing.T) {
 	}
 	// A non-scroll key still closes.
 	m = feed(m, key("x"))
-	if m.mode != modeNormal {
+	if m.modal != nil {
 		t.Error("non-scroll key should close help")
 	}
 }
@@ -1676,8 +1681,8 @@ func TestThemeSwitcherApply(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()})
 
 	m = feed(m, key("t"))
-	if m.mode != modeTheme {
-		t.Fatalf("t should open theme picker, got %d", m.mode)
+	if _, ok := m.modal.(*themeOverlay); !ok {
+		t.Fatalf("t should open the theme picker, got %T", m.modal)
 	}
 	if v := m.View(); !strings.Contains(v, "dracula") || !strings.Contains(v, "nord") {
 		t.Errorf("theme picker should list presets:\n%s", v)
@@ -1686,8 +1691,8 @@ func TestThemeSwitcherApply(t *testing.T) {
 	m = feed(m, key("j"))
 	want := presets[1].name
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if fs.themeName != want || m.mode != modeNormal {
-		t.Errorf("apply: themeName=%q mode=%d, want %q/normal", fs.themeName, m.mode, want)
+	if fs.themeName != want || m.modal != nil {
+		t.Errorf("apply: themeName=%q modal=%v, want %q/closed", fs.themeName, m.modal, want)
 	}
 }
 

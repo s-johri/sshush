@@ -6,7 +6,6 @@ package tui
 import (
 	"fmt"
 	"math"
-	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,11 +22,7 @@ import (
 	// tea.ExecProcess, which yields the terminal so a passphrase prompt works.
 	// All other IO goes through service.Service.
 	"github.com/s-johri/sshush/pkg/agent"
-	"github.com/s-johri/sshush/pkg/clip"
 	"github.com/s-johri/sshush/pkg/config"
-	"github.com/s-johri/sshush/pkg/keys"
-	"github.com/s-johri/sshush/pkg/knownhosts"
-	"github.com/s-johri/sshush/pkg/perms"
 	"github.com/s-johri/sshush/pkg/service"
 	"github.com/s-johri/sshush/pkg/shellinit"
 	"github.com/s-johri/sshush/pkg/watch"
@@ -235,36 +230,6 @@ func tick() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-// editMode tracks the host-editing overlay state.
-type editMode int
-
-const (
-	modeNormal         editMode = iota
-	modeNewKey                  // typing a new option name (within edit)
-	modeEdit                    // typing a value
-	modeConfirm                 // confirming a write
-	modeConfirmDelete           // confirming a directive removal
-	modeNewHost                 // typing a new host alias / basic field
-	modeNewHostOptKey           // new-host wizard: typing a custom option name
-	modeNewHostOptVal           // new-host wizard: typing a custom option value
-	modeNewKeyAlgo              // picking a key algorithm
-	modeNewKeyBits              // picking rsa bits / ecdsa curve
-	modeNewKeyGen               // typing a new key file name
-	modeConfirmDelHost          // confirming whole-host removal
-	modeConfirmDelKey           // confirming key-file deletion (irreversible)
-	modeKeyPicker               // attaching/detaching keys to a host
-	modePerms                   // reviewing/fixing permission issues
-	modeKnownHosts              // browsing/removing known_hosts entries
-	modeCopy                    // choosing what to copy to the clipboard
-	modeHelp                    // full keybinding reference overlay
-	modeTheme                   // theme picker with live preview
-	modeConfirmRestore          // confirming a restore from backup
-)
-
-// coreFields are always offered for editing; a host's existing option keys are
-// appended to these when the edit overlay opens.
-var coreFields = []string{"HostName", "User", "Port"}
-
 // keyAlgos are the algorithms offered by the new-key wizard (dsa omitted as
 // legacy). ed25519 first as the recommended default.
 var keyAlgos = []struct {
@@ -288,24 +253,14 @@ func bitsOptions(a config.KeyAlgorithm) []int {
 	return nil
 }
 
-// hostSteps drives the new-host wizard: an alias (required) then optional basic
-// fields. Empty answers are skipped.
-var hostSteps = []struct{ field, hint string }{
-	{"alias", "host alias (e.g. prod-web) — required"},
-	{"HostName", "hostname / IP (optional, enter to skip)"},
-	{"User", "user (optional, enter to skip)"},
-	{"Port", "port (optional number, enter to skip)"},
-}
-
 // Model is the BubbleTea model for sshush.
 type Model struct {
 	svc service.Service
 
 	active  pane
-	cursor  [numPanes]int
-	scroll  [numPanes]int     // first visible row index per pane (viewport offset)
-	ids     []config.Identity // sorted for stable display
-	hosts   []config.Host     // sorted for stable display
+	vp      [numPanes]viewport // cursor + scroll per pane (see CONTEXT.md)
+	ids     []config.Identity  // sorted for stable display
+	hosts   []config.Host      // sorted for stable display
 	srcFile string
 
 	loading     bool
@@ -313,50 +268,12 @@ type Model struct {
 	status      string    // transient feedback (e.g. last agent action)
 	statusSetAt time.Time // when status last changed; status expires after statusTTL
 
-	// host edit overlay
-	mode        editMode
-	input       textinput.Model
-	editFields  []string // core fields + the host's existing option keys
-	fieldIdx    int      // index into editFields
-	newKey      string   // option name being added (modeNewKey/modeEdit)
-	pendingHost config.HostID
-	pendingKey  config.IdentityID // key targeted for deletion
-
-	// new-host wizard
-	hostStep    int
-	draftHost   config.Host
-	draftOptKey string // custom option name awaiting its value
-
-	// new-key wizard
-	keyAlgo    config.KeyAlgorithm
-	keyBits    int
-	algoCursor int
-	bitsCursor int
-
-	// key picker (attach/detach identities to pendingHost)
-	pickerCursor int
-
-	// permission audit
-	permIssues []perms.Issue
-
-	// known_hosts browser
-	khEntries []knownhosts.Entry
-	khCursor  int
-	khScroll  int
-	khConfirm bool // confirming removal of the selected entry
-
-	// clipboard copy menu
-	copyOpts []copyOption
-
-	// help overlay scroll offset (when it's taller than the terminal)
-	helpScroll int
+	// modal is the active overlay, or nil for the panes (see overlay.go and
+	// CONTEXT.md). Each overlay owns its own working state.
+	modal overlay
 
 	// motion: the currently-active visual effect (zero value = none)
 	fx activeFX
-
-	// theme switcher
-	themeCursor int
-	themeOrig   string // theme to revert to on cancel
 
 	// hot reload
 	watcher         fileWatcher
@@ -381,16 +298,12 @@ type Model struct {
 
 // New builds a Model bound to svc.
 func New(svc service.Service) Model {
-	ti := textinput.New()
-	ti.CharLimit = 256
-	ti.Width = 40
-
 	fi := textinput.New()
 	fi.Placeholder = "filter…"
 	fi.CharLimit = 80
 	fi.Width = 30
 
-	return Model{svc: svc, loading: true, input: ti, filterInput: fi}
+	return Model{svc: svc, loading: true, filterInput: fi}
 }
 
 // filterQuery is the active (lower-cased, trimmed) filter string.
@@ -442,7 +355,7 @@ func matchAny(q string, fields ...string) bool {
 // selectedKey returns the highlighted identity in the (filtered) Keys pane.
 func (m Model) selectedKey() (config.Identity, bool) {
 	v := m.visibleIDs()
-	i := m.cursor[paneKeys]
+	i := m.vp[paneKeys].cursor
 	if i < 0 || i >= len(v) {
 		return config.Identity{}, false
 	}
@@ -474,14 +387,8 @@ func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // afterFilterChange keeps the cursor/scroll valid for the (possibly smaller)
 // filtered list of the active pane.
 func (m *Model) afterFilterChange() {
-	n := m.rowCountFor(m.active)
-	if m.cursor[m.active] >= n {
-		m.cursor[m.active] = n - 1
-	}
-	if m.cursor[m.active] < 0 {
-		m.cursor[m.active] = 0
-	}
-	m.scroll[m.active] = 0
+	m.vp[m.active].clampCursor(m.rowCountFor(m.active))
+	m.vp[m.active].scroll = 0
 	m.ensureVisible(m.active)
 }
 
@@ -543,6 +450,12 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// overlayOpen reports whether a modal overlay is up. Used to defer hot reloads
+// so an open overlay is never clobbered.
+func (m Model) overlayOpen() bool {
+	return m.modal != nil
+}
+
 // waitForChange blocks on the watcher until a change arrives, then yields a
 // reloadMsg. Returns nil when no watcher is attached.
 func (m Model) waitForChange() tea.Cmd {
@@ -595,7 +508,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ""
 		}
 		// Apply a deferred reload once any overlay is closed.
-		if m.pendingReload && m.mode == modeNormal && !m.loading {
+		if m.pendingReload && !m.overlayOpen() && !m.loading {
 			m.pendingReload = false
 			m.loading = true
 			return m, tea.Batch(tick(), m.refresh)
@@ -611,7 +524,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Only refresh when idle so an open overlay or in-flight load is never
 		// clobbered.
-		if m.mode != modeNormal || m.loading {
+		if m.overlayOpen() || m.loading {
 			m.pendingReload = true
 			return m, next
 		}
@@ -706,42 +619,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// Overlay modes capture input first.
-	switch m.mode {
-	case modeNewKey:
-		return m.handleNewKey(msg)
-	case modeEdit:
-		return m.handleEditKey(msg)
-	case modeConfirm, modeConfirmDelete:
-		return m.handleConfirmKey(msg)
-	case modeNewHost:
-		return m.handleNewHost(msg)
-	case modeNewHostOptKey:
-		return m.handleNewHostOptKey(msg)
-	case modeNewHostOptVal:
-		return m.handleNewHostOptVal(msg)
-	case modeNewKeyAlgo:
-		return m.handleNewKeyAlgo(msg)
-	case modeNewKeyBits:
-		return m.handleNewKeyBits(msg)
-	case modeNewKeyGen:
-		return m.handleNewKeyGen(msg)
-	case modeConfirmDelHost, modeConfirmDelKey:
-		return m.handleDeleteConfirm(msg)
-	case modeKeyPicker:
-		return m.handlePicker(msg)
-	case modePerms:
-		return m.handlePermsKey(msg)
-	case modeKnownHosts:
-		return m.handleKnownHostsKey(msg)
-	case modeCopy:
-		return m.handleCopyKey(msg)
-	case modeHelp:
-		return m.handleHelpKey(msg)
-	case modeTheme:
-		return m.handleThemeKey(msg)
-	case modeConfirmRestore:
-		return m.handleRestoreConfirm(msg)
+	// The active overlay captures input first (see overlay.go).
+	if m.modal != nil {
+		next, cmd := m.modal.Update(msg, &m)
+		m.modal = next
+		return m, cmd
 	}
 
 	// The filter input (when focused) captures keys before pane navigation.
@@ -769,16 +651,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensureVisible(m.active)
 		return m, nil
 	case "up", "k":
-		if m.cursor[m.active] > 0 {
-			m.cursor[m.active]--
-		}
-		m.ensureVisible(m.active)
+		m.moveCursor(m.active, -1)
 		return m, nil
 	case "down", "j":
-		if m.cursor[m.active] < m.rowCount()-1 {
-			m.cursor[m.active]++
-		}
-		m.ensureVisible(m.active)
+		m.moveCursor(m.active, 1)
 		return m, nil
 	case "pgup", "ctrl+u":
 		m.moveCursor(m.active, -m.listCapacity())
@@ -787,14 +663,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveCursor(m.active, m.listCapacity())
 		return m, nil
 	case "home", "g":
-		m.cursor[m.active] = 0
-		m.ensureVisible(m.active)
+		m.setCursor(m.active, 0)
 		return m, nil
 	case "end", "G":
-		if n := m.rowCount(); n > 0 {
-			m.cursor[m.active] = n - 1
-		}
-		m.ensureVisible(m.active)
+		m.setCursor(m.active, m.rowCount()-1)
 		return m, nil
 	case "enter", " ":
 		if m.active == paneHosts {
@@ -820,8 +692,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		return m.beginCopy()
 	case "?":
-		m.mode = modeHelp
-		m.helpScroll = 0
+		m.modal = &helpOverlay{}
 		return m, nil
 	case "m":
 		return m.toggleMotion()
@@ -843,23 +714,9 @@ func (m Model) beginRestore() (tea.Model, tea.Cmd) {
 		m.status = "no backup to restore (sshush writes one before its first edit)"
 		return m, nil
 	}
-	m.mode = modeConfirmRestore
+	m.modal = &restoreOverlay{}
 	m.status = ""
 	return m, nil
-}
-
-// handleRestoreConfirm gates the restore: only "y" reverts the config.
-func (m Model) handleRestoreConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() != "y" && msg.String() != "Y" {
-		m.mode = modeNormal
-		m.status = "restore cancelled"
-		return m, nil
-	}
-	m.mode = modeNormal
-	return m, func() tea.Msg {
-		files, err := m.svc.RestoreBackup()
-		return restoreDoneMsg{files: files, err: err}
-	}
 }
 
 // sshCommand builds a shareable ssh invocation for a host: explicit when a
@@ -906,26 +763,8 @@ func (m Model) beginCopy() (tea.Model, tea.Cmd) {
 		m.status = "nothing to copy"
 		return m, nil
 	}
-	m.copyOpts = opts
-	m.mode = modeCopy
+	m.modal = &copyOverlay{opts: opts}
 	m.status = ""
-	return m, nil
-}
-
-// handleCopyKey picks a copy option by its hotkey and dispatches the copy.
-func (m Model) handleCopyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc", "c":
-		m.mode = modeNormal
-		return m, nil
-	}
-	for _, o := range m.copyOpts {
-		if msg.String() == o.key {
-			label, content := o.label, o.content
-			m.mode = modeNormal
-			return m, func() tea.Msg { return clipDoneMsg{label: label, err: clip.Write(content)} }
-		}
-	}
 	return m, nil
 }
 
@@ -941,8 +780,7 @@ func (m Model) beginPermsAudit() (tea.Model, tea.Cmd) {
 		m.status = "permissions OK"
 		return m, nil
 	}
-	m.permIssues = issues
-	m.mode = modePerms
+	m.modal = &permsOverlay{issues: issues}
 	m.status = ""
 	return m, nil
 }
@@ -958,130 +796,8 @@ func (m Model) beginKnownHosts() (tea.Model, tea.Cmd) {
 		m.status = "no known_hosts entries"
 		return m, nil
 	}
-	m.khEntries = entries
-	m.khCursor = 0
-	m.khScroll = 0
-	m.khConfirm = false
-	m.mode = modeKnownHosts
+	m.modal = &knownHostsOverlay{entries: entries}
 	m.status = ""
-	return m, nil
-}
-
-// handleKnownHostsKey drives the known_hosts overlay: navigate, and remove the
-// selected entry (confirm-gated).
-func (m Model) handleKnownHostsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.khConfirm {
-		if msg.String() == "y" || msg.String() == "Y" {
-			return m.removeSelectedKnownHost()
-		}
-		m.khConfirm = false
-		return m, nil
-	}
-	switch msg.String() {
-	case "esc", "q":
-		m.mode = modeNormal
-		return m, nil
-	case "up", "k":
-		if m.khCursor > 0 {
-			m.khCursor--
-		}
-		m.khEnsureVisible()
-	case "down", "j":
-		if m.khCursor < len(m.khEntries)-1 {
-			m.khCursor++
-		}
-		m.khEnsureVisible()
-	case "d", "enter":
-		if len(m.khEntries) > 0 {
-			m.khConfirm = true
-		}
-	}
-	return m, nil
-}
-
-// removeSelectedKnownHost deletes the highlighted entry and reloads the list.
-func (m Model) removeSelectedKnownHost() (tea.Model, tea.Cmd) {
-	ent := m.khEntries[m.khCursor]
-	m.khConfirm = false
-	if err := m.svc.RemoveKnownHost(ent.Line); err != nil {
-		m.status = "remove failed: " + err.Error()
-		m.mode = modeNormal
-		return m, nil
-	}
-	entries, _ := m.svc.KnownHosts()
-	m.khEntries = entries
-	if m.khCursor >= len(entries) {
-		m.khCursor = len(entries) - 1
-	}
-	if m.khCursor < 0 {
-		m.khCursor = 0
-	}
-	m.khEnsureVisible()
-	m.status = "removed known_hosts entry (backup written)"
-	if len(entries) == 0 {
-		m.mode = modeNormal
-	}
-	return m, nil
-}
-
-// khCapacity / khWindow / khEnsureVisible mirror the pane viewport logic for the
-// known_hosts overlay.
-func (m Model) khCapacity() int {
-	if m.height <= 0 {
-		return 1 << 30
-	}
-	if c := m.height - 9; c > 1 {
-		return c
-	}
-	return 1
-}
-
-func (m Model) khWindow() (int, int) {
-	cap := m.khCapacity()
-	n := len(m.khEntries)
-	start := m.khScroll
-	if start > n-cap {
-		start = n - cap
-	}
-	if start < 0 {
-		start = 0
-	}
-	end := start + cap
-	if end > n {
-		end = n
-	}
-	return start, end
-}
-
-func (m *Model) khEnsureVisible() {
-	cap := m.khCapacity()
-	if m.khCursor < m.khScroll {
-		m.khScroll = m.khCursor
-	}
-	if m.khCursor >= m.khScroll+cap {
-		m.khScroll = m.khCursor - cap + 1
-	}
-	if m.khScroll < 0 {
-		m.khScroll = 0
-	}
-}
-
-// handlePermsKey gates the chmod fix: only "y" applies it.
-func (m Model) handlePermsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() != "y" && msg.String() != "Y" {
-		m.mode = modeNormal
-		m.status = "permissions unchanged"
-		return m, nil
-	}
-	n := len(m.permIssues)
-	err := m.svc.FixPermissions(m.permIssues)
-	m.mode = modeNormal
-	m.permIssues = nil
-	if err != nil {
-		m.status = "fix failed: " + err.Error()
-		return m, nil
-	}
-	m.status = fmt.Sprintf("fixed permissions on %d file(s)", n)
 	return m, nil
 }
 
@@ -1089,78 +805,12 @@ func (m Model) handlePermsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // the Keys pane.
 func (m Model) beginNew() (tea.Model, tea.Cmd) {
 	m.status = ""
-	m.input.SetValue("")
-	m.input.Focus()
 	if m.active == paneHosts {
-		m.mode = modeNewHost
-		m.hostStep = 0
-		m.draftHost = config.Host{}
-	} else {
-		m.mode = modeNewKeyAlgo
-		m.algoCursor = 0
+		m.modal = newNewHostWizard()
+		return m, textinput.Blink
 	}
-	return m, textinput.Blink
-}
-
-// handleNewKeyAlgo selects the key algorithm, then advances to bits/curve
-// selection (rsa/ecdsa) or straight to the filename (ed25519).
-func (m Model) handleNewKeyAlgo(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		return m.cancelOverlay("cancelled")
-	case "up", "k":
-		if m.algoCursor > 0 {
-			m.algoCursor--
-		}
-		return m, nil
-	case "down", "j":
-		if m.algoCursor < len(keyAlgos)-1 {
-			m.algoCursor++
-		}
-		return m, nil
-	case "enter":
-		m.keyAlgo = keyAlgos[m.algoCursor].algo
-		m.keyBits = 0
-		if len(bitsOptions(m.keyAlgo)) > 0 {
-			m.bitsCursor = 0
-			m.mode = modeNewKeyBits
-			return m, nil
-		}
-		return m.toFilenameStep()
-	}
+	m.modal = newNewKeyWizard()
 	return m, nil
-}
-
-// handleNewKeyBits selects rsa bits / ecdsa curve, then advances to the filename.
-func (m Model) handleNewKeyBits(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	opts := bitsOptions(m.keyAlgo)
-	switch msg.String() {
-	case "esc":
-		return m.cancelOverlay("cancelled")
-	case "up", "k":
-		if m.bitsCursor > 0 {
-			m.bitsCursor--
-		}
-		return m, nil
-	case "down", "j":
-		if m.bitsCursor < len(opts)-1 {
-			m.bitsCursor++
-		}
-		return m, nil
-	case "enter":
-		m.keyBits = opts[m.bitsCursor]
-		return m.toFilenameStep()
-	}
-	return m, nil
-}
-
-// toFilenameStep opens the filename prompt with a sensible default name.
-func (m Model) toFilenameStep() (tea.Model, tea.Cmd) {
-	m.mode = modeNewKeyGen
-	m.input.SetValue("id_" + string(m.keyAlgo))
-	m.input.CursorEnd()
-	m.input.Focus()
-	return m, textinput.Blink
 }
 
 // beginDelete opens a confirm gate to delete the selected host or key.
@@ -1175,8 +825,7 @@ func (m Model) beginDelete() (tea.Model, tea.Cmd) {
 			m.status = "Match block — read-only"
 			return m, nil
 		}
-		m.pendingHost = host.ID
-		m.mode = modeConfirmDelHost
+		m.modal = &deleteConfirmOverlay{host: host.ID}
 		return m, nil
 	}
 	// Keys pane: only on-disk keys have files to delete.
@@ -1188,322 +837,28 @@ func (m Model) beginDelete() (tea.Model, tea.Cmd) {
 		m.status = "cannot delete agent-only key (no file on disk)"
 		return m, nil
 	}
-	m.pendingKey = sel.ID
-	m.mode = modeConfirmDelKey
+	m.modal = &deleteConfirmOverlay{key: sel.ID}
 	return m, nil
 }
 
-// handleNewHost walks the new-host wizard: alias then optional basic fields,
-// skipping empties. The final step dispatches AddHost.
-func (m Model) handleNewHost(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "esc" {
-		return m.cancelOverlay("cancelled")
-	}
-	if msg.String() != "enter" {
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		return m, cmd
-	}
-
-	val := strings.TrimSpace(m.input.Value())
-	switch hostSteps[m.hostStep].field {
-	case "alias":
-		if val == "" {
-			m.status = "host alias cannot be empty"
-			return m, nil
-		}
-		m.draftHost.ID = config.HostID(val)
-		m.draftHost.Name = val
-	case "HostName":
-		if val != "" {
-			m.draftHost.Hostname = val
-		}
-	case "User":
-		if val != "" {
-			m.draftHost.User = val
-		}
-	case "Port":
-		if val != "" {
-			p, err := strconv.Atoi(val)
-			if err != nil {
-				m.status = "port must be a number"
-				return m, nil
-			}
-			m.draftHost.Port = p
-		}
-	}
-
-	if m.hostStep == len(hostSteps)-1 {
-		// Basic fields done; move on to optional custom options.
-		m.mode = modeNewHostOptKey
-		m.input.SetValue("")
-		return m, nil
-	}
-	m.hostStep++
-	m.input.SetValue("")
-	return m, nil
-}
-
-// handleNewHostOptKey collects a custom option name; a blank name finishes the
-// wizard and creates the host.
-func (m Model) handleNewHostOptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		return m.cancelOverlay("cancelled")
-	case "enter":
-		key := strings.TrimSpace(m.input.Value())
-		if key == "" {
-			return m.createDraftHost()
-		}
-		m.draftOptKey = key
-		m.mode = modeNewHostOptVal
-		m.input.SetValue("")
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	return m, cmd
-}
-
-// handleNewHostOptVal stores a custom option value, then loops back for more.
-func (m Model) handleNewHostOptVal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		return m.cancelOverlay("cancelled")
-	case "enter":
-		val := strings.TrimSpace(m.input.Value())
-		if val == "" {
-			m.status = "value cannot be empty"
-			return m, nil
-		}
-		if m.draftHost.Options == nil {
-			m.draftHost.Options = map[string]string{}
-		}
-		m.draftHost.Options[m.draftOptKey] = val
-		m.status = m.draftOptKey + " added"
-		m.draftOptKey = ""
-		m.mode = modeNewHostOptKey
-		m.input.SetValue("")
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	return m, cmd
-}
-
-// createDraftHost dispatches AddHost for the accumulated draft.
-func (m Model) createDraftHost() (tea.Model, tea.Cmd) {
-	host := m.draftHost
-	m.mode = modeNormal
-	m.input.Blur()
-	m.status = "creating host…"
-	return m, func() tea.Msg { return editDoneMsg{verb: "host added", err: m.svc.AddHost(host)} }
-}
-
-// handleNewKeyGen collects a key file name and runs ssh-keygen interactively
-// (via ExecProcess) so it can prompt for a passphrase.
-func (m Model) handleNewKeyGen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		return m.cancelOverlay("cancelled")
-	case "enter":
-		name := strings.TrimSpace(m.input.Value())
-		if name == "" {
-			m.status = "key name cannot be empty"
-			return m, nil
-		}
-		m.mode = modeNormal
-		m.input.Blur()
-		m.status = "running ssh-keygen…"
-		cmd, _, err := keys.GenerateCommand(keys.GenerateOpts{
-			Name: name, Algorithm: m.keyAlgo, Bits: m.keyBits, Comment: name,
-		})
-		if err != nil {
-			m.status = "keygen error: " + err.Error()
-			return m, nil
-		}
-		return m, tea.ExecProcess(cmd, func(err error) tea.Msg { return keygenDoneMsg{err: err} })
-	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	return m, cmd
-}
-
-// handleDeleteConfirm gates host/key deletion: only "y" proceeds.
-func (m Model) handleDeleteConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	mode := m.mode
-	if msg.String() != "y" && msg.String() != "Y" {
-		return m.cancelOverlay("deletion cancelled")
-	}
-	m.mode = modeNormal
-	m.status = "deleting…"
-	shake := m.play(true, true) // destructive: flash + a forced shake at any level
-	if mode == modeConfirmDelHost {
-		h := m.pendingHost
-		return m, tea.Batch(shake, func() tea.Msg { return editDoneMsg{verb: "host removed", err: m.svc.DeleteHost(h)} })
-	}
-	id := m.pendingKey
-	return m, tea.Batch(shake, func() tea.Msg { return editDoneMsg{verb: "key deleted", err: m.svc.DeleteKey(id)} })
-}
-
-// beginEdit opens the edit overlay on the selected host. Only directives the
-// host actually has are listed; absent ones (e.g. Port) are added via ctrl+o.
+// beginEdit opens the edit overlay on the selected host. The editor's state and
+// behaviour live in editOverlay (overlay_edit.go).
 func (m Model) beginEdit() (tea.Model, tea.Cmd) {
-	host, ok := m.editTarget()
-	if !ok {
-		return m, nil
-	}
-	m.editFields = presentFields(host)
-	m.fieldIdx = 0
-	m.newKey = ""
-	m.mode = modeEdit
-	m.status = ""
-	m.input.SetValue(m.currentFieldValue())
-	m.input.CursorEnd()
-	m.input.Focus()
-	return m, textinput.Blink
-}
-
-// presentFields lists the directives set on a host, core fields first.
-func presentFields(host config.Host) []string {
-	var f []string
-	if host.Hostname != "" {
-		f = append(f, "HostName")
-	}
-	if host.User != "" {
-		f = append(f, "User")
-	}
-	if host.Port != 0 {
-		f = append(f, "Port")
-	}
-	opts := make([]string, 0, len(host.Options))
-	for opt := range host.Options {
-		opts = append(opts, opt)
-	}
-	sort.Strings(opts)
-	return append(f, opts...)
-}
-
-// beginAddOption switches the open edit overlay to typing a new option name.
-func (m Model) beginAddOption() (tea.Model, tea.Cmd) {
-	m.mode = modeNewKey
-	m.status = ""
-	m.input.SetValue("")
-	m.input.Focus()
-	return m, textinput.Blink
-}
-
-// editTarget validates that a host is selected on the Hosts pane and records it.
-func (m *Model) editTarget() (config.Host, bool) {
 	if m.active != paneHosts {
-		return config.Host{}, false
+		return m, nil
 	}
 	host, ok := m.selectedHost()
 	if !ok {
 		m.status = "no host selected"
-		return config.Host{}, false
+		return m, nil
 	}
 	if host.IsMatch {
 		m.status = "Match block — read-only"
-		return config.Host{}, false
-	}
-	m.pendingHost = host.ID
-	return host, true
-}
-
-// handleNewKey collects an option name, then transitions to value entry.
-func (m Model) handleNewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		return m.cancelOverlay("add cancelled")
-	case "enter":
-		key := strings.TrimSpace(m.input.Value())
-		if key == "" {
-			m.status = "option name cannot be empty"
-			return m, nil
-		}
-		m.newKey = key
-		m.mode = modeEdit
-		m.input.SetValue("")
 		return m, nil
 	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	return m, cmd
-}
-
-// handleEditKey drives value entry. tab cycles fields (existing edits only);
-// ctrl+d deletes the active directive; enter confirms.
-func (m Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	editingExisting := m.newKey == "" && len(m.editFields) > 0
-	switch msg.String() {
-	case "esc":
-		return m.cancelOverlay("edit cancelled")
-	case "ctrl+o": // add a new option (works whether or not fields exist)
-		if m.newKey == "" {
-			return m.beginAddOption()
-		}
-	case "tab":
-		if editingExisting { // cycling only applies to existing fields
-			m.fieldIdx = (m.fieldIdx + 1) % len(m.editFields)
-			m.input.SetValue(m.currentFieldValue())
-			m.input.CursorEnd()
-		}
-		return m, nil
-	case "ctrl+d":
-		if editingExisting {
-			m.mode = modeConfirmDelete
-		}
-		return m, nil
-	case "enter":
-		if m.newKey == "" && len(m.editFields) == 0 {
-			m.status = "no directives set — ctrl+o to add one"
-			return m, nil
-		}
-		if strings.TrimSpace(m.input.Value()) == "" {
-			m.status = "value cannot be empty (ctrl+d to delete a directive)"
-			return m, nil
-		}
-		m.mode = modeConfirm
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	return m, cmd
-}
-
-// handleConfirmKey gates writes and deletes: only "y" proceeds.
-func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	confirming := m.mode
-	if msg.String() != "y" && msg.String() != "Y" {
-		return m.cancelOverlay("cancelled")
-	}
-	host := m.pendingHost
-	field := m.activeField()
-	m.input.Blur()
-	m.mode = modeNormal
-	m.status = "writing…"
-	if confirming == modeConfirmDelete {
-		return m, m.deleteCmd(host, field)
-	}
-	return m, m.editCmd(host, field, strings.TrimSpace(m.input.Value()))
-}
-
-func (m Model) cancelOverlay(status string) (tea.Model, tea.Cmd) {
-	m.mode = modeNormal
-	m.input.Blur()
-	m.newKey = ""
-	m.status = status
-	return m, nil
-}
-
-// editCmd / deleteCmd dispatch the write off the UI goroutine.
-func (m Model) editCmd(h config.HostID, field, val string) tea.Cmd {
-	return func() tea.Msg { return editDoneMsg{verb: "saved", err: m.svc.EditHost(h, field, val)} }
-}
-
-func (m Model) deleteCmd(h config.HostID, field string) tea.Cmd {
-	return func() tea.Msg { return editDoneMsg{verb: "removed", err: m.svc.DeleteHostField(h, field)} }
+	m.modal = newEditOverlay(host)
+	m.status = ""
+	return m, textinput.Blink
 }
 
 // maybeAutoLoad loads the configured default identities into the agent once, on
@@ -1588,60 +943,23 @@ func (m Model) toggleMotion() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// beginTheme opens the theme picker, previewing the current theme.
+// beginTheme opens the theme picker, previewing the current theme. The picker's
+// state and behaviour live in themeOverlay (overlay_theme.go).
 func (m Model) beginTheme() (tea.Model, tea.Cmd) {
 	if m.settings == nil {
 		m.status = "no settings file configured"
 		return m, nil
 	}
-	m.themeOrig = m.settings.ThemeName()
-	m.themeCursor = 0
+	o := &themeOverlay{orig: m.settings.ThemeName()}
 	for i, p := range presets {
-		if p.name == m.themeOrig {
-			m.themeCursor = i
+		if p.name == o.orig {
+			o.cursor = i
 			break
 		}
 	}
-	applyTheme(presets[m.themeCursor].theme)
-	m.mode = modeTheme
+	applyTheme(presets[o.cursor].theme)
+	m.modal = o
 	m.status = ""
-	return m, nil
-}
-
-// handleThemeKey drives the theme picker: ↑/↓ live-preview, r randomize,
-// enter applies + persists, esc reverts.
-func (m Model) handleThemeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "up", "k":
-		if m.themeCursor > 0 {
-			m.themeCursor--
-		}
-	case "down", "j":
-		if m.themeCursor < len(presets)-1 {
-			m.themeCursor++
-		}
-	case "r":
-		m.themeCursor = rand.Intn(len(presets))
-	case "enter":
-		name := presets[m.themeCursor].name
-		m.mode = modeNormal
-		if err := m.settings.SetTheme(name); err != nil {
-			m.status = "theme applied (not saved): " + err.Error()
-			return m, nil
-		}
-		m.status = "theme: " + name
-		return m, nil
-	case "esc", "q":
-		t, ok := themeByName(m.themeOrig)
-		if !ok {
-			t = defaultTheme
-		}
-		applyTheme(t)
-		m.mode = modeNormal
-		m.status = "theme unchanged"
-		return m, nil
-	}
-	applyTheme(presets[m.themeCursor].theme) // live preview
 	return m, nil
 }
 
@@ -1658,7 +976,7 @@ func (m Model) unloadAll() (tea.Model, tea.Cmd) {
 
 func (m Model) selectedHost() (config.Host, bool) {
 	v := m.visibleHosts()
-	i := m.cursor[paneHosts]
+	i := m.vp[paneHosts].cursor
 	if i < 0 || i >= len(v) {
 		return config.Host{}, false
 	}
@@ -1748,81 +1066,9 @@ func (m Model) beginKeyPicker() (tea.Model, tea.Cmd) {
 		m.status = "no on-disk keys to associate"
 		return m, nil
 	}
-	m.pendingHost = host.ID
-	m.pickerCursor = 0
-	m.mode = modeKeyPicker
+	m.modal = &pickerOverlay{host: host.ID}
 	m.status = ""
 	return m, nil
-}
-
-// handlePicker drives the attach/detach overlay. enter toggles association of
-// the highlighted key with the host; the overlay stays open for more changes.
-func (m Model) handlePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	disk := m.diskKeys()
-	switch msg.String() {
-	case "esc", "q":
-		m.mode = modeNormal
-		return m, nil
-	case "up", "k":
-		if m.pickerCursor > 0 {
-			m.pickerCursor--
-		}
-		return m, nil
-	case "down", "j":
-		if m.pickerCursor < len(disk)-1 {
-			m.pickerCursor++
-		}
-		return m, nil
-	case "enter", " ":
-		if m.pickerCursor >= len(disk) {
-			return m, nil
-		}
-		host, ok := m.hostByID(m.pendingHost)
-		if !ok {
-			m.mode = modeNormal
-			return m, nil
-		}
-		sel := disk[m.pickerCursor]
-		h := m.pendingHost
-		if hostHasIdentity(host, sel.ID) {
-			return m, func() tea.Msg { return editDoneMsg{verb: "key detached", err: m.svc.DetachKey(h, sel.ID)} }
-		}
-		return m, func() tea.Msg { return editDoneMsg{verb: "key attached", err: m.svc.AttachKey(h, sel.ID)} }
-	}
-	return m, nil
-}
-
-// activeField is the directive being edited: a newly typed option name, else
-// the currently selected existing field.
-func (m Model) activeField() string {
-	if m.newKey != "" {
-		return m.newKey
-	}
-	if m.fieldIdx < len(m.editFields) {
-		return m.editFields[m.fieldIdx]
-	}
-	return ""
-}
-
-// currentFieldValue returns the selected host's value for the active field.
-func (m Model) currentFieldValue() string {
-	h, ok := m.selectedHost()
-	if !ok {
-		return ""
-	}
-	switch m.activeField() {
-	case "HostName":
-		return h.Hostname
-	case "User":
-		return h.User
-	case "Port":
-		if h.Port == 0 {
-			return ""
-		}
-		return strconv.Itoa(h.Port)
-	default:
-		return h.Options[m.activeField()]
-	}
 }
 
 // toggleSelectedKey loads or unloads the highlighted key in the agent via
@@ -1928,61 +1174,26 @@ func (m Model) listCapacity() int {
 }
 
 // moveCursor shifts the cursor by delta (clamped) and keeps it visible.
+// moveCursor / setCursor / ensureVisible / window / clampCursor bind pane p's
+// viewport to its row count and the screen-dependent list capacity — the Model
+// is the adapter that supplies capacity; the arithmetic lives in viewport.go.
+
 func (m *Model) moveCursor(p pane, delta int) {
-	n := m.rowCountFor(p)
-	cur := m.cursor[p] + delta
-	if cur < 0 {
-		cur = 0
-	}
-	if cur > n-1 {
-		cur = n - 1
-	}
-	if cur < 0 {
-		cur = 0
-	}
-	m.cursor[p] = cur
-	m.ensureVisible(p)
+	m.vp[p].moveCursor(delta, m.rowCountFor(p), m.listCapacity())
+}
+
+func (m *Model) setCursor(p pane, i int) {
+	m.vp[p].setCursor(i, m.rowCountFor(p), m.listCapacity())
 }
 
 // ensureVisible scrolls pane p so its cursor row is within the viewport.
 func (m *Model) ensureVisible(p pane) {
-	cap := m.listCapacity()
-	n := m.rowCountFor(p)
-	if n == 0 {
-		m.scroll[p] = 0
-		return
-	}
-	cur := m.cursor[p]
-	if cur < m.scroll[p] {
-		m.scroll[p] = cur
-	}
-	if cur >= m.scroll[p]+cap {
-		m.scroll[p] = cur - cap + 1
-	}
-	if max := n - cap; m.scroll[p] > max {
-		m.scroll[p] = max
-	}
-	if m.scroll[p] < 0 {
-		m.scroll[p] = 0
-	}
+	m.vp[p].ensureVisible(m.rowCountFor(p), m.listCapacity())
 }
 
 // window returns the [start, end) row range visible for pane p.
 func (m Model) window(p pane) (int, int) {
-	cap := m.listCapacity()
-	n := m.rowCountFor(p)
-	start := m.scroll[p]
-	if start > n-cap {
-		start = n - cap
-	}
-	if start < 0 {
-		start = 0
-	}
-	end := start + cap
-	if end > n {
-		end = n
-	}
-	return start, end
+	return m.vp[p].window(m.rowCountFor(p), m.listCapacity())
 }
 
 // scrollIndicator is a dim "rows X–Y of N" line shown when a pane overflows.
@@ -2010,12 +1221,7 @@ func (m *Model) clampCursors() {
 
 // clampCursor keeps pane p's cursor within [0, rowCount).
 func (m *Model) clampCursor(p pane) {
-	if max := m.rowCountFor(p); m.cursor[p] >= max {
-		m.cursor[p] = max - 1
-	}
-	if m.cursor[p] < 0 {
-		m.cursor[p] = 0
-	}
+	m.vp[p].clampCursor(m.rowCountFor(p))
 }
 
 func (m Model) rowCount() int { return m.rowCountFor(m.active) }
@@ -2057,47 +1263,8 @@ func (m Model) View() string {
 
 // viewInner renders the current pane or active overlay (no bg/shake).
 func (m Model) viewInner() string {
-	switch m.mode {
-	case modeNewKey:
-		return m.card(m.viewNewKey())
-	case modeEdit:
-		return m.card(m.viewEdit())
-	case modeConfirm, modeConfirmDelete:
-		return m.card(m.viewConfirm())
-	case modeNewHost:
-		step := hostSteps[m.hostStep]
-		title := fmt.Sprintf("New host (%d/%d)", m.hostStep+1, len(hostSteps))
-		return m.card(m.viewPrompt(title, step.field+" — "+step.hint))
-	case modeNewHostOptKey:
-		return m.card(m.viewPrompt("New host: add option",
-			"option name (e.g. ForwardAgent) — enter blank to finish"))
-	case modeNewHostOptVal:
-		return m.card(m.viewPrompt("New host: add option", m.draftOptKey+" value"))
-	case modeNewKeyAlgo:
-		return m.card(m.viewKeyAlgo())
-	case modeNewKeyBits:
-		return m.card(m.viewKeyBits())
-	case modeNewKeyGen:
-		return m.card(m.viewPrompt("Generate key ("+m.keySummary()+")",
-			"file name — may prompt for a passphrase"))
-	case modeConfirmDelHost:
-		return m.card(m.viewDeleteConfirm(false))
-	case modeConfirmDelKey:
-		return m.card(m.viewDeleteConfirm(true))
-	case modeKeyPicker:
-		return m.card(m.viewPicker())
-	case modePerms:
-		return m.card(m.viewPerms())
-	case modeKnownHosts:
-		return m.card(m.viewKnownHosts())
-	case modeCopy:
-		return m.card(m.viewCopy())
-	case modeHelp:
-		return m.card(m.viewHelp())
-	case modeTheme:
-		return m.card(m.viewTheme())
-	case modeConfirmRestore:
-		return m.card(m.viewConfirmRestore())
+	if m.modal != nil {
+		return m.card(m.modal.View(&m))
 	}
 
 	header := appTitleStyle.Render("sshush") + "   " + m.renderTabs()
@@ -2195,91 +1362,6 @@ func (m Model) card(content string) string {
 	return "\n" + boxStyle.Render(strings.TrimRight(content, "\n")) + "\n"
 }
 
-func (m Model) viewNewKey() string {
-	var b strings.Builder
-	b.WriteString(tabActive.Render("Add option to "+string(m.pendingHost)) + "\n\n")
-	b.WriteString("  option name (e.g. ForwardAgent)\n")
-	b.WriteString("  " + m.input.View() + "\n\n")
-	b.WriteString(dimStyle.Render("  enter next · esc cancel"))
-	b.WriteString("\n")
-	return b.String()
-}
-
-// viewPicker renders the attach/detach overlay: disk keys with a ✓ for those
-// associated with the host via IdentityFile.
-func (m Model) viewPicker() string {
-	host, _ := m.hostByID(m.pendingHost)
-	disk := m.diskKeys()
-	var b strings.Builder
-	b.WriteString(tabActive.Render("Keys for host: "+string(m.pendingHost)) + "\n\n")
-	for i, id := range disk {
-		attached := hostHasIdentity(host, id.ID)
-		glyph := glyphUnloaded
-		glyphStyle := dimStyle
-		if attached {
-			glyph, glyphStyle = glyphLoaded, loadedBadge
-		}
-		if i == m.pickerCursor {
-			b.WriteString(selectedRow.Render("▸ "+glyph+" "+id.Name) + "\n")
-		} else {
-			b.WriteString("  " + glyphStyle.Render(glyph) + " " + id.Name + "\n")
-		}
-	}
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  ↑/↓ move · enter attach/detach · esc close"))
-	b.WriteString("\n")
-	return b.String()
-}
-
-// keySummary describes the chosen algorithm (+ bits/curve) for the filename step.
-func (m Model) keySummary() string {
-	if m.keyBits > 0 {
-		unit := "bits"
-		if m.keyAlgo == config.AlgECDSA {
-			unit = "curve"
-		}
-		return fmt.Sprintf("%s, %d %s", m.keyAlgo, m.keyBits, unit)
-	}
-	return string(m.keyAlgo)
-}
-
-func (m Model) viewKeyAlgo() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("New key: algorithm") + "\n\n")
-	for i, a := range keyAlgos {
-		if i == m.algoCursor {
-			b.WriteString(selectedRow.Render("▸ "+a.label) + "\n")
-		} else {
-			b.WriteString("  " + a.label + "\n")
-		}
-	}
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ move · enter select · esc cancel") + "\n")
-	return b.String()
-}
-
-func (m Model) viewKeyBits() string {
-	opts := bitsOptions(m.keyAlgo)
-	label := "size (bits)"
-	if m.keyAlgo == config.AlgECDSA {
-		label = "curve"
-	}
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("New "+string(m.keyAlgo)+" key: "+label) + "\n\n")
-	for i, n := range opts {
-		line := strconv.Itoa(n)
-		if i == 0 {
-			line += "  (default)"
-		}
-		if i == m.bitsCursor {
-			b.WriteString(selectedRow.Render("▸ "+line) + "\n")
-		} else {
-			b.WriteString("  " + line + "\n")
-		}
-	}
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ move · enter select · esc cancel") + "\n")
-	return b.String()
-}
-
 // helpSection is one titled block of key/description rows in the help overlay.
 type helpSection struct {
 	title string
@@ -2345,289 +1427,6 @@ func (m Model) helpLines() []string {
 		out = append(out, sectionLines(s)...)
 	}
 	return out
-}
-
-// helpCapacity is how many body rows fit in the help card for the terminal
-// height. Rows available = height minus the card's top/bottom margin (2) +
-// borders (2) + title, blank, and footer (3). Large when height is unknown.
-func (m Model) helpCapacity() int {
-	if m.height <= 0 {
-		return 1 << 30
-	}
-	if c := m.height - 8; c > 1 {
-		return c
-	}
-	return 1
-}
-
-// helpMaxScroll is the furthest the help body can scroll.
-func (m Model) helpMaxScroll() int {
-	if n := len(m.helpLines()) - m.helpCapacity(); n > 0 {
-		return n
-	}
-	return 0
-}
-
-// viewHelp renders the reference, windowed to the terminal height when it would
-// otherwise overflow (scroll with ↑/↓).
-func (m Model) viewHelp() string {
-	lines := m.helpLines()
-	cap := m.helpCapacity()
-	start := m.helpScroll
-	if start > len(lines)-cap {
-		start = len(lines) - cap
-	}
-	if start < 0 {
-		start = 0
-	}
-	end := start + cap
-	if end > len(lines) {
-		end = len(lines)
-	}
-
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("sshush — keybindings") + "\n\n")
-	b.WriteString(strings.Join(lines[start:end], "\n"))
-	b.WriteString("\n\n")
-	if start > 0 || end < len(lines) {
-		b.WriteString(dimStyle.Render(fmt.Sprintf("  %d–%d of %d · ↑/↓ scroll · any other key close",
-			start+1, end, len(lines))))
-	} else {
-		b.WriteString(dimStyle.Render("  press any key to close"))
-	}
-	return b.String()
-}
-
-// handleHelpKey scrolls the help overlay; any non-scroll key closes it.
-func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "up", "k":
-		if m.helpScroll > 0 {
-			m.helpScroll--
-		}
-	case "down", "j":
-		m.helpScroll++ // clamped in viewHelp
-	case "pgup", "ctrl+u":
-		m.helpScroll -= 5
-		if m.helpScroll < 0 {
-			m.helpScroll = 0
-		}
-	case "pgdown", "ctrl+d":
-		m.helpScroll += 5
-	default:
-		m.mode = modeNormal
-		return m, nil
-	}
-	// Clamp to the real range so scrolling back up responds immediately at the
-	// bottom (no overshoot/lag).
-	if maxScroll := m.helpMaxScroll(); m.helpScroll > maxScroll {
-		m.helpScroll = maxScroll
-	}
-	if m.helpScroll < 0 {
-		m.helpScroll = 0
-	}
-	return m, nil
-}
-
-// viewTheme renders the theme picker with a live preview swatch (the swatch
-// reflects the currently-applied/previewed theme).
-func (m Model) viewTheme() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("Theme") + "\n\n")
-
-	// Window the list around the cursor so it never overflows a short terminal.
-	cap := len(presets)
-	if m.height > 0 {
-		if c := m.height - 12; c > 2 {
-			cap = c
-		} else {
-			cap = 2
-		}
-	}
-	start := m.themeCursor - cap/2
-	if start > len(presets)-cap {
-		start = len(presets) - cap
-	}
-	if start < 0 {
-		start = 0
-	}
-	end := start + cap
-	if end > len(presets) {
-		end = len(presets)
-	}
-	for i := start; i < end; i++ {
-		if i == m.themeCursor {
-			b.WriteString(selectedRow.Render("▸ "+presets[i].name) + "\n")
-		} else {
-			b.WriteString("  " + textStyle.Render(presets[i].name) + "\n")
-		}
-	}
-	if start > 0 || end < len(presets) {
-		b.WriteString(dimStyle.Render(fmt.Sprintf("  %d–%d of %d", start+1, end, len(presets))) + "\n")
-	}
-	// Preview swatch using the live styles.
-	swatch := loadedBadge.Render("●") + " " + textStyle.Render("loaded") + "   " +
-		starStyle.Render("★ default") + "   " + hostTagStyle.Render("↪ host") + "   " +
-		errStyle.Render("error")
-	b.WriteString("\n  " + swatch + "\n")
-	b.WriteString("\n" + dimStyle.Render("  ↑/↓ preview · enter apply · r random · esc cancel") + "\n")
-	return b.String()
-}
-
-// viewConfirmRestore renders the restore-from-backup y/n gate, listing the
-// files that will be reverted.
-func (m Model) viewConfirmRestore() string {
-	var b strings.Builder
-	b.WriteString(errStyle.Render("Restore config from backup") + "\n\n")
-	b.WriteString("  Revert these file(s) to their .bak snapshot (taken before\n")
-	b.WriteString("  sshush's first edit), discarding changes made since:\n\n")
-	for _, p := range m.svc.BackupPaths() {
-		b.WriteString("  " + textStyle.Render(p) + dimStyle.Render(".bak → "+p) + "\n")
-	}
-	b.WriteString("\n  " + keyCap.Render("y") + " restore    " + keyCap.Render("n") + " cancel")
-	b.WriteString("\n")
-	return b.String()
-}
-
-// viewCopy renders the clipboard copy menu.
-func (m Model) viewCopy() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("Copy to clipboard") + "\n\n")
-	for _, o := range m.copyOpts {
-		preview := o.content
-		if len(preview) > 48 {
-			preview = preview[:48] + "…"
-		}
-		b.WriteString("  " + keyCap.Render(o.key) + "  " + o.label + "  " + dimStyle.Render(preview) + "\n")
-	}
-	b.WriteString("\n" + dimStyle.Render("  press a letter · esc cancel") + "\n")
-	return b.String()
-}
-
-// viewKnownHosts renders the known_hosts browser with a removal confirm gate.
-func (m Model) viewKnownHosts() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render(fmt.Sprintf("known_hosts — %d entries", len(m.khEntries))) + "\n\n")
-
-	start, end := m.khWindow()
-	for i := start; i < end; i++ {
-		e := m.khEntries[i]
-		host := e.Display()
-		if e.Hashed {
-			host = dimStyle.Render(host)
-		}
-		line := fmt.Sprintf("%-28s %-20s %s", host, e.KeyType, dimStyle.Render(e.Fingerprint))
-		if i == m.khCursor {
-			b.WriteString(selectedRow.Render("▸ "+line) + "\n")
-		} else {
-			b.WriteString("  " + line + "\n")
-		}
-	}
-	if start > 0 || end < len(m.khEntries) {
-		b.WriteString(dimStyle.Render(fmt.Sprintf("  rows %d–%d of %d\n", start+1, end, len(m.khEntries))))
-	}
-
-	b.WriteString("\n")
-	if m.khConfirm {
-		sel := m.khEntries[m.khCursor]
-		b.WriteString(errStyle.Render(fmt.Sprintf("  remove key for %s?  ", sel.Display())) +
-			keyCap.Render("y") + " yes  " + keyCap.Render("n") + " no")
-	} else {
-		b.WriteString(dimStyle.Render("  ↑/↓ move · d remove · esc close"))
-	}
-	b.WriteString("\n")
-	return b.String()
-}
-
-// viewPerms lists the permission issues found and gates the chmod fix.
-func (m Model) viewPerms() string {
-	var b strings.Builder
-	b.WriteString(errStyle.Render("Permission issues — ssh may reject these") + "\n\n")
-	for _, i := range m.permIssues {
-		b.WriteString(fmt.Sprintf("  %s  %s→%s  %s\n",
-			i.Path,
-			dimStyle.Render(fmt.Sprintf("%04o", i.Got)),
-			starStyle.Render(fmt.Sprintf("%04o", i.Want)),
-			dimStyle.Render(i.Why)))
-	}
-	b.WriteString("\n  " + keyCap.Render("y") + " fix all (chmod)    " + keyCap.Render("n") + " cancel")
-	b.WriteString("\n")
-	return b.String()
-}
-
-// viewPrompt renders a single-line text prompt (new host / new key).
-func (m Model) viewPrompt(title, hint string) string {
-	var b strings.Builder
-	b.WriteString(tabActive.Render(title) + "\n\n")
-	b.WriteString("  " + hint + "\n")
-	b.WriteString("  " + m.input.View() + "\n\n")
-	b.WriteString(dimStyle.Render("  enter confirm · esc cancel"))
-	b.WriteString("\n")
-	return b.String()
-}
-
-// viewDeleteConfirm renders a y/n gate; key deletion is flagged irreversible.
-func (m Model) viewDeleteConfirm(key bool) string {
-	var b strings.Builder
-	if key {
-		b.WriteString(errStyle.Render("Delete key files — IRREVERSIBLE") + "\n\n")
-		b.WriteString(fmt.Sprintf("  Permanently delete %s and its .pub from disk\n", m.pendingKey))
-		b.WriteString(errStyle.Render("  the private key cannot be recovered") + "\n\n")
-	} else {
-		b.WriteString(errStyle.Render("Delete host") + "\n\n")
-		b.WriteString(fmt.Sprintf("  Remove host %s from the config\n", m.pendingHost))
-		if h, ok := m.hostByID(m.pendingHost); ok && h.IsPattern {
-			b.WriteString(errStyle.Render("  this is a wildcard block — removes defaults for every matching connection") + "\n")
-		}
-		b.WriteString(dimStyle.Render("  (a .bak backup of the config file is written first)") + "\n\n")
-	}
-	b.WriteString("  " + keyCap.Render("y") + " delete    " + keyCap.Render("n") + " cancel")
-	b.WriteString("\n")
-	return b.String()
-}
-
-func (m Model) viewEdit() string {
-	var b strings.Builder
-	title := "Edit host: " + string(m.pendingHost)
-	if m.newKey != "" {
-		title = "Add " + m.newKey + " to " + string(m.pendingHost)
-	}
-	b.WriteString(tabActive.Render(title) + "\n\n")
-	switch {
-	case m.newKey != "":
-		b.WriteString("  " + m.newKey + "\n")
-		b.WriteString("  " + m.input.View() + "\n\n")
-		b.WriteString(dimStyle.Render("  enter confirm · esc cancel"))
-	case len(m.editFields) == 0:
-		b.WriteString(dimStyle.Render("  (no directives set)") + "\n\n")
-		b.WriteString(dimStyle.Render("  ctrl+o add option · esc cancel"))
-	default:
-		b.WriteString("  " + m.activeField() + "\n")
-		b.WriteString("  " + m.input.View() + "\n\n")
-		b.WriteString(dimStyle.Render("  tab next · ctrl+o add option · ctrl+d delete · enter confirm · esc cancel"))
-	}
-	b.WriteString("\n")
-	return b.String()
-}
-
-func (m Model) viewConfirm() string {
-	field := m.activeField()
-	var b strings.Builder
-	if m.mode == modeConfirmDelete {
-		b.WriteString(errStyle.Render("Confirm delete") + "\n\n")
-		b.WriteString(fmt.Sprintf("  Remove %s from %s\n", field, m.pendingHost))
-	} else {
-		val := strings.TrimSpace(m.input.Value())
-		b.WriteString(tabActive.Render("Confirm write") + "\n\n")
-		b.WriteString(fmt.Sprintf("  Set %s of %s to %q\n", field, m.pendingHost, val))
-	}
-	if h, ok := m.hostByID(m.pendingHost); ok && h.IsPattern {
-		b.WriteString(errStyle.Render("  this is a wildcard block — affects every matching connection") + "\n")
-	}
-	b.WriteString(dimStyle.Render("  (a .bak backup of the config file is written first)") + "\n\n")
-	b.WriteString("  " + keyCap.Render("y") + " write    " + keyCap.Render("n") + " cancel")
-	b.WriteString("\n")
-	return b.String()
 }
 
 // helpLine is the footer hint, tailored to the active pane.
@@ -2824,7 +1623,7 @@ func padClip(s string, n int) string {
 // spans would reset the background mid-row); other rows use the styled text.
 // The inactive pane's cursor still gets a dim marker so its position is visible.
 func (m Model) listRow(p pane, i int, plain, styled string, w int) string {
-	if p == m.active && i == m.cursor[p] {
+	if p == m.active && i == m.vp[p].cursor {
 		s := selectedRow
 		if w > 0 {
 			s = s.Width(w)
@@ -2832,7 +1631,7 @@ func (m Model) listRow(p pane, i int, plain, styled string, w int) string {
 		return s.Render(fit("▸ "+plain, w))
 	}
 	prefix := "  "
-	if i == m.cursor[p] {
+	if i == m.vp[p].cursor {
 		prefix = dimStyle.Render("▸ ") // inactive pane cursor
 	}
 	return prefix + fit(styled, w-2)
