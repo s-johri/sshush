@@ -194,14 +194,14 @@ func TestEditFlowConfirmWrites(t *testing.T) {
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // switch to Hosts pane
 
 	m = feed(m, key("e")) // open editor
-	if m.mode != modeEdit {
-		t.Fatalf("expected modeEdit, got %d", m.mode)
+	if _, ok := m.modal.(*editOverlay); !ok {
+		t.Fatalf("expected editOverlay, got %T", m.modal)
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // HostName -> User (prefilled "deploy")
 	m = feed(m, key("2"))                     // -> "deploy2"
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.mode != modeConfirm {
-		t.Fatalf("expected modeConfirm, got %d", m.mode)
+	if o := m.modal.(*editOverlay); o.phase != edPhaseConfirm {
+		t.Fatalf("expected confirm phase, got %d", o.phase)
 	}
 
 	out, cmd := m.Update(key("y"))
@@ -252,8 +252,8 @@ func TestRestoreFlow(t *testing.T) {
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()})
 	m = feed(m, key("R"))
-	if m.mode != modeNormal || !strings.Contains(m.status, "no backup") {
-		t.Fatalf("R without backup: mode=%d status=%q", m.mode, m.status)
+	if m.modal != nil || !strings.Contains(m.status, "no backup") {
+		t.Fatalf("R without backup: modal=%v status=%q", m.modal, m.status)
 	}
 
 	// With a backup: R opens a confirm listing the file; y dispatches restore.
@@ -283,8 +283,8 @@ func TestRestoreFlow(t *testing.T) {
 	m3 = feed(m3, refreshedMsg{model: snapshot()})
 	m3 = feed(m3, key("R"))
 	m3 = feed(m3, key("n"))
-	if m3.mode != modeNormal || svc3.restoreCalls != 0 {
-		t.Errorf("cancel must not restore: mode=%d calls=%d", m3.mode, svc3.restoreCalls)
+	if m3.modal != nil || svc3.restoreCalls != 0 {
+		t.Errorf("cancel must not restore: modal=%v calls=%d", m3.modal, svc3.restoreCalls)
 	}
 }
 
@@ -310,8 +310,8 @@ func TestMatchHostReadOnly(t *testing.T) {
 	for _, k := range []string{"e", "d", "i"} {
 		out, cmd := m.Update(key(k))
 		mm := out.(Model)
-		if mm.mode != modeNormal {
-			t.Errorf("%q opened an overlay on a Match block (mode=%d)", k, mm.mode)
+		if mm.modal != nil {
+			t.Errorf("%q opened an overlay on a Match block (%T)", k, mm.modal)
 		}
 		if cmd != nil {
 			t.Errorf("%q dispatched a command on a Match block", k)
@@ -338,8 +338,8 @@ func TestEditFlowCancelNoWrite(t *testing.T) {
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // to confirm
 	m = feed(m, key("n"))                       // cancel
 
-	if m.mode != modeNormal {
-		t.Errorf("cancel should return to normal mode, got %d", m.mode)
+	if m.modal != nil {
+		t.Errorf("cancel should close the overlay, got %T", m.modal)
 	}
 	if len(svc.edits) != 0 {
 		t.Errorf("cancel must not write: %v", svc.edits)
@@ -354,16 +354,16 @@ func TestAddOptionFlow(t *testing.T) {
 
 	m = feed(m, key("e"))                       // open edit overlay
 	m = feed(m, tea.KeyMsg{Type: tea.KeyCtrlO}) // add option from inside edit
-	if m.mode != modeNewKey {
-		t.Fatalf("expected modeNewKey, got %d", m.mode)
+	if o := m.modal.(*editOverlay); o.phase != edPhaseOptName {
+		t.Fatalf("expected option-name phase, got %d", o.phase)
 	}
 	// type "ForwardAgent"
 	for _, r := range "ForwardAgent" {
 		m = feed(m, key(string(r)))
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // name -> value entry
-	if m.mode != modeEdit || m.newKey != "ForwardAgent" {
-		t.Fatalf("after key entry: mode=%d newKey=%q", m.mode, m.newKey)
+	if o := m.modal.(*editOverlay); o.phase != edPhaseValue || o.newKey != "ForwardAgent" {
+		t.Fatalf("after key entry: phase=%d newKey=%q", o.phase, o.newKey)
 	}
 	for _, r := range "yes" {
 		m = feed(m, key(string(r)))
@@ -395,12 +395,12 @@ func TestDeleteDirectiveFlow(t *testing.T) {
 
 	m = feed(m, key("e"))                     // edit; present fields = [User, ForwardAgent]
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // User -> ForwardAgent
-	if m.activeField() != "ForwardAgent" {
-		t.Fatalf("expected ForwardAgent active, got %q", m.activeField())
+	if o := m.modal.(*editOverlay); o.activeField() != "ForwardAgent" {
+		t.Fatalf("expected ForwardAgent active, got %q", o.activeField())
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyCtrlD}) // request delete
-	if m.mode != modeConfirmDelete {
-		t.Fatalf("expected modeConfirmDelete, got %d", m.mode)
+	if o := m.modal.(*editOverlay); o.phase != edPhaseConfirmDel {
+		t.Fatalf("expected delete-confirm phase, got %d", o.phase)
 	}
 	out, cmd := m.Update(key("y"))
 	m = out.(Model)
@@ -834,38 +834,12 @@ func TestReloadDeferredDuringOverlay(t *testing.T) {
 	fw := &fakeWatcher{ch: make(chan struct{}, 1)}
 	m := New(&fakeService{model: snapshot()}).WithWatcher(fw)
 	m = feed(m, refreshedMsg{model: snapshot()})
-	m.mode = modeEdit // pretend an overlay is open
-
-	out, _ := m.Update(reloadMsg{})
-	m = out.(Model)
-	if !m.pendingReload {
-		t.Error("reload during overlay should be deferred")
-	}
-	if m.loading {
-		t.Error("must not refresh while an overlay is open")
-	}
-
-	// Returning to normal and ticking flushes the deferred reload.
-	m.mode = modeNormal
-	out, cmd := m.Update(tickMsg{})
-	m = out.(Model)
-	if m.pendingReload || !m.loading || cmd == nil {
-		t.Error("tick should flush a pending reload once idle")
-	}
-}
-
-// A new-seam overlay (m.modal) also defers reloads, even though it leaves
-// m.mode == modeNormal.
-func TestReloadDeferredDuringModalOverlay(t *testing.T) {
-	fw := &fakeWatcher{ch: make(chan struct{}, 1)}
-	m := New(&fakeService{model: snapshot()}).WithWatcher(fw)
-	m = feed(m, refreshedMsg{model: snapshot()})
 	m.modal = &copyOverlay{opts: []copyOption{{"p", "public key", "x"}}}
 
 	out, _ := m.Update(reloadMsg{})
 	m = out.(Model)
 	if !m.pendingReload || m.loading {
-		t.Errorf("reload during a modal overlay should defer: pending=%v loading=%v",
+		t.Errorf("reload during an overlay should defer: pending=%v loading=%v",
 			m.pendingReload, m.loading)
 	}
 
@@ -1561,7 +1535,7 @@ func TestHelpFitsAndScrolls(t *testing.T) {
 	}
 	// A non-scroll key still closes.
 	m = feed(m, key("x"))
-	if m.mode != modeNormal {
+	if m.modal != nil {
 		t.Error("non-scroll key should close help")
 	}
 }
