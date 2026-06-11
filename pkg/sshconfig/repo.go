@@ -8,11 +8,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
-	"unsafe"
 
 	sshcfg "github.com/kevinburke/ssh_config"
 	"github.com/s-johri/sshush/pkg/config"
@@ -200,24 +198,6 @@ func hostFromAST(h *sshcfg.Host) (config.Host, bool) {
 		}
 	}
 	return host, true
-}
-
-// isImplicitHost reports whether h is the parser's synthetic global block.
-// The flag is unexported; pinned to ssh_config v1.6.0 and guarded by tests.
-func isImplicitHost(h *sshcfg.Host) bool {
-	return reflect.ValueOf(h).Elem().FieldByName("implicit").Bool()
-}
-
-// isMatchHost reports whether h came from a `Match` directive. The flag is
-// unexported; pinned to ssh_config v1.6.0 and guarded by tests.
-func isMatchHost(h *sshcfg.Host) bool {
-	return reflect.ValueOf(h).Elem().FieldByName("isMatch").Bool()
-}
-
-// matchKeywordOf returns the original-case word after `Match` (e.g. "Host" or
-// "all"), preserved by the parser for round-tripping. Unexported; v1.6.0.
-func matchKeywordOf(h *sshcfg.Host) string {
-	return reflect.ValueOf(h).Elem().FieldByName("matchKeyword").String()
 }
 
 // matchCriteria renders a Match block's condition for display, reconstructing
@@ -572,35 +552,4 @@ func fileMode(path string) os.FileMode {
 		return fi.Mode().Perm()
 	}
 	return 0o600
-}
-
-// blockIndent returns the leading-space width of the first directive in a host
-// block, so appended directives line up. Defaults to 4 spaces.
-func blockIndent(host *sshcfg.Host) int {
-	for _, node := range host.Nodes {
-		if kv, ok := node.(*sshcfg.KV); ok {
-			return int(reflect.ValueOf(kv).Elem().FieldByName("leadingSpace").Int())
-		}
-	}
-	return 4
-}
-
-// setKVValue updates a KV's value so String() emits it. The library always
-// populates the unexported rawValue from the parsed text and prefers it over
-// Value, so rawValue must be cleared. Indentation, spacing, and any trailing
-// comment are preserved. Pinned to ssh_config v1.6.0; guarded by TestSetField.
-func setKVValue(kv *sshcfg.KV, val string) {
-	kv.Value = val
-	setUnexportedString(kv, "rawValue", "")
-}
-
-// setKVIndent sets a freshly created KV's leading indentation (unexported).
-func setKVIndent(kv *sshcfg.KV, spaces int) {
-	v := reflect.ValueOf(kv).Elem().FieldByName("leadingSpace")
-	reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().SetInt(int64(spaces))
-}
-
-func setUnexportedString(ptr any, field, val string) {
-	v := reflect.ValueOf(ptr).Elem().FieldByName(field)
-	reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().SetString(val)
 }
