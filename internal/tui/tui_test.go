@@ -1469,17 +1469,8 @@ func TestCopyHostSshCommand(t *testing.T) {
 	out, cmd := m.Update(key("s"))
 	m = out.(Model)
 	cmd()
-	if copied != "ssh deploy@example.com -p 22" {
+	if copied != "ssh -p 22 deploy@example.com" {
 		t.Errorf("copied %q", copied)
-	}
-}
-
-func TestSshCommand(t *testing.T) {
-	if got := sshCommand(config.Host{Name: "web", Hostname: "h", User: "u", Port: 2222}); got != "ssh u@h -p 2222" {
-		t.Errorf("explicit = %q", got)
-	}
-	if got := sshCommand(config.Host{Name: "alias only"}); got != "ssh alias" {
-		t.Errorf("alias fallback = %q", got)
 	}
 }
 
@@ -1777,3 +1768,57 @@ func TestRefreshErrorShown(t *testing.T) {
 type errFake struct{}
 
 func (errFake) Error() string { return "boom" }
+
+func TestSSHArgsUseConfigFlagOnlyWhenCustom(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	if got := m.sshArgs("web"); !slicesEqual(got, []string{"web"}) {
+		t.Errorf("default config: args = %v, want [web]", got)
+	}
+	m = m.WithConfigFlag("/work/sshcfg")
+	if got := m.sshArgs("web"); !slicesEqual(got, []string{"-F", "/work/sshcfg", "web"}) {
+		t.Errorf("custom config: args = %v", got)
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestSSHCommandForExplicitExpansion(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"id_a": {ID: "id_a", Name: "id_a", Path: "/k/id_a", ExistsOnDisk: true},
+		},
+		Hosts: map[config.HostID]config.Host{
+			"db": {ID: "db", Name: "db", Hostname: "10.0.0.5", User: "postgres", Port: 2222,
+				Identities: []config.IdentityID{"id_a"},
+				Options:    map[string]string{"ProxyJump": "bastion", "ForwardAgent": "yes"}},
+		},
+	}
+	m := New(&fakeService{model: snap})
+	m = feed(m, refreshedMsg{model: snap})
+
+	h, _ := m.hostByID("db")
+	got := m.sshCommandFor(h)
+	want := "ssh -p 2222 -i /k/id_a -o ForwardAgent=yes -o ProxyJump=bastion postgres@10.0.0.5"
+	if got != want {
+		t.Errorf("explicit command:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestSSHCommandForNoHostnameFallsBack(t *testing.T) {
+	m := New(&fakeService{model: snapshot()}).WithConfigFlag("/work/sshcfg")
+	m = feed(m, refreshedMsg{model: snapshot()})
+	h := config.Host{ID: "bare", Name: "bare"}
+	if got := m.sshCommandFor(h); got != "ssh -F /work/sshcfg bare" {
+		t.Errorf("fallback = %q", got)
+	}
+}

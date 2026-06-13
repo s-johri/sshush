@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -159,6 +160,14 @@ func runTUI() {
 
 	model := tui.New(newService(settings.SshDir(), settings.ConfigPath()))
 	model = model.WithSettings(settings).WithSshDir(settings.SshDir())
+
+	// A custom config means `ssh <alias>` would resolve against the wrong
+	// file; pass it to the TUI so connect/copy carry -F <path>.
+	if cfg := settings.ConfigPath(); cfg != "" {
+		if abs, err := filepath.Abs(cfg); err == nil {
+			model = model.WithConfigFlag(abs)
+		}
+	}
 
 	// Async update-check on launch: skipped for dev builds (no version to
 	// compare) and when disabled via `check_updates = false`.
