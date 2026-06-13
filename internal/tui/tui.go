@@ -619,9 +619,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// The active overlay captures input first (see overlay.go).
+	// The active overlay captures input first (see overlay.go). It sees the same
+	// padding-reduced dimensions View renders with, so scroll-clamping (e.g. the
+	// help overlay's maxScroll) agrees with what's drawn. The reduced dims live on
+	// a copy so the full size is preserved on the returned model.
 	if m.modal != nil {
-		next, cmd := m.modal.Update(msg, &m)
+		sized := m
+		padX, padY := m.padding()
+		sized.width -= 2 * padX
+		sized.height -= 2 * padY
+		next, cmd := m.modal.Update(msg, &sized)
+		// Carry back any non-dimension state the overlay mutated on the copy, then
+		// restore the full size.
+		sized.width, sized.height = m.width, m.height
+		m = sized
 		m.modal = next
 		return m, cmd
 	}
@@ -1250,10 +1261,40 @@ var (
 	hostTagStyle, flashGoodStyle, flashBadStyle lipgloss.Style
 )
 
-// View renders the current screen, then layers the theme background and any
-// active screen-shake over the whole output (so overlays get them too).
+// padding is the breathing room around the whole app: 1 row top/bottom and
+// 2 cols left/right, dropped entirely on small terminals so content wins.
+func (m Model) padding() (x, y int) {
+	if m.width >= 40 && m.height >= 12 {
+		return 2, 1
+	}
+	return 0, 0
+}
+
+// applyPadding insets s by x columns and y blank rows (no trailing newline).
+func applyPadding(s string, x, y int) string {
+	lines := strings.Split(s, "\n")
+	pad := strings.Repeat(" ", x)
+	for i := range lines {
+		lines[i] = pad + lines[i]
+	}
+	blank := make([]string, y)
+	out := append(append(blank, lines...), make([]string, y)...)
+	return strings.Join(out, "\n")
+}
+
+// View renders the current screen on a model copy whose dimensions are reduced
+// by the padding, then layers the padding, the theme background (at full size,
+// so it covers the padding), and any active screen-shake over the whole output
+// (so overlays get them too).
 func (m Model) View() string {
-	out := m.viewInner()
+	padX, padY := m.padding()
+	inner := m
+	inner.width -= 2 * padX
+	inner.height -= 2 * padY
+	out := inner.viewInner()
+	if padX > 0 || padY > 0 {
+		out = applyPadding(out, padX, padY)
+	}
 	out = applyBackground(out, m.width, m.height)
 	if m.fxActive() && m.fx.shakeAmp > 0 {
 		out = m.applyShake(out)
