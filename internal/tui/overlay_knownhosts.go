@@ -77,11 +77,15 @@ func (o *knownHostsOverlay) View(m *Model) string {
 	start, end := o.vp.window(len(o.entries), o.capacity(m))
 	for i := start; i < end; i++ {
 		e := o.entries[i]
-		host := e.Display()
+		// Pad the plain host/keytype cells first (so column math counts runes,
+		// not ANSI bytes), then route them through a theme style.
+		hostCell := fmt.Sprintf("%-28s", e.Display())
+		typeCell := fmt.Sprintf("%-20s ", e.KeyType)
+		hostStyle := textStyle
 		if e.Hashed {
-			host = dimStyle.Render(host)
+			hostStyle = dimStyle
 		}
-		line := fmt.Sprintf("%-28s %-20s %s", host, e.KeyType, dimStyle.Render(e.Fingerprint))
+		line := hostStyle.Render(hostCell) + " " + textStyle.Render(typeCell) + dimStyle.Render(e.Fingerprint)
 		if i == o.vp.cursor {
 			b.WriteString(selectedRow.Render("▸ "+line) + "\n")
 		} else {
@@ -96,7 +100,7 @@ func (o *knownHostsOverlay) View(m *Model) string {
 	if o.confirm {
 		sel := o.entries[o.vp.cursor]
 		b.WriteString(errStyle.Render(fmt.Sprintf("  remove key for %s?  ", sel.Display())) +
-			keyCap.Render("y") + " yes  " + keyCap.Render("n") + " no")
+			keyCap.Render("y") + textStyle.Render(" yes  ") + keyCap.Render("n") + textStyle.Render(" no"))
 	} else {
 		b.WriteString(dimStyle.Render("  ↑/↓ move · d remove · esc close"))
 	}
