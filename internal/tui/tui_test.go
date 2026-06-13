@@ -1814,6 +1814,28 @@ func TestSSHCommandForExplicitExpansion(t *testing.T) {
 	}
 }
 
+func TestSSHCommandForShellQuotesSpaces(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"id_sp": {ID: "id_sp", Name: "id_sp", Path: "/home/u/My Keys/id_rsa", ExistsOnDisk: true},
+		},
+		Hosts: map[config.HostID]config.Host{
+			"sp": {ID: "sp", Name: "sp", Hostname: "h.example", User: "me",
+				Identities: []config.IdentityID{"id_sp"},
+				Options:    map[string]string{"ProxyCommand": "ssh -W %h:%p bastion"}},
+		},
+	}
+	m := New(&fakeService{model: snap})
+	m = feed(m, refreshedMsg{model: snap})
+
+	h, _ := m.hostByID("sp")
+	got := m.sshCommandFor(h)
+	want := "ssh -i '/home/u/My Keys/id_rsa' -o ProxyCommand='ssh -W %h:%p bastion' me@h.example"
+	if got != want {
+		t.Errorf("quoted command:\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestSSHCommandForNoHostnameFallsBack(t *testing.T) {
 	m := New(&fakeService{model: snapshot()}).WithConfigFlag("/work/sshcfg")
 	m = feed(m, refreshedMsg{model: snapshot()})

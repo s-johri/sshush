@@ -758,25 +758,48 @@ func (m Model) sshCommandFor(h config.Host) string {
 	if h.Hostname == "" {
 		return "ssh " + strings.Join(m.sshArgs(firstAlias(h.Name)), " ")
 	}
-	cmd := "ssh"
+	parts := []string{"ssh"}
 	if h.Port != 0 {
-		cmd += fmt.Sprintf(" -p %d", h.Port)
+		parts = append(parts, "-p", fmt.Sprintf("%d", h.Port))
 	}
 	for _, id := range h.Identities {
 		for _, ident := range m.ids {
 			if ident.ID == id && ident.Path != "" {
-				cmd += " -i " + ident.Path
+				parts = append(parts, "-i", shellQuote(ident.Path))
 				break
 			}
 		}
 	}
 	for _, k := range sortedOptionKeys(h.Options) {
-		cmd += fmt.Sprintf(" -o %s=%s", k, h.Options[k])
+		parts = append(parts, "-o", k+"="+shellQuote(h.Options[k]))
 	}
 	if h.User != "" {
-		return cmd + " " + h.User + "@" + h.Hostname
+		parts = append(parts, h.User+"@"+h.Hostname)
+	} else {
+		parts = append(parts, h.Hostname)
 	}
-	return cmd + " " + h.Hostname
+	return strings.Join(parts, " ")
+}
+
+// shellQuote wraps s in single quotes if it contains characters the shell
+// would interpret, so the copied command is safe to paste. Empty stays "”".
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	safe := true
+	for _, r := range s {
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' ||
+			strings.ContainsRune("-_./:@%=+,", r)) {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	// single-quote, escaping embedded single quotes as '\''
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // sortedOptionKeys returns a host's option names in sorted order (determinism).
