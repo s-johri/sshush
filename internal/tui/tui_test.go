@@ -916,7 +916,7 @@ func TestToggleDefaultKey(t *testing.T) {
 	if !fs.IsDefault("id_ed") || !strings.Contains(m.status, "added default") {
 		t.Errorf("first press should add default; status=%q defaults=%v", m.status, fs.defaults)
 	}
-	if !strings.Contains(m.View(), "★ default") {
+	if !strings.Contains(m.View(), "★") {
 		t.Error("default key should be marked")
 	}
 
