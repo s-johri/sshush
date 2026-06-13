@@ -34,6 +34,8 @@ func newNewKeyWizard() *newKeyWizard {
 	ti := textinput.New()
 	ti.CharLimit = 256
 	ti.Width = 40
+	ti.PromptStyle = textStyle
+	ti.TextStyle = textStyle
 	return &newKeyWizard{input: ti}
 }
 
@@ -159,7 +161,7 @@ func (o *newKeyWizard) viewAlgo() string {
 		if i == o.algoCursor {
 			b.WriteString(selectedRow.Render("▸ "+a.label) + "\n")
 		} else {
-			b.WriteString("  " + a.label + "\n")
+			b.WriteString("  " + textStyle.Render(a.label) + "\n")
 		}
 	}
 	b.WriteString("\n" + dimStyle.Render("  ↑/↓ move · enter select · esc cancel") + "\n")
@@ -182,7 +184,7 @@ func (o *newKeyWizard) viewBits() string {
 		if i == o.bitsCursor {
 			b.WriteString(selectedRow.Render("▸ "+line) + "\n")
 		} else {
-			b.WriteString("  " + line + "\n")
+			b.WriteString("  " + textStyle.Render(line) + "\n")
 		}
 	}
 	b.WriteString("\n" + dimStyle.Render("  ↑/↓ move · enter select · esc cancel") + "\n")
@@ -192,7 +194,7 @@ func (o *newKeyWizard) viewBits() string {
 func (o *newKeyWizard) viewName() string {
 	var b strings.Builder
 	b.WriteString(tabActive.Render("Generate key ("+o.summary()+")") + "\n\n")
-	b.WriteString("  file name — may prompt for a passphrase\n")
+	b.WriteString(dimStyle.Render("  file name — may prompt for a passphrase") + "\n")
 	b.WriteString("  " + o.input.View() + "\n\n")
 	b.WriteString(dimStyle.Render("  enter confirm · esc cancel"))
 	b.WriteString("\n")

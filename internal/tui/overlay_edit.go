@@ -37,6 +37,8 @@ func newEditOverlay(host config.Host) *editOverlay {
 	ti := textinput.New()
 	ti.CharLimit = 256
 	ti.Width = 40
+	ti.PromptStyle = textStyle
+	ti.TextStyle = textStyle
 	o := &editOverlay{host: host.ID, fields: presentFields(host)}
 	o.input = ti
 	o.input.SetValue(o.currentFieldValue(host))
@@ -213,14 +215,14 @@ func (o *editOverlay) viewValue() string {
 	b.WriteString(tabActive.Render(title) + "\n\n")
 	switch {
 	case o.newKey != "":
-		b.WriteString("  " + o.newKey + "\n")
+		b.WriteString(textStyle.Render("  "+o.newKey) + "\n")
 		b.WriteString("  " + o.input.View() + "\n\n")
 		b.WriteString(dimStyle.Render("  enter confirm · esc cancel"))
 	case len(o.fields) == 0:
 		b.WriteString(dimStyle.Render("  (no directives set)") + "\n\n")
 		b.WriteString(dimStyle.Render("  ctrl+o add option · esc cancel"))
 	default:
-		b.WriteString("  " + o.activeField() + "\n")
+		b.WriteString(textStyle.Render("  "+o.activeField()) + "\n")
 		b.WriteString("  " + o.input.View() + "\n\n")
 		b.WriteString(dimStyle.Render("  tab next · ctrl+o add option · ctrl+d delete · enter confirm · esc cancel"))
 	}
@@ -231,7 +233,7 @@ func (o *editOverlay) viewValue() string {
 func (o *editOverlay) viewOptName() string {
 	var b strings.Builder
 	b.WriteString(tabActive.Render("Add option to "+string(o.host)) + "\n\n")
-	b.WriteString("  option name (e.g. ForwardAgent)\n")
+	b.WriteString(dimStyle.Render("  option name (e.g. ForwardAgent)") + "\n")
 	b.WriteString("  " + o.input.View() + "\n\n")
 	b.WriteString(dimStyle.Render("  enter next · esc cancel"))
 	b.WriteString("\n")
@@ -243,17 +245,17 @@ func (o *editOverlay) viewConfirm(m *Model) string {
 	var b strings.Builder
 	if o.phase == edPhaseConfirmDel {
 		b.WriteString(errStyle.Render("Confirm delete") + "\n\n")
-		b.WriteString(fmt.Sprintf("  Remove %s from %s\n", field, o.host))
+		b.WriteString(textStyle.Render(fmt.Sprintf("  Remove %s from %s", field, o.host)) + "\n")
 	} else {
 		val := strings.TrimSpace(o.input.Value())
 		b.WriteString(tabActive.Render("Confirm write") + "\n\n")
-		b.WriteString(fmt.Sprintf("  Set %s of %s to %q\n", field, o.host, val))
+		b.WriteString(textStyle.Render(fmt.Sprintf("  Set %s of %s to %q", field, o.host, val)) + "\n")
 	}
 	if h, ok := m.hostByID(o.host); ok && h.IsPattern {
 		b.WriteString(errStyle.Render("  this is a wildcard block — affects every matching connection") + "\n")
 	}
 	b.WriteString(dimStyle.Render("  (a .bak backup of the config file is written first)") + "\n\n")
-	b.WriteString("  " + keyCap.Render("y") + " write    " + keyCap.Render("n") + " cancel")
+	b.WriteString("  " + keyCap.Render("y") + textStyle.Render(" write    ") + keyCap.Render("n") + textStyle.Render(" cancel"))
 	b.WriteString("\n")
 	return b.String()
 }

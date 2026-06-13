@@ -63,7 +63,7 @@ func (o *pickerOverlay) View(m *Model) string {
 		if i == o.cursor {
 			b.WriteString(selectedRow.Render("▸ "+glyph+" "+id.Name) + "\n")
 		} else {
-			b.WriteString("  " + glyphStyle.Render(glyph) + " " + id.Name + "\n")
+			b.WriteString("  " + glyphStyle.Render(glyph) + " " + textStyle.Render(id.Name) + "\n")
 		}
 	}
 	b.WriteString("\n")

@@ -32,13 +32,13 @@ func (o *permsOverlay) View(m *Model) string {
 	var b strings.Builder
 	b.WriteString(errStyle.Render("Permission issues — ssh may reject these") + "\n\n")
 	for _, i := range o.issues {
-		b.WriteString(fmt.Sprintf("  %s  %s→%s  %s\n",
-			i.Path,
-			dimStyle.Render(fmt.Sprintf("%04o", i.Got)),
-			starStyle.Render(fmt.Sprintf("%04o", i.Want)),
-			dimStyle.Render(i.Why)))
+		b.WriteString("  " + textStyle.Render(i.Path) + "  " +
+			dimStyle.Render(fmt.Sprintf("%04o", i.Got)) +
+			textStyle.Render("→") +
+			starStyle.Render(fmt.Sprintf("%04o", i.Want)) + "  " +
+			dimStyle.Render(i.Why) + "\n")
 	}
-	b.WriteString("\n  " + keyCap.Render("y") + " fix all (chmod)    " + keyCap.Render("n") + " cancel")
+	b.WriteString("\n  " + keyCap.Render("y") + textStyle.Render(" fix all (chmod)    ") + keyCap.Render("n") + textStyle.Render(" cancel"))
 	b.WriteString("\n")
 	return b.String()
 }
