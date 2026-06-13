@@ -624,13 +624,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// help overlay's maxScroll) agrees with what's drawn. The reduced dims live on
 	// a copy so the full size is preserved on the returned model.
 	if m.modal != nil {
-		sized := m
-		padX, padY := m.padding()
-		sized.width -= 2 * padX
-		sized.height -= 2 * padY
+		sized := m.reduced()
 		next, cmd := m.modal.Update(msg, &sized)
-		// Carry back any non-dimension state the overlay mutated on the copy, then
-		// restore the full size.
+		// Overlays size against the reduced dims, but the full size is
+		// authoritative — restore it before carrying state back so dims don't
+		// compound across keystrokes on the persistent model.
 		sized.width, sized.height = m.width, m.height
 		m = sized
 		m.modal = next
@@ -1270,6 +1268,16 @@ func (m Model) padding() (x, y int) {
 	return 0, 0
 }
 
+// reduced returns a copy of m with the app padding subtracted from its
+// dimensions — the view the inner panes and overlays are sized against.
+// The full m.width/m.height remain authoritative; only this copy is shrunk.
+func (m Model) reduced() Model {
+	padX, padY := m.padding()
+	m.width -= 2 * padX
+	m.height -= 2 * padY
+	return m
+}
+
 // applyPadding insets s by x columns and y blank rows (no trailing newline).
 func applyPadding(s string, x, y int) string {
 	lines := strings.Split(s, "\n")
@@ -1288,9 +1296,7 @@ func applyPadding(s string, x, y int) string {
 // (so overlays get them too).
 func (m Model) View() string {
 	padX, padY := m.padding()
-	inner := m
-	inner.width -= 2 * padX
-	inner.height -= 2 * padY
+	inner := m.reduced()
 	out := inner.viewInner()
 	if padX > 0 || padY > 0 {
 		out = applyPadding(out, padX, padY)
