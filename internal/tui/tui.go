@@ -289,6 +289,11 @@ type Model struct {
 	autoLoaded bool   // startup auto-load of the default identity has run
 	sshDir     string // configured SSH dir to watch (empty => ~/.ssh)
 
+	// cfgFlag is the custom SSH config path to pass to ssh as -F. Empty means
+	// the user runs on the default config — never pass -F then, because -F
+	// also suppresses /etc/ssh/ssh_config.
+	cfgFlag string
+
 	// checkUpdates, when set, returns (latest tag, newer-available) for the
 	// async launch update-check. nil disables it (dev build / opted out).
 	checkUpdates func() (string, bool)
@@ -414,6 +419,22 @@ func (m Model) WithSettings(s appSettings) Model {
 func (m Model) WithSshDir(dir string) Model {
 	m.sshDir = dir
 	return m
+}
+
+// WithConfigFlag makes connect/copy commands carry `-F path` so ssh resolves
+// hosts against the custom config sshush is managing. Only set when the user
+// configured a non-default config location.
+func (m Model) WithConfigFlag(path string) Model {
+	m.cfgFlag = path
+	return m
+}
+
+// sshArgs builds the argv (after "ssh") for connecting to alias.
+func (m Model) sshArgs(alias string) []string {
+	if m.cfgFlag != "" {
+		return []string{"-F", m.cfgFlag, alias}
+	}
+	return []string{alias}
 }
 
 // WithUpdateCheck enables the async launch update-check. check returns the
@@ -728,21 +749,44 @@ func (m Model) beginRestore() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// sshCommand builds a shareable ssh invocation for a host: explicit when a
-// hostname is known, else `ssh <alias>` (relying on the user's config).
-func sshCommand(h config.Host) string {
+// sshCommandFor builds the shareable, explicit ssh invocation for a host from
+// its own config block: port, identities, and options expanded as flags. It
+// intentionally reflects only this block — wildcard/Match merging is ssh's job
+// at connect time. Hosts with no HostName fall back to the alias form (with
+// -F when a custom config is set), since there is nothing to expand.
+func (m Model) sshCommandFor(h config.Host) string {
 	if h.Hostname == "" {
-		return "ssh " + firstAlias(h.Name)
+		return "ssh " + strings.Join(m.sshArgs(firstAlias(h.Name)), " ")
 	}
-	cmd := "ssh "
-	if h.User != "" {
-		cmd += h.User + "@"
-	}
-	cmd += h.Hostname
+	cmd := "ssh"
 	if h.Port != 0 {
 		cmd += fmt.Sprintf(" -p %d", h.Port)
 	}
-	return cmd
+	for _, id := range h.Identities {
+		for _, ident := range m.ids {
+			if ident.ID == id && ident.Path != "" {
+				cmd += " -i " + ident.Path
+				break
+			}
+		}
+	}
+	for _, k := range sortedOptionKeys(h.Options) {
+		cmd += fmt.Sprintf(" -o %s=%s", k, h.Options[k])
+	}
+	if h.User != "" {
+		return cmd + " " + h.User + "@" + h.Hostname
+	}
+	return cmd + " " + h.Hostname
+}
+
+// sortedOptionKeys returns a host's option names in sorted order (determinism).
+func sortedOptionKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // beginCopy opens the clipboard copy menu with the options for the active pane.
@@ -766,7 +810,7 @@ func (m Model) beginCopy() (tea.Model, tea.Cmd) {
 			m.status = "no host selected"
 			return m, nil
 		}
-		opts = append(opts, copyOption{"s", "ssh command", sshCommand(sel)})
+		opts = append(opts, copyOption{"s", "ssh command", m.sshCommandFor(sel)})
 	}
 	if len(opts) == 0 {
 		m.status = "nothing to copy"
@@ -1024,7 +1068,7 @@ func (m Model) connectToHost() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.status = "connecting to " + alias + "…"
-	cmd := exec.Command("ssh", alias)
+	cmd := exec.Command("ssh", m.sshArgs(alias)...)
 	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return connectDoneMsg{alias: alias, err: err}
 	})
