@@ -1494,8 +1494,31 @@ func (m Model) keysLines(w int) []string {
 		return []string{dimStyle.Render("no keys match " + strconv.Quote(m.filterQuery()))}
 	}
 	usedBy := m.hostsByKey()
-	lines := []string{fit(headerStyle.Render(fmt.Sprintf("  %1s %-20s %-11s %s", " ", "name", "algo", "default · hosts · comment")), w)}
 	start, end := m.window(paneKeys)
+
+	// hosts column width: widest visible tag, clamped to [5, 28], so the comment
+	// column starts at the same offset on every row and in the header.
+	hostsW := 5
+	for i := start; i < end; i++ {
+		if hosts := usedBy[vis[i].ID]; len(hosts) > 0 {
+			if l := lipgloss.Width("↪ " + strings.Join(hosts, ", ")); l > hostsW {
+				hostsW = l
+			}
+		}
+	}
+	if hostsW > 28 {
+		hostsW = 28
+	}
+
+	// Header is built from the SAME widths as the rows so it cannot drift:
+	// listRow prefix (2) + gutter "● ★ " (4) + name(20)+1 + algo(11)+1 +
+	// hosts(hostsW)+2 + comment. The ★ slot is always reserved (blank when not
+	// default) so the name column never shifts.
+	header := strings.Repeat(" ", 2+4) +
+		padClip("name", 20) + " " + padClip("algo", 11) + " " +
+		padClip("hosts", hostsW) + "  comment"
+	lines := []string{fit(headerStyle.Render(header), w)}
+
 	for i := start; i < end; i++ {
 		id := vis[i]
 		glyph := glyphUnloaded
@@ -1503,30 +1526,29 @@ func (m Model) keysLines(w int) []string {
 		if id.LoadedInAgent {
 			glyph, glyphStyle = glyphLoaded, loadedBadge
 		}
+		star, starStyled := " ", " "
+		if m.settings != nil && m.settings.IsDefault(id.ID) {
+			star, starStyled = "★", starStyle.Render("★")
+		}
 		algo := string(id.Algorithm)
 		if !id.ExistsOnDisk {
 			algo = "agent-only"
 		}
-		nameCol := fmt.Sprintf("%-20s", id.Name)
-		algoCol := fmt.Sprintf("%-11s", algo)
-
-		// Order: name, algo, default, hosts, comment — so truncation drops the
-		// least-important field (comment) first and keeps the ★/↪ tags.
-		plain := fmt.Sprintf("%s %s %s", glyph, nameCol, algoCol)
-		styled := glyphStyle.Render(glyph) + " " + textStyle.Render(nameCol) + " " + dimStyle.Render(algoCol)
-		if m.settings != nil && m.settings.IsDefault(id.ID) {
-			plain += "  ★ default"
-			styled += "  " + starStyle.Render("★ default")
-		}
+		tag := ""
 		if hosts := usedBy[id.ID]; len(hosts) > 0 {
-			tag := "↪ " + strings.Join(hosts, ", ")
-			plain += "  " + tag
-			styled += "  " + hostTagStyle.Render(tag)
+			tag = "↪ " + strings.Join(hosts, ", ")
 		}
-		if id.Comment != "" {
-			plain += "  " + id.Comment
-			styled += "  " + dimStyle.Render(id.Comment)
-		}
+
+		// Order: gutter (glyph, star), name, algo, hosts, comment. The comment is
+		// last so width-clipping in listRow/fit drops it first; hosts gets its own
+		// padClip ellipsis. Columns never shift because every slot is fixed-width.
+		nameCol := padClip(id.Name, 20)
+		algoCol := padClip(algo, 11)
+		hostsCol := padClip(tag, hostsW)
+		plain := glyph + " " + star + " " + nameCol + " " + algoCol + " " + hostsCol + "  " + id.Comment
+		styled := glyphStyle.Render(glyph) + " " + starStyled + " " +
+			textStyle.Render(nameCol) + " " + dimStyle.Render(algoCol) + " " +
+			hostTagStyle.Render(hostsCol) + "  " + dimStyle.Render(id.Comment)
 		lines = append(lines, m.listRow(paneKeys, i, plain, styled, w))
 	}
 	if ind := m.scrollIndicator(paneKeys); ind != "" {
@@ -1555,7 +1577,7 @@ func (m Model) hostsLines(w int) []string {
 	if len(vis) == 0 {
 		return []string{dimStyle.Render("no hosts match " + strconv.Quote(m.filterQuery()))}
 	}
-	lines := []string{fit(headerStyle.Render(fmt.Sprintf("  %-20s %s", "host", "destination")), w)}
+	lines := []string{fit(headerStyle.Render(strings.Repeat(" ", 2)+padClip("host", 20)+" destination"), w)}
 	start, end := m.window(paneHosts)
 	for i := start; i < end; i++ {
 		h := vis[i]
