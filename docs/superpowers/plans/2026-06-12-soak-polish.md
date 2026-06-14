@@ -1,8 +1,16 @@
-# Soak Polish (v0.9.2 / v0.9.3) Implementation Plan
+# Soak Polish (v0.9.2) Implementation Plan
+
+> **Status — DONE (2026-06-14).** Executed via subagent-driven-development; each
+> task passed two-stage review (spec + code quality) plus a final whole-branch
+> review (SHIP). All seven findings shipped as a **single v0.9.2 release** (the
+> original Batch A → v0.9.2 / Batch B → v0.9.3 split was collapsed). Tagging and
+> pushing are left to the maintainer. The "Batch A/B" and per-task `git tag` /
+> `git push` steps below are the original plan and are retained for the record;
+> the actual release is one v0.9.2 tag covering everything.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix seven soak findings: theme readability (contrast gate + fg-bleed), pane column alignment, app padding, connect/copy correctness with custom configs (→ v0.9.2); keygen comment step and a `sshush install-extras` subcommand (→ v0.9.3).
+**Goal:** Fix seven soak findings, all in one **v0.9.2** release: theme readability (contrast gate + fg-bleed), pane column alignment, app padding, connect/copy correctness with custom configs, keygen comment step, and a `sshush install-extras` subcommand. (Originally planned as two patches — v0.9.2 then v0.9.3 — since collapsed into a single release.)
 
 **Architecture:** All TUI work happens in `internal/tui` (lipgloss styles in `theme.go`, panes in `tui.go`, modal screens as `overlay_*.go` adapters behind the `overlay` seam). The CLI lives in `cmd/sshush`. Spec: `docs/superpowers/specs/2026-06-12-soak-polish-design.md`.
 
@@ -841,9 +849,20 @@ Add under `## [Unreleased]` → become `## [0.9.2] - <today>`:
 ```
 (update the link block at the bottom: `[0.9.2]: .../compare/v0.9.1...v0.9.2`, `[Unreleased]: .../compare/v0.9.2...HEAD`.)
 
-- [ ] **Step 3: Verify, commit, tag**
+- [x] **Step 3: Verify, commit, tag**
 
 Run: `go build ./... && go vet ./... && go test ./... && go test -tags e2e ./...` → PASS
+
+> **As executed:** docs for Batch A **and** Batch B were collapsed into one
+> commit (`9686268`) with a single `## [0.9.2]` CHANGELOG section covering all
+> seven findings — see Task 9. The maintainer cuts the single release:
+>
+> ```bash
+> git tag -a v0.9.2 -m "v0.9.2 — readability, columns, padding, connect, keygen comment, install-extras"
+> git push origin main && git push origin v0.9.2
+> ```
+
+Original (superseded) Batch-A-only release step:
 
 ```bash
 git add README.md CHANGELOG.md
@@ -1212,7 +1231,11 @@ git commit -m "Add install-extras: embedded man page and completions installer"
 
 ---
 
-### Task 9: Batch B docs + release v0.9.3
+### Task 9: docs + release
+
+> **As executed:** merged with Task 6 into one docs commit (`9686268`) under a
+> single `## [0.9.2]` CHANGELOG section (all seven findings), since Batch A and
+> Batch B shipped as one v0.9.2 release.
 
 **Files:**
 - Modify: `README.md`, `CHANGELOG.md`, `ARCHITECTURE.md`
@@ -1234,9 +1257,15 @@ git commit -m "Add install-extras: embedded man page and completions installer"
 ```
 (+ link refs updated as in Task 6.)
 
-- [ ] **Step 2: Verify, commit, tag**
+- [x] **Step 2: Verify, commit, tag**
 
 Run: `go build ./... && go vet ./... && go test ./... && go test -tags e2e ./...` → PASS
+
+> **As executed:** the docs commit (`9686268`) covered all of Batch A + B in one
+> `## [0.9.2]` section; no separate v0.9.3 tag. The maintainer cuts the single
+> v0.9.2 release (see Task 6, Step 3).
+
+Original (superseded) separate-v0.9.3 release step:
 
 ```bash
 git add README.md CHANGELOG.md ARCHITECTURE.md
