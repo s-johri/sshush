@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -72,6 +73,13 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "install-extras":
+			refresh := len(os.Args) > 2 && os.Args[2] == "--refresh"
+			if err := installExtras(refresh); err != nil {
+				fmt.Fprintf(os.Stderr, "sshush: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "-h", "--help", "help":
 			fmt.Print(usage)
 			return
@@ -110,6 +118,11 @@ func selfUpdate(ctx context.Context) error {
 		return fmt.Errorf("applying update: %w", err)
 	}
 	fmt.Printf("updated to %s\n", rel.Version())
+	// Refresh previously-installed man page/completions from the NEW binary
+	// (this process is still the old version). Best-effort.
+	if out, err := exec.Command(exe, "install-extras", "--refresh").CombinedOutput(); err == nil {
+		os.Stdout.Write(out)
+	}
 	return nil
 }
 
@@ -267,5 +280,6 @@ Usage:
   sshush update       update sshush to the latest release
   sshush version      print the version
   sshush completion <shell>  print a bash/zsh/fish completion script
+  sshush install-extras  install man page + completions to user dirs (--refresh: update existing only)
   sshush help         show this help
 `

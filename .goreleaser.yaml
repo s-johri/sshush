@@ -37,7 +37,7 @@ archives:
         dst: completions/sshush.zsh
       - src: cmd/sshush/completions/sshush.fish
         dst: completions/sshush.fish
-      - src: man/sshush.1
+      - src: cmd/sshush/sshush.1
         dst: sshush.1
       - LICENSE
       - README.md

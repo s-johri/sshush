@@ -11,6 +11,7 @@ _sshush() {
         'version:print the installed version'
         'help:show help'
         'completion:print a shell completion script (bash|zsh|fish)'
+        'install-extras:install man page and completions'
     )
 
     if (( CURRENT == 2 )); then
