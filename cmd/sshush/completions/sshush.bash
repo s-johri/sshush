@@ -5,7 +5,7 @@ _sshush() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
-        COMPREPLY=( $(compgen -W "load-default shell-init restore update version help completion" -- "$cur") )
+        COMPREPLY=( $(compgen -W "load-default shell-init restore update version help completion install-extras" -- "$cur") )
         return 0
     fi
     if [ "$prev" = "completion" ]; then

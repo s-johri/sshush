@@ -8,5 +8,6 @@ complete -c sshush -n __fish_use_subcommand -a update -d 'update sshush to the l
 complete -c sshush -n __fish_use_subcommand -a version -d 'print the installed version'
 complete -c sshush -n __fish_use_subcommand -a help -d 'show help'
 complete -c sshush -n __fish_use_subcommand -a completion -d 'print a shell completion script'
+complete -c sshush -n __fish_use_subcommand -a install-extras -d 'install man page and completions'
 
 complete -c sshush -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish'

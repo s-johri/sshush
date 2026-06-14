@@ -64,6 +64,9 @@ tar -xzf "$tmp/$asset" -C "$tmp" sshush
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "$tmp/sshush" "$INSTALL_DIR/sshush"
 
+# Install the man page and shell completions to user-level XDG paths.
+"$INSTALL_DIR/sshush" install-extras || true
+
 echo "sshush: installed to ${INSTALL_DIR}/sshush"
 case ":$PATH:" in
 *":$INSTALL_DIR:"*) ;;
