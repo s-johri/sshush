@@ -11,11 +11,12 @@ import (
 	"github.com/s-johri/sshush/pkg/keys"
 )
 
-// newKeyWizard generates a key in three phases — algorithm, bits/curve (rsa and
-// ecdsa only), file name — then runs ssh-keygen interactively via ExecProcess so
-// it can prompt for a passphrase. One overlay, private phase (see CONTEXT.md).
+// newKeyWizard generates a key in four phases — algorithm, bits/curve (rsa and
+// ecdsa only), file name, comment — then runs ssh-keygen interactively via
+// ExecProcess so it can prompt for a passphrase. One overlay, private phase
+// (see CONTEXT.md).
 type newKeyWizard struct {
-	phase      int // 0 = algorithm, 1 = bits/curve, 2 = file name
+	phase      int // 0 = algorithm, 1 = bits/curve, 2 = file name, 3 = comment
 	algo       config.KeyAlgorithm
 	bits       int
 	algoCursor int
