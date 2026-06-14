@@ -253,6 +253,9 @@ Candidate ideas beyond the numbered roadmap — pulled in as they prove valuable
 - **ProxyJump / bastion builder** — visualize and assemble jump chains.
 - **Bulk operations** — attach a key to N hosts, set an option across a selection.
 - **Key comment editor** — `ssh-keygen -c` to rename a key's comment in place.
+- **Curated keygen options** — the new-key wizard collects a comment (`-C`) as of
+  v0.9.2; deferred post-1.0: KDF rounds (`-a`), output format (`-o`/PEM), and
+  passphrase handling surfaced as wizard steps rather than ssh-keygen's prompts.
 - **Security warnings** — world-readable keys, keys tracked in a git repo, agent
   forwarding enabled to untrusted hosts.
 - **Export host as command** — copy a ready `ssh`/`scp`/`sftp` invocation, or an
@@ -423,8 +426,9 @@ Also the `textStyle` pass so panes don't inherit the terminal foreground.
 
 Deferred (continuous effects — conflict with the no-idle-CPU rule, so revisit
 when ready, possibly arcade-only): the **breathing shimmer** on the hovered row
-and loaded `●` keys, and **animated pane/status transitions**. Remaining polish:
-route overlay body text through explicit theme colors (tracked in M26).
+and loaded `●` keys, and **animated pane/status transitions**. Routing overlay
+body text through explicit theme colors (tracked in M26) shipped in v0.9.2,
+backed by a render test that fails on any unstyled overlay text.
 
 ### Milestone 26 detail
 
@@ -456,9 +460,10 @@ short terminals, randomize (`r`) / reset, and persistence to `config.toml`
 the bg escape after every inner reset and fills to terminal width+height, so the
 whole screen takes the theme color (not just where text sits).
 
-Deferred: per-field hex overrides under a `[theme]` table (presets only for now);
-routing overlay body text through `textStyle` (the terminal-fg bleed above —
-shared with M25).
+Deferred: per-field hex overrides under a `[theme]` table (presets only for now).
+Routing overlay body text through `textStyle` (the terminal-fg bleed above —
+shared with M25) shipped in v0.9.2, along with a WCAG contrast gate over every
+preset palette.
 
 ### Milestone 27 detail
 
