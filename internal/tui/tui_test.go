@@ -626,10 +626,36 @@ func TestNewKeyGenEd25519SkipsBits(t *testing.T) {
 	if w.input.Value() != "id_ed25519" {
 		t.Errorf("filename default = %q", w.input.Value())
 	}
-	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// filename accepted -> comment phase, prefilled with the filename.
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	w = m.modal.(*newKeyWizard)
+	if w.phase != nkPhaseComment {
+		t.Fatalf("expected comment phase, got %d", w.phase)
+	}
+	if w.input.Value() != "id_ed25519" {
+		t.Errorf("comment default = %q, want filename", w.input.Value())
+	}
+	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // accept default comment
 	m = out.(Model)
 	if cmd == nil || m.modal != nil {
-		t.Error("should dispatch keygen and close the wizard")
+		t.Error("comment accept should dispatch keygen and close the wizard")
+	}
+}
+
+func TestNewKeyCustomComment(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("n"))
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // ed25519 -> filename
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // accept filename -> comment
+	w := m.modal.(*newKeyWizard)
+	w.input.SetValue("sj@work")
+	if got := w.commentOrDefault("id_ed25519"); got != "sj@work" {
+		t.Errorf("comment = %q", got)
+	}
+	w.input.SetValue("   ")
+	if got := w.commentOrDefault("id_ed25519"); got != "id_ed25519" {
+		t.Errorf("blank comment should fall back to filename, got %q", got)
 	}
 }
 

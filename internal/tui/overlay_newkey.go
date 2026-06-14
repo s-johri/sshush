@@ -21,12 +21,14 @@ type newKeyWizard struct {
 	algoCursor int
 	bitsCursor int
 	input      textinput.Model
+	name       string // accepted filename, carried into the comment step
 }
 
 const (
 	nkPhaseAlgo = iota
 	nkPhaseBits
 	nkPhaseName
+	nkPhaseComment
 )
 
 // newNewKeyWizard starts the wizard at the algorithm step.
@@ -49,8 +51,10 @@ func (o *newKeyWizard) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
 		return o.updateAlgo(msg)
 	case nkPhaseBits:
 		return o.updateBits(msg)
-	default:
+	case nkPhaseName:
 		return o.updateName(msg, m)
+	default:
+		return o.updateComment(msg, m)
 	}
 }
 
@@ -107,8 +111,7 @@ func (o *newKeyWizard) toNameStep() (overlay, tea.Cmd) {
 	return o, textinput.Blink
 }
 
-// updateName collects the key file name and runs ssh-keygen interactively (via
-// ExecProcess) so it can prompt for a passphrase.
+// updateName collects the key file name, then advances to the comment step.
 func (o *newKeyWizard) updateName(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() == "enter" {
 		name := strings.TrimSpace(o.input.Value())
@@ -116,9 +119,32 @@ func (o *newKeyWizard) updateName(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
 			m.status = "key name cannot be empty"
 			return o, nil
 		}
+		o.name = name
+		o.phase = nkPhaseComment
+		o.input.SetValue(name) // default comment = filename (enter accepts)
+		o.input.CursorEnd()
+		return o, nil
+	}
+	var cmd tea.Cmd
+	o.input, cmd = o.input.Update(msg)
+	return o, cmd
+}
+
+// commentOrDefault is the typed comment, falling back to the filename.
+func (o *newKeyWizard) commentOrDefault(name string) string {
+	if c := strings.TrimSpace(o.input.Value()); c != "" {
+		return c
+	}
+	return name
+}
+
+// updateComment collects the -C comment and runs ssh-keygen interactively (via
+// ExecProcess) so it can prompt for a passphrase.
+func (o *newKeyWizard) updateComment(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+	if msg.String() == "enter" {
 		m.status = "running ssh-keygen…"
 		cmd, _, err := keys.GenerateCommand(keys.GenerateOpts{
-			Name: name, Algorithm: o.algo, Bits: o.bits, Comment: name,
+			Name: o.name, Algorithm: o.algo, Bits: o.bits, Comment: o.commentOrDefault(o.name),
 		})
 		if err != nil {
 			m.status = "keygen error: " + err.Error()
@@ -149,8 +175,10 @@ func (o *newKeyWizard) View(m *Model) string {
 		return o.viewAlgo()
 	case nkPhaseBits:
 		return o.viewBits()
-	default:
+	case nkPhaseName:
 		return o.viewName()
+	default:
+		return o.viewComment()
 	}
 }
 
@@ -197,6 +225,16 @@ func (o *newKeyWizard) viewName() string {
 	b.WriteString(dimStyle.Render("  file name — may prompt for a passphrase") + "\n")
 	b.WriteString("  " + o.input.View() + "\n\n")
 	b.WriteString(dimStyle.Render("  enter confirm · esc cancel"))
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (o *newKeyWizard) viewComment() string {
+	var b strings.Builder
+	b.WriteString(tabActive.Render("Generate key ("+o.summary()+")") + "\n\n")
+	b.WriteString(dimStyle.Render("  comment (-C) — enter to accept the default") + "\n")
+	b.WriteString("  " + o.input.View() + "\n\n")
+	b.WriteString(dimStyle.Render("  enter generate · esc cancel"))
 	b.WriteString("\n")
 	return b.String()
 }
