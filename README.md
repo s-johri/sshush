@@ -26,9 +26,13 @@ edit your config without leaving the terminal.
   read-only `Match` blocks.
 - **Connect to a host** — press `Enter` on a host to `ssh` into it; your own
   config (`ProxyJump`, `IdentityFile`, …) applies, and the terminal is handed to
-  the session.
+  the session. Under a custom config location (`config_path` / `SSHUSH_CONFIG` /
+  `ssh_dir`), the connection runs `ssh -F <config> <alias>` so aliases resolve
+  against the right file with full wildcard/`Match` fidelity.
 - **Copy to clipboard** — `c` copies a key's public key or fingerprint, or a
-  host's ready-to-run `ssh` command (needs `xclip`/`wl-clipboard` on Linux).
+  host's ready-to-run `ssh` command — an explicit invocation expanded from the
+  host's own block (`-p` / `-i` / `-o` flags), shell-quoted for safe pasting
+  (needs `xclip`/`wl-clipboard` on Linux).
 - **Scroll & search** — panes scroll for long lists (`PgUp`/`PgDn`, `g`/`G`); `/`
   filters the active pane (keys by name/comment/algorithm, hosts by
   name/hostname/user).
@@ -41,8 +45,9 @@ edit your config without leaving the terminal.
 - **Restore from backup** — `R` (or `sshush restore`) reverts the config to the
   `.bak` snapshot written before the session's first edit, so a bad change is one
   keystroke to undo.
-- **Generate & delete keys** — `ssh-keygen` wrapper; deleting a key also removes
-  it from the agent.
+- **Generate & delete keys** — `ssh-keygen` wrapper; the new-key wizard prompts
+  for algorithm, size, file name, and a key comment (`-C`, defaulting to the file
+  name). Deleting a key also removes it from the agent.
 - **Default identity** — mark a key as default and have it auto-loaded into the
   agent on startup (in-app, or on every shell via `sshush shell-init`).
 - **Themes & motion** — 16 built-in color themes (foreground + background) with a
@@ -118,9 +123,12 @@ go install github.com/s-johri/sshush/cmd/sshush@latest
 ### Shell completions
 
 The Homebrew and AUR packages install completions automatically. For a manual
-install, print the script for your shell:
+install, run `sshush install-extras` to write the embedded man page and all three
+completion scripts to your user directories (XDG paths); `sshush update` and
+`install.sh` refresh them. Or print a single script yourself:
 
 ```bash
+sshush install-extras   # man page + bash/zsh/fish completions → user dirs
 sshush completion bash > /etc/bash_completion.d/sshush
 sshush completion zsh  > "${fpath[1]}/_sshush"
 sshush completion fish > ~/.config/fish/completions/sshush.fish
@@ -136,6 +144,7 @@ sshush restore      # revert the SSH config to the backup from before edits
 sshush update       # update to the latest release
 sshush version      # print the installed version
 sshush completion <shell>  # print a bash/zsh/fish completion script
+sshush install-extras      # install the man page + completions to user dirs
 sshush help         # show help
 ```
 

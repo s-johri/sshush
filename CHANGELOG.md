@@ -6,6 +6,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-06-14
+
+### Added
+- New-key wizard now asks for a key comment (`-C`), defaulting to the file name.
+- `sshush install-extras` installs the embedded man page and the bash/zsh/fish
+  completion scripts to user-level directories (XDG paths). `sshush update`
+  refreshes previously-installed copies, and `install.sh` runs it automatically.
+
+### Changed
+- Connecting to a host under a custom config location (`config_path` /
+  `SSHUSH_CONFIG` / `ssh_dir`) now runs `ssh -F <config> <alias>` so aliases
+  resolve against the right file with full wildcard/`Match` fidelity. The stock
+  `~/.ssh/config` still connects with plain `ssh <alias>` (so `-F` does not
+  suppress `/etc/ssh/ssh_config`).
+- Copying a host command (`c`) now produces an explicit, shareable invocation
+  expanded from the host's own block (`-p` / `-i` / `-o` flags), shell-quoted so
+  it pastes safely.
+
+### Fixed
+- Theme readability: a contrast gate now enforces minimum WCAG contrast for every
+  built-in preset, and low-contrast dim/subtle/accent shades (nord, tokyonight,
+  solarized, catppuccin, …) were corrected so footer and help text stay legible.
+- Overlay body text now routes through the theme's colors instead of inheriting
+  the terminal's default foreground, which was unreadable in some themes.
+- Keys and hosts pane headers and rows now render through one shared set of fixed
+  columns, so headers stay aligned and a key's fields no longer shift when it is
+  not the default (the default `★` moved into the gutter).
+- The app now has padding around its content instead of sitting flush against the
+  terminal edges; the padding is dropped automatically on very small terminals.
+
 ## [0.7.0] - 2026-06-04
 
 ### Added
@@ -90,7 +120,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hot reload.
 - Versioned self-update (`sshush update`) and a goreleaser release pipeline.
 
-[Unreleased]: https://github.com/s-johri/sshush/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/s-johri/sshush/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/s-johri/sshush/compare/v0.9.1...v0.9.2
 [0.7.0]: https://github.com/s-johri/sshush/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/s-johri/sshush/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/s-johri/sshush/compare/v0.5.0...v0.5.1
