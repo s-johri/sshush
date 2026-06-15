@@ -1,0 +1,4 @@
+# https://docs.github.com/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository
+# Templates are registered via the frontmatter in each *.md file; this file
+# only controls the blank-issue option and any external contact links.
+blank_issues_enabled: false

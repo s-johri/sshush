@@ -1,0 +1,114 @@
+name: Bug Report
+description: Report a bug in sshush
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please fill out the fields below.
+        Don't paste private keys or secrets — redact hostnames/usernames if needed.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce it?
+      placeholder: |
+        1. Run `sshush ...`
+        2. In the Keys / Hosts pane, press '...'
+        3. See the error.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: >
+        What actually happened. Include the exact error message or anything
+        printed to the terminal (stderr), and a screenshot of the TUI if it helps.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: sshush version
+      description: Output of `sshush version`.
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / arch
+      placeholder: "e.g. macOS 14 arm64, Ubuntu 24.04 x86_64"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      options:
+        - Homebrew
+        - AUR
+        - install.sh
+        - Prebuilt binary
+        - go install
+        - Built from source
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      placeholder: "e.g. iTerm2, Alacritty, GNOME Terminal, Windows Terminal"
+    validations:
+      required: false
+
+  - type: input
+    id: shell
+    attributes:
+      label: Shell
+      placeholder: "e.g. bash, zsh, fish"
+    validations:
+      required: false
+
+  - type: textarea
+    id: ssh-setup
+    attributes:
+      label: SSH setup (if relevant)
+      description: >
+        Anything unusual about your config that may matter, e.g. a custom config
+        location (config_path / SSHUSH_CONFIG / ssh_dir), Include directives,
+        Match blocks, or a non-default ssh-agent.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other context about the problem that might help.
+    validations:
+      required: false
