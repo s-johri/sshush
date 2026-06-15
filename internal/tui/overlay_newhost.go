@@ -41,6 +41,8 @@ func newNewHostWizard() *newHostWizard {
 	ti := textinput.New()
 	ti.CharLimit = 256
 	ti.Width = 40
+	ti.PromptStyle = textStyle
+	ti.TextStyle = textStyle
 	ti.Focus()
 	return &newHostWizard{input: ti}
 }
@@ -153,7 +155,7 @@ func (o *newHostWizard) View(m *Model) string {
 func (o *newHostWizard) prompt(title, hint string) string {
 	var b strings.Builder
 	b.WriteString(tabActive.Render(title) + "\n\n")
-	b.WriteString("  " + hint + "\n")
+	b.WriteString(dimStyle.Render("  "+hint) + "\n")
 	b.WriteString("  " + o.input.View() + "\n\n")
 	b.WriteString(dimStyle.Render("  enter confirm · esc cancel"))
 	b.WriteString("\n")

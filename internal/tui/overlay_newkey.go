@@ -11,22 +11,25 @@ import (
 	"github.com/s-johri/sshush/pkg/keys"
 )
 
-// newKeyWizard generates a key in three phases — algorithm, bits/curve (rsa and
-// ecdsa only), file name — then runs ssh-keygen interactively via ExecProcess so
-// it can prompt for a passphrase. One overlay, private phase (see CONTEXT.md).
+// newKeyWizard generates a key in four phases — algorithm, bits/curve (rsa and
+// ecdsa only), file name, comment — then runs ssh-keygen interactively via
+// ExecProcess so it can prompt for a passphrase. One overlay, private phase
+// (see CONTEXT.md).
 type newKeyWizard struct {
-	phase      int // 0 = algorithm, 1 = bits/curve, 2 = file name
+	phase      int // 0 = algorithm, 1 = bits/curve, 2 = file name, 3 = comment
 	algo       config.KeyAlgorithm
 	bits       int
 	algoCursor int
 	bitsCursor int
 	input      textinput.Model
+	name       string // accepted filename, carried into the comment step
 }
 
 const (
 	nkPhaseAlgo = iota
 	nkPhaseBits
 	nkPhaseName
+	nkPhaseComment
 )
 
 // newNewKeyWizard starts the wizard at the algorithm step.
@@ -34,6 +37,8 @@ func newNewKeyWizard() *newKeyWizard {
 	ti := textinput.New()
 	ti.CharLimit = 256
 	ti.Width = 40
+	ti.PromptStyle = textStyle
+	ti.TextStyle = textStyle
 	return &newKeyWizard{input: ti}
 }
 
@@ -47,8 +52,10 @@ func (o *newKeyWizard) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
 		return o.updateAlgo(msg)
 	case nkPhaseBits:
 		return o.updateBits(msg)
-	default:
+	case nkPhaseName:
 		return o.updateName(msg, m)
+	default:
+		return o.updateComment(msg, m)
 	}
 }
 
@@ -105,8 +112,7 @@ func (o *newKeyWizard) toNameStep() (overlay, tea.Cmd) {
 	return o, textinput.Blink
 }
 
-// updateName collects the key file name and runs ssh-keygen interactively (via
-// ExecProcess) so it can prompt for a passphrase.
+// updateName collects the key file name, then advances to the comment step.
 func (o *newKeyWizard) updateName(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() == "enter" {
 		name := strings.TrimSpace(o.input.Value())
@@ -114,9 +120,32 @@ func (o *newKeyWizard) updateName(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
 			m.status = "key name cannot be empty"
 			return o, nil
 		}
+		o.name = name
+		o.phase = nkPhaseComment
+		o.input.SetValue(name) // default comment = filename (enter accepts)
+		o.input.CursorEnd()
+		return o, nil
+	}
+	var cmd tea.Cmd
+	o.input, cmd = o.input.Update(msg)
+	return o, cmd
+}
+
+// commentOrDefault is the typed comment, falling back to the filename.
+func (o *newKeyWizard) commentOrDefault(name string) string {
+	if c := strings.TrimSpace(o.input.Value()); c != "" {
+		return c
+	}
+	return name
+}
+
+// updateComment collects the -C comment and runs ssh-keygen interactively (via
+// ExecProcess) so it can prompt for a passphrase.
+func (o *newKeyWizard) updateComment(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+	if msg.String() == "enter" {
 		m.status = "running ssh-keygen…"
 		cmd, _, err := keys.GenerateCommand(keys.GenerateOpts{
-			Name: name, Algorithm: o.algo, Bits: o.bits, Comment: name,
+			Name: o.name, Algorithm: o.algo, Bits: o.bits, Comment: o.commentOrDefault(o.name),
 		})
 		if err != nil {
 			m.status = "keygen error: " + err.Error()
@@ -147,8 +176,10 @@ func (o *newKeyWizard) View(m *Model) string {
 		return o.viewAlgo()
 	case nkPhaseBits:
 		return o.viewBits()
-	default:
+	case nkPhaseName:
 		return o.viewName()
+	default:
+		return o.viewComment()
 	}
 }
 
@@ -159,7 +190,7 @@ func (o *newKeyWizard) viewAlgo() string {
 		if i == o.algoCursor {
 			b.WriteString(selectedRow.Render("▸ "+a.label) + "\n")
 		} else {
-			b.WriteString("  " + a.label + "\n")
+			b.WriteString("  " + textStyle.Render(a.label) + "\n")
 		}
 	}
 	b.WriteString("\n" + dimStyle.Render("  ↑/↓ move · enter select · esc cancel") + "\n")
@@ -182,7 +213,7 @@ func (o *newKeyWizard) viewBits() string {
 		if i == o.bitsCursor {
 			b.WriteString(selectedRow.Render("▸ "+line) + "\n")
 		} else {
-			b.WriteString("  " + line + "\n")
+			b.WriteString("  " + textStyle.Render(line) + "\n")
 		}
 	}
 	b.WriteString("\n" + dimStyle.Render("  ↑/↓ move · enter select · esc cancel") + "\n")
@@ -192,9 +223,19 @@ func (o *newKeyWizard) viewBits() string {
 func (o *newKeyWizard) viewName() string {
 	var b strings.Builder
 	b.WriteString(tabActive.Render("Generate key ("+o.summary()+")") + "\n\n")
-	b.WriteString("  file name — may prompt for a passphrase\n")
+	b.WriteString(dimStyle.Render("  file name — may prompt for a passphrase") + "\n")
 	b.WriteString("  " + o.input.View() + "\n\n")
 	b.WriteString(dimStyle.Render("  enter confirm · esc cancel"))
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (o *newKeyWizard) viewComment() string {
+	var b strings.Builder
+	b.WriteString(tabActive.Render("Generate key ("+o.summary()+")") + "\n\n")
+	b.WriteString(dimStyle.Render("  comment (-C) — enter to accept the default") + "\n")
+	b.WriteString("  " + o.input.View() + "\n\n")
+	b.WriteString(dimStyle.Render("  enter generate · esc cancel"))
 	b.WriteString("\n")
 	return b.String()
 }

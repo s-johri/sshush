@@ -289,6 +289,11 @@ type Model struct {
 	autoLoaded bool   // startup auto-load of the default identity has run
 	sshDir     string // configured SSH dir to watch (empty => ~/.ssh)
 
+	// cfgFlag is the custom SSH config path to pass to ssh as -F. Empty means
+	// the user runs on the default config — never pass -F then, because -F
+	// also suppresses /etc/ssh/ssh_config.
+	cfgFlag string
+
 	// checkUpdates, when set, returns (latest tag, newer-available) for the
 	// async launch update-check. nil disables it (dev build / opted out).
 	checkUpdates func() (string, bool)
@@ -414,6 +419,22 @@ func (m Model) WithSettings(s appSettings) Model {
 func (m Model) WithSshDir(dir string) Model {
 	m.sshDir = dir
 	return m
+}
+
+// WithConfigFlag makes connect/copy commands carry `-F path` so ssh resolves
+// hosts against the custom config sshush is managing. Only set when the user
+// configured a non-default config location.
+func (m Model) WithConfigFlag(path string) Model {
+	m.cfgFlag = path
+	return m
+}
+
+// sshArgs builds the argv (after "ssh") for connecting to alias.
+func (m Model) sshArgs(alias string) []string {
+	if m.cfgFlag != "" {
+		return []string{"-F", m.cfgFlag, alias}
+	}
+	return []string{alias}
 }
 
 // WithUpdateCheck enables the async launch update-check. check returns the
@@ -619,9 +640,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// The active overlay captures input first (see overlay.go).
+	// The active overlay captures input first (see overlay.go). It sees the same
+	// padding-reduced dimensions View renders with, so scroll-clamping (e.g. the
+	// help overlay's maxScroll) agrees with what's drawn. The reduced dims live on
+	// a copy so the full size is preserved on the returned model.
 	if m.modal != nil {
-		next, cmd := m.modal.Update(msg, &m)
+		sized := m.reduced()
+		next, cmd := m.modal.Update(msg, &sized)
+		// Overlays size against the reduced dims, but the full size is
+		// authoritative — restore it before carrying state back so dims don't
+		// compound across keystrokes on the persistent model.
+		sized.width, sized.height = m.width, m.height
+		m = sized
 		m.modal = next
 		return m, cmd
 	}
@@ -719,21 +749,67 @@ func (m Model) beginRestore() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// sshCommand builds a shareable ssh invocation for a host: explicit when a
-// hostname is known, else `ssh <alias>` (relying on the user's config).
-func sshCommand(h config.Host) string {
+// sshCommandFor builds the shareable, explicit ssh invocation for a host from
+// its own config block: port, identities, and options expanded as flags. It
+// intentionally reflects only this block — wildcard/Match merging is ssh's job
+// at connect time. Hosts with no HostName fall back to the alias form (with
+// -F when a custom config is set), since there is nothing to expand.
+func (m Model) sshCommandFor(h config.Host) string {
 	if h.Hostname == "" {
-		return "ssh " + firstAlias(h.Name)
+		return "ssh " + strings.Join(m.sshArgs(firstAlias(h.Name)), " ")
 	}
-	cmd := "ssh "
-	if h.User != "" {
-		cmd += h.User + "@"
-	}
-	cmd += h.Hostname
+	parts := []string{"ssh"}
 	if h.Port != 0 {
-		cmd += fmt.Sprintf(" -p %d", h.Port)
+		parts = append(parts, "-p", fmt.Sprintf("%d", h.Port))
 	}
-	return cmd
+	for _, id := range h.Identities {
+		for _, ident := range m.ids {
+			if ident.ID == id && ident.Path != "" {
+				parts = append(parts, "-i", shellQuote(ident.Path))
+				break
+			}
+		}
+	}
+	for _, k := range sortedOptionKeys(h.Options) {
+		parts = append(parts, "-o", k+"="+shellQuote(h.Options[k]))
+	}
+	if h.User != "" {
+		parts = append(parts, h.User+"@"+h.Hostname)
+	} else {
+		parts = append(parts, h.Hostname)
+	}
+	return strings.Join(parts, " ")
+}
+
+// shellQuote wraps s in single quotes if it contains characters the shell
+// would interpret, so the copied command is safe to paste. Empty stays "”".
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	safe := true
+	for _, r := range s {
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' ||
+			strings.ContainsRune("-_./:@%=+,", r)) {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	// single-quote, escaping embedded single quotes as '\''
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// sortedOptionKeys returns a host's option names in sorted order (determinism).
+func sortedOptionKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // beginCopy opens the clipboard copy menu with the options for the active pane.
@@ -757,7 +833,7 @@ func (m Model) beginCopy() (tea.Model, tea.Cmd) {
 			m.status = "no host selected"
 			return m, nil
 		}
-		opts = append(opts, copyOption{"s", "ssh command", sshCommand(sel)})
+		opts = append(opts, copyOption{"s", "ssh command", m.sshCommandFor(sel)})
 	}
 	if len(opts) == 0 {
 		m.status = "nothing to copy"
@@ -1015,7 +1091,7 @@ func (m Model) connectToHost() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.status = "connecting to " + alias + "…"
-	cmd := exec.Command("ssh", alias)
+	cmd := exec.Command("ssh", m.sshArgs(alias)...)
 	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return connectDoneMsg{alias: alias, err: err}
 	})
@@ -1250,10 +1326,48 @@ var (
 	hostTagStyle, flashGoodStyle, flashBadStyle lipgloss.Style
 )
 
-// View renders the current screen, then layers the theme background and any
-// active screen-shake over the whole output (so overlays get them too).
+// padding is the breathing room around the whole app: 1 row top/bottom and
+// 2 cols left/right, dropped entirely on small terminals so content wins.
+func (m Model) padding() (x, y int) {
+	if m.width >= 40 && m.height >= 12 {
+		return 2, 1
+	}
+	return 0, 0
+}
+
+// reduced returns a copy of m with the app padding subtracted from its
+// dimensions — the view the inner panes and overlays are sized against.
+// The full m.width/m.height remain authoritative; only this copy is shrunk.
+func (m Model) reduced() Model {
+	padX, padY := m.padding()
+	m.width -= 2 * padX
+	m.height -= 2 * padY
+	return m
+}
+
+// applyPadding insets s by x columns and y blank rows (no trailing newline).
+func applyPadding(s string, x, y int) string {
+	lines := strings.Split(s, "\n")
+	pad := strings.Repeat(" ", x)
+	for i := range lines {
+		lines[i] = pad + lines[i]
+	}
+	blank := make([]string, y)
+	out := append(append(blank, lines...), make([]string, y)...)
+	return strings.Join(out, "\n")
+}
+
+// View renders the current screen on a model copy whose dimensions are reduced
+// by the padding, then layers the padding, the theme background (at full size,
+// so it covers the padding), and any active screen-shake over the whole output
+// (so overlays get them too).
 func (m Model) View() string {
-	out := m.viewInner()
+	padX, padY := m.padding()
+	inner := m.reduced()
+	out := inner.viewInner()
+	if padX > 0 || padY > 0 {
+		out = applyPadding(out, padX, padY)
+	}
 	out = applyBackground(out, m.width, m.height)
 	if m.fxActive() && m.fx.shakeAmp > 0 {
 		out = m.applyShake(out)
@@ -1494,8 +1608,31 @@ func (m Model) keysLines(w int) []string {
 		return []string{dimStyle.Render("no keys match " + strconv.Quote(m.filterQuery()))}
 	}
 	usedBy := m.hostsByKey()
-	lines := []string{fit(headerStyle.Render(fmt.Sprintf("  %1s %-20s %-11s %s", " ", "name", "algo", "default · hosts · comment")), w)}
 	start, end := m.window(paneKeys)
+
+	// hosts column width: widest visible tag, clamped to [5, 28], so the comment
+	// column starts at the same offset on every row and in the header.
+	hostsW := 5
+	for i := start; i < end; i++ {
+		if hosts := usedBy[vis[i].ID]; len(hosts) > 0 {
+			if l := lipgloss.Width("↪ " + strings.Join(hosts, ", ")); l > hostsW {
+				hostsW = l
+			}
+		}
+	}
+	if hostsW > 28 {
+		hostsW = 28
+	}
+
+	// Header is built from the SAME widths as the rows so it cannot drift:
+	// listRow prefix (2) + gutter "● ★ " (4) + name(20)+1 + algo(11)+1 +
+	// hosts(hostsW)+2 + comment. The ★ slot is always reserved (blank when not
+	// default) so the name column never shifts.
+	header := strings.Repeat(" ", 2+4) +
+		padClip("name", 20) + " " + padClip("algo", 11) + " " +
+		padClip("hosts", hostsW) + "  comment"
+	lines := []string{fit(headerStyle.Render(header), w)}
+
 	for i := start; i < end; i++ {
 		id := vis[i]
 		glyph := glyphUnloaded
@@ -1503,30 +1640,29 @@ func (m Model) keysLines(w int) []string {
 		if id.LoadedInAgent {
 			glyph, glyphStyle = glyphLoaded, loadedBadge
 		}
+		star, starStyled := " ", " "
+		if m.settings != nil && m.settings.IsDefault(id.ID) {
+			star, starStyled = "★", starStyle.Render("★")
+		}
 		algo := string(id.Algorithm)
 		if !id.ExistsOnDisk {
 			algo = "agent-only"
 		}
-		nameCol := fmt.Sprintf("%-20s", id.Name)
-		algoCol := fmt.Sprintf("%-11s", algo)
-
-		// Order: name, algo, default, hosts, comment — so truncation drops the
-		// least-important field (comment) first and keeps the ★/↪ tags.
-		plain := fmt.Sprintf("%s %s %s", glyph, nameCol, algoCol)
-		styled := glyphStyle.Render(glyph) + " " + textStyle.Render(nameCol) + " " + dimStyle.Render(algoCol)
-		if m.settings != nil && m.settings.IsDefault(id.ID) {
-			plain += "  ★ default"
-			styled += "  " + starStyle.Render("★ default")
-		}
+		tag := ""
 		if hosts := usedBy[id.ID]; len(hosts) > 0 {
-			tag := "↪ " + strings.Join(hosts, ", ")
-			plain += "  " + tag
-			styled += "  " + hostTagStyle.Render(tag)
+			tag = "↪ " + strings.Join(hosts, ", ")
 		}
-		if id.Comment != "" {
-			plain += "  " + id.Comment
-			styled += "  " + dimStyle.Render(id.Comment)
-		}
+
+		// Order: gutter (glyph, star), name, algo, hosts, comment. The comment is
+		// last so width-clipping in listRow/fit drops it first; hosts gets its own
+		// padClip ellipsis. Columns never shift because every slot is fixed-width.
+		nameCol := padClip(id.Name, 20)
+		algoCol := padClip(algo, 11)
+		hostsCol := padClip(tag, hostsW)
+		plain := glyph + " " + star + " " + nameCol + " " + algoCol + " " + hostsCol + "  " + id.Comment
+		styled := glyphStyle.Render(glyph) + " " + starStyled + " " +
+			textStyle.Render(nameCol) + " " + dimStyle.Render(algoCol) + " " +
+			hostTagStyle.Render(hostsCol) + "  " + dimStyle.Render(id.Comment)
 		lines = append(lines, m.listRow(paneKeys, i, plain, styled, w))
 	}
 	if ind := m.scrollIndicator(paneKeys); ind != "" {
@@ -1555,7 +1691,7 @@ func (m Model) hostsLines(w int) []string {
 	if len(vis) == 0 {
 		return []string{dimStyle.Render("no hosts match " + strconv.Quote(m.filterQuery()))}
 	}
-	lines := []string{fit(headerStyle.Render(fmt.Sprintf("  %-20s %s", "host", "destination")), w)}
+	lines := []string{fit(headerStyle.Render(strings.Repeat(" ", 2)+padClip("host", 20)+" destination"), w)}
 	start, end := m.window(paneHosts)
 	for i := start; i < end; i++ {
 		h := vis[i]

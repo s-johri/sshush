@@ -626,10 +626,36 @@ func TestNewKeyGenEd25519SkipsBits(t *testing.T) {
 	if w.input.Value() != "id_ed25519" {
 		t.Errorf("filename default = %q", w.input.Value())
 	}
-	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// filename accepted -> comment phase, prefilled with the filename.
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	w = m.modal.(*newKeyWizard)
+	if w.phase != nkPhaseComment {
+		t.Fatalf("expected comment phase, got %d", w.phase)
+	}
+	if w.input.Value() != "id_ed25519" {
+		t.Errorf("comment default = %q, want filename", w.input.Value())
+	}
+	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // accept default comment
 	m = out.(Model)
 	if cmd == nil || m.modal != nil {
-		t.Error("should dispatch keygen and close the wizard")
+		t.Error("comment accept should dispatch keygen and close the wizard")
+	}
+}
+
+func TestNewKeyCustomComment(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("n"))
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // ed25519 -> filename
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // accept filename -> comment
+	w := m.modal.(*newKeyWizard)
+	w.input.SetValue("sj@work")
+	if got := w.commentOrDefault("id_ed25519"); got != "sj@work" {
+		t.Errorf("comment = %q", got)
+	}
+	w.input.SetValue("   ")
+	if got := w.commentOrDefault("id_ed25519"); got != "id_ed25519" {
+		t.Errorf("blank comment should fall back to filename, got %q", got)
 	}
 }
 
@@ -916,7 +942,7 @@ func TestToggleDefaultKey(t *testing.T) {
 	if !fs.IsDefault("id_ed") || !strings.Contains(m.status, "added default") {
 		t.Errorf("first press should add default; status=%q defaults=%v", m.status, fs.defaults)
 	}
-	if !strings.Contains(m.View(), "★ default") {
+	if !strings.Contains(m.View(), "★") {
 		t.Error("default key should be marked")
 	}
 
@@ -1469,17 +1495,8 @@ func TestCopyHostSshCommand(t *testing.T) {
 	out, cmd := m.Update(key("s"))
 	m = out.(Model)
 	cmd()
-	if copied != "ssh deploy@example.com -p 22" {
+	if copied != "ssh -p 22 deploy@example.com" {
 		t.Errorf("copied %q", copied)
-	}
-}
-
-func TestSshCommand(t *testing.T) {
-	if got := sshCommand(config.Host{Name: "web", Hostname: "h", User: "u", Port: 2222}); got != "ssh u@h -p 2222" {
-		t.Errorf("explicit = %q", got)
-	}
-	if got := sshCommand(config.Host{Name: "alias only"}); got != "ssh alias" {
-		t.Errorf("alias fallback = %q", got)
 	}
 }
 
@@ -1777,3 +1794,79 @@ func TestRefreshErrorShown(t *testing.T) {
 type errFake struct{}
 
 func (errFake) Error() string { return "boom" }
+
+func TestSSHArgsUseConfigFlagOnlyWhenCustom(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	if got := m.sshArgs("web"); !slicesEqual(got, []string{"web"}) {
+		t.Errorf("default config: args = %v, want [web]", got)
+	}
+	m = m.WithConfigFlag("/work/sshcfg")
+	if got := m.sshArgs("web"); !slicesEqual(got, []string{"-F", "/work/sshcfg", "web"}) {
+		t.Errorf("custom config: args = %v", got)
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestSSHCommandForExplicitExpansion(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"id_a": {ID: "id_a", Name: "id_a", Path: "/k/id_a", ExistsOnDisk: true},
+		},
+		Hosts: map[config.HostID]config.Host{
+			"db": {ID: "db", Name: "db", Hostname: "10.0.0.5", User: "postgres", Port: 2222,
+				Identities: []config.IdentityID{"id_a"},
+				Options:    map[string]string{"ProxyJump": "bastion", "ForwardAgent": "yes"}},
+		},
+	}
+	m := New(&fakeService{model: snap})
+	m = feed(m, refreshedMsg{model: snap})
+
+	h, _ := m.hostByID("db")
+	got := m.sshCommandFor(h)
+	want := "ssh -p 2222 -i /k/id_a -o ForwardAgent=yes -o ProxyJump=bastion postgres@10.0.0.5"
+	if got != want {
+		t.Errorf("explicit command:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestSSHCommandForShellQuotesSpaces(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{
+			"id_sp": {ID: "id_sp", Name: "id_sp", Path: "/home/u/My Keys/id_rsa", ExistsOnDisk: true},
+		},
+		Hosts: map[config.HostID]config.Host{
+			"sp": {ID: "sp", Name: "sp", Hostname: "h.example", User: "me",
+				Identities: []config.IdentityID{"id_sp"},
+				Options:    map[string]string{"ProxyCommand": "ssh -W %h:%p bastion"}},
+		},
+	}
+	m := New(&fakeService{model: snap})
+	m = feed(m, refreshedMsg{model: snap})
+
+	h, _ := m.hostByID("sp")
+	got := m.sshCommandFor(h)
+	want := "ssh -i '/home/u/My Keys/id_rsa' -o ProxyCommand='ssh -W %h:%p bastion' me@h.example"
+	if got != want {
+		t.Errorf("quoted command:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestSSHCommandForNoHostnameFallsBack(t *testing.T) {
+	m := New(&fakeService{model: snapshot()}).WithConfigFlag("/work/sshcfg")
+	m = feed(m, refreshedMsg{model: snapshot()})
+	h := config.Host{ID: "bare", Name: "bare"}
+	if got := m.sshCommandFor(h); got != "ssh -F /work/sshcfg bare" {
+		t.Errorf("fallback = %q", got)
+	}
+}
