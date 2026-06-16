@@ -78,7 +78,13 @@ func (r *FileRepo) Load() (*config.SshConfigModel, error) {
 
 	r.files = nil
 	r.dirty = map[string]bool{}
-	r.backedUp = map[string]bool{}
+	// backedUp must survive reloads: a .bak is the snapshot from before the
+	// session's FIRST edit, and the service reloads (Refresh) after every Save.
+	// Resetting it here would let the next edit overwrite the .bak with
+	// already-edited content, breaking Restore. Initialize once, never reset.
+	if r.backedUp == nil {
+		r.backedUp = map[string]bool{}
+	}
 	visited := map[string]bool{}
 	if err := r.loadFile(main, 0, visited); err != nil {
 		return nil, err

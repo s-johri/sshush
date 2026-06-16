@@ -44,10 +44,10 @@ var presets = []preset{
 	{"nord", Theme{Primary: "#88c0d0", Accent: "#8fbcbb", Green: "#a3be8c", Dim: "#81a1c1", Err: "#bf616a", Gold: "#ebcb8b", Border: "#434c5e", SelBg: "#3b4252", Text: "#d8dee9", Subtle: "#81a1c1", HostTag: "#b48ead", Bg: "#2e3440"}},
 
 	{"gruvbox-dark", Theme{Primary: "#fe8019", Accent: "#83a598", Green: "#b8bb26", Dim: "#928374", Err: "#fb4934", Gold: "#fabd2f", Border: "#504945", SelBg: "#3c3836", Text: "#ebdbb2", Subtle: "#928374", HostTag: "#d3869b", Bg: "#282828"}},
-	{"gruvbox-light", Theme{Primary: "#af3a03", Accent: "#076678", Green: "#79740e", Dim: "#7c6f64", Err: "#9d0006", Gold: "#b57614", Border: "#ebdbb2", SelBg: "#ebdbb2", Text: "#3c3836", Subtle: "#928374", HostTag: "#8f3f71", Bg: "#fbf1c7"}},
+	{"gruvbox-light", Theme{Primary: "#af3a03", Accent: "#076678", Green: "#79740e", Dim: "#7c6f64", Err: "#9d0006", Gold: "#b57614", Border: "#d5c4a1", SelBg: "#ebdbb2", Text: "#3c3836", Subtle: "#928374", HostTag: "#8f3f71", Bg: "#fbf1c7"}},
 
 	{"solarized-dark", Theme{Primary: "#268bd2", Accent: "#2aa198", Green: "#859900", Dim: "#657b83", Err: "#dc322f", Gold: "#b58900", Border: "#073642", SelBg: "#073642", Text: "#93a1a1", Subtle: "#657b83", HostTag: "#6c71c4", Bg: "#002b36"}},
-	{"solarized-light", Theme{Primary: "#268bd2", Accent: "#0e8a7d", Green: "#728600", Dim: "#657b83", Err: "#dc322f", Gold: "#a07d00", Border: "#eee8d5", SelBg: "#eee8d5", Text: "#586e75", Subtle: "#657b83", HostTag: "#6c71c4", Bg: "#fdf6e3"}},
+	{"solarized-light", Theme{Primary: "#268bd2", Accent: "#0e8a7d", Green: "#728600", Dim: "#657b83", Err: "#dc322f", Gold: "#a07d00", Border: "#93a1a1", SelBg: "#eee8d5", Text: "#586e75", Subtle: "#657b83", HostTag: "#6c71c4", Bg: "#fdf6e3"}},
 
 	{"catppuccin-mocha", Theme{Primary: "#f5c2e7", Accent: "#89dceb", Green: "#a6e3a1", Dim: "#6c7086", Err: "#f38ba8", Gold: "#f9e2af", Border: "#45475a", SelBg: "#313244", Text: "#cdd6f4", Subtle: "#7f849c", HostTag: "#cba6f7", Bg: "#1e1e2e"}},
 	{"catppuccin-macchiato", Theme{Primary: "#f5bde6", Accent: "#8bd5ca", Green: "#a6da95", Dim: "#6e738d", Err: "#ed8796", Gold: "#eed49f", Border: "#494d64", SelBg: "#363a4f", Text: "#cad3f5", Subtle: "#8087a2", HostTag: "#c6a0f6", Bg: "#24273a"}},
@@ -56,7 +56,7 @@ var presets = []preset{
 
 	{"tokyonight", Theme{Primary: "#7aa2f7", Accent: "#7dcfff", Green: "#9ece6a", Dim: "#7982a9", Err: "#f7768e", Gold: "#e0af68", Border: "#3b4261", SelBg: "#292e42", Text: "#c0caf5", Subtle: "#7982a9", HostTag: "#bb9af7", Bg: "#1a1b26"}},
 	{"tokyonight-storm", Theme{Primary: "#7aa2f7", Accent: "#7dcfff", Green: "#9ece6a", Dim: "#7982a9", Err: "#f7768e", Gold: "#e0af68", Border: "#3b4261", SelBg: "#2d3149", Text: "#c0caf5", Subtle: "#7982a9", HostTag: "#bb9af7", Bg: "#24283b"}},
-	{"tokyonight-day", Theme{Primary: "#2e7de9", Accent: "#007197", Green: "#587539", Dim: "#6172b0", Err: "#f52a65", Gold: "#8c6c3e", Border: "#c4c8da", SelBg: "#c4c8da", Text: "#3760bf", Subtle: "#6172b0", HostTag: "#9854f1", Bg: "#e1e2e7"}},
+	{"tokyonight-day", Theme{Primary: "#2e7de9", Accent: "#007197", Green: "#587539", Dim: "#6172b0", Err: "#f52a65", Gold: "#8c6c3e", Border: "#a8aecb", SelBg: "#c4c8da", Text: "#3760bf", Subtle: "#6172b0", HostTag: "#9854f1", Bg: "#e1e2e7"}},
 }
 
 // themeByName returns a preset theme and whether it was found.

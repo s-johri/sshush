@@ -231,6 +231,47 @@ func TestSaveWritesBackupAndFile(t *testing.T) {
 	}
 }
 
+// TestBackupSurvivesReloadBetweenEdits guards the recovery promise: the .bak is
+// the snapshot from before sshush's FIRST edit this session. The service does
+// Save+Refresh (reload) after every edit, so a second edit must NOT overwrite
+// the .bak with already-edited content.
+func TestBackupSurvivesReloadBetweenEdits(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	orig := "Host web\n    User old\n"
+	writeFile(t, path, orig)
+
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	// First edit + Save + reload (mirrors service.EditHost -> Refresh).
+	if err := r.SetHostField("web", "User", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	// Second edit + Save.
+	if err := r.SetHostField("web", "User", "second"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	bak, err := os.ReadFile(path + ".bak")
+	if err != nil {
+		t.Fatalf("backup not written: %v", err)
+	}
+	if string(bak) != orig {
+		t.Errorf("backup = %q, want original %q (second edit clobbered the snapshot)", bak, orig)
+	}
+}
+
 func TestDeleteHostField(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config")
