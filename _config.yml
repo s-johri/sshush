@@ -19,6 +19,8 @@ exclude:
   - docs/adr/
   - docs/superpowers/
   - docs/demo.tape
+  - docs/themes.tape
+  - docs/demo-fixture.sh
   - cmd/
   - internal/
   - pkg/

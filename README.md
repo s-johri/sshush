@@ -1,9 +1,19 @@
+<div align="center">
+
 # sshush
+
+**An interactive terminal UI for SSH keys, the ssh-agent, and `~/.ssh/config`.**
 
 [![Latest release](https://img.shields.io/github/v/release/s-johri/sshush)](https://github.com/s-johri/sshush/releases/latest)
 [![CI](https://github.com/s-johri/sshush/actions/workflows/ci.yml/badge.svg)](https://github.com/s-johri/sshush/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/s-johri/sshush)](https://goreportcard.com/report/github.com/s-johri/sshush)
 [![License: MIT](https://img.shields.io/github/license/s-johri/sshush)](LICENSE)
+
+![sshush demo — browsing keys and hosts, filtering, and a live theme switch](docs/demo.gif)
+
+<!-- Regenerate with: sh docs/demo-fixture.sh  (see docs/demo.tape) -->
+
+</div>
 
 **sshush** is an interactive terminal UI (TUI) for managing SSH keys, the
 ssh-agent, and your `~/.ssh/config` — an SSH key manager, agent controller,
@@ -14,12 +24,6 @@ and edit your config safely without leaving the terminal.
 > Status: in active development. Edits to your SSH config are gated behind a
 > confirmation and a `.bak` backup is written before the first change, but treat
 > it as pre-1.0 software.
-
-## Demo
-
-![sshush demo](docs/demo.gif)
-
-<!-- Regenerate with: vhs docs/demo.tape  (see docs/demo.tape) -->
 
 ## Features
 
@@ -61,6 +65,19 @@ and edit your config safely without leaving the terminal.
   live in-app switcher (`t`), plus an opt-in motion/animation system (`m`).
 - **Hot reload** — external changes to your config or `~/.ssh` are picked up
   automatically.
+
+## Themes
+
+16 built-in color themes (foreground + background), switchable live with `t` —
+Dracula, Nord, Gruvbox, Solarized, Catppuccin, Tokyo Night, and more:
+
+| Dracula | Nord |
+|:---:|:---:|
+| ![sshush with the Dracula theme](docs/themes/dracula.png) | ![sshush with the Nord theme](docs/themes/nord.png) |
+| **Catppuccin Mocha** | **Solarized Light** |
+| ![sshush with the Catppuccin Mocha theme](docs/themes/catppuccin-mocha.png) | ![sshush with the Solarized Light theme](docs/themes/solarized-light.png) |
+
+<!-- Regenerate with: sh docs/demo-fixture.sh docs/themes.tape -->
 
 ## Requirements
 
