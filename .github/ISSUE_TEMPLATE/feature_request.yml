@@ -1,0 +1,38 @@
+name: Feature Request
+description: Suggest an idea or improvement for sshush
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: What are you trying to do, and what's missing or awkward today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: >
+        What you'd like to see. If it involves the TUI, mention which pane and
+        how it would fit the existing keybindings.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any other approaches or workarounds you've thought about or tried.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: "Anything else that would help, e.g. how other SSH tooling handles this."
+    validations:
+      required: false
