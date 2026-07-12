@@ -6,7 +6,7 @@
 
 [![Latest release](https://img.shields.io/github/v/release/s-johri/sshush)](https://github.com/s-johri/sshush/releases/latest)
 [![CI](https://github.com/s-johri/sshush/actions/workflows/ci.yml/badge.svg)](https://github.com/s-johri/sshush/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/s-johri/sshush)](https://goreportcard.com/report/github.com/s-johri/sshush)
+[![Go version](https://img.shields.io/github/go-mod/go-version/s-johri/sshush)](go.mod)
 [![License: MIT](https://img.shields.io/github/license/s-johri/sshush)](LICENSE)
 
 ![sshush demo — browsing keys and hosts, filtering, and a live theme switch](docs/demo.gif)

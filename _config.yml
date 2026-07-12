@@ -13,6 +13,14 @@ plugins:
   - jekyll-seo-tag
   - jekyll-sitemap
 
+# og:image / twitter:image for link shares (same card is uploaded as the
+# GitHub social preview).
+defaults:
+  - scope:
+      path: ""
+    values:
+      image: /docs/social-preview.png
+
 # Keep source code and internal docs out of the rendered site
 # (docs/demo.gif must stay included — the README embeds it).
 exclude:
@@ -20,6 +28,8 @@ exclude:
   - docs/superpowers/
   - docs/demo.tape
   - docs/themes.tape
+  - docs/social.tape
+  - docs/social-card.py
   - docs/demo-fixture.sh
   - cmd/
   - internal/

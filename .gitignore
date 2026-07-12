@@ -56,3 +56,6 @@ CONTEXT.md
 
 # Docs working files (keep docs/superpowers/ plans/specs and demo assets tracked)
 docs/adr/
+
+# Intermediate social-card screenshot (docs/social-preview.png is tracked)
+docs/social/
