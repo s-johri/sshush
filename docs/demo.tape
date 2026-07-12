@@ -1,19 +1,19 @@
 # vhs tape for the sshush demo GIF.
 #
 # Generate it with:
-#   vhs docs/demo.tape        # writes docs/demo.gif
+#   sh docs/demo-fixture.sh    # throwaway keys/hosts/agent, then vhs docs/demo.tape
 #
 # Install vhs: https://github.com/charmbracelet/vhs (`brew install vhs`).
-# Run against a populated ~/.ssh (or an SSHUSH_SSH_DIR fixture) so the panes
-# have keys and hosts to show. The theme switch below assumes the configured
-# start theme is "tokyonight" (so it lands on tokyonight-day with two presses).
+# The fixture keeps real key names and hosts out of the recording, and starts
+# on the "tokyonight" theme (the switch below lands on tokyonight-day with two
+# presses).
 
 Output docs/demo.gif
 
 Set Shell bash
 Set FontSize 16
 Set Width 1120
-Set Height 720
+Set Height 560
 Set Padding 20
 Set Theme "TokyoNight"
 Set TypingSpeed 110ms
