@@ -1,8 +1,15 @@
 # sshush
 
-An interactive terminal UI for managing SSH keys, the ssh-agent, and your
-`~/.ssh/config` — switch keys, see what's loaded in the agent, browse hosts, and
-edit your config without leaving the terminal.
+[![Latest release](https://img.shields.io/github/v/release/s-johri/sshush)](https://github.com/s-johri/sshush/releases/latest)
+[![CI](https://github.com/s-johri/sshush/actions/workflows/ci.yml/badge.svg)](https://github.com/s-johri/sshush/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/s-johri/sshush)](https://goreportcard.com/report/github.com/s-johri/sshush)
+[![License: MIT](https://img.shields.io/github/license/s-johri/sshush)](LICENSE)
+
+**sshush** is an interactive terminal UI (TUI) for managing SSH keys, the
+ssh-agent, and your `~/.ssh/config` — an SSH key manager, agent controller,
+config editor, and connection launcher in one keyboard-driven app, written in
+Go. Switch keys, see what's loaded in the agent, browse and connect to hosts,
+and edit your config safely without leaving the terminal.
 
 > Status: in active development. Edits to your SSH config are gated behind a
 > confirmation and a `.bak` backup is written before the first change, but treat
@@ -264,6 +271,15 @@ sshush merges three sources into one view on each refresh:
 matching disk keys to agent keys by SHA256 fingerprint. Config writes go through
 a round-tripping parser so comments, ordering, and unknown options survive
 edits. See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.
+
+## Looking for the YAML config generator?
+
+There is an unrelated, similarly named project:
+[bencromwell/sshush](https://github.com/bencromwell/sshush) generates a static
+`ssh_config` file from YAML source files. This sshush is different — an
+interactive TUI that works with your existing `~/.ssh/config` directly and also
+manages keys, the ssh-agent, `known_hosts`, and permissions. If you arrived
+here looking for the YAML tool, the link above is what you want.
 
 ## Changelog
 

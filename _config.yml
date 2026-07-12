@@ -1,0 +1,29 @@
+# GitHub Pages (Jekyll) config — renders README.md as the project site at
+# https://s-johri.github.io/sshush/ with SEO meta tags and a sitemap.
+title: sshush
+tagline: Interactive terminal UI for SSH keys, ssh-agent, and ~/.ssh/config
+description: >-
+  sshush is an interactive terminal UI (TUI) for managing SSH keys, the
+  ssh-agent, and your ~/.ssh/config — load and unload keys, connect to hosts,
+  edit your config safely, and audit permissions without leaving the terminal.
+url: "https://s-johri.github.io"
+baseurl: "/sshush"
+theme: jekyll-theme-primer
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+# Keep source code and internal docs out of the rendered site
+# (docs/demo.gif must stay included — the README embeds it).
+exclude:
+  - docs/adr/
+  - docs/superpowers/
+  - docs/demo.tape
+  - cmd/
+  - internal/
+  - pkg/
+  - dist/
+  - go.mod
+  - go.sum
+  - install.sh
+  - CONTEXT.md
