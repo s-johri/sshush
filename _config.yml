@@ -13,6 +13,10 @@ plugins:
   - jekyll-seo-tag
   - jekyll-sitemap
 
+# Google Search Console ownership verification (emitted by jekyll-seo-tag).
+webmaster_verifications:
+  google: 7X-6bFe3p0dY4AYgNz3xWsuRsAFkS5vaeE_fgxKy0EU
+
 # og:image / twitter:image for link shares (same card is uploaded as the
 # GitHub social preview).
 defaults:
