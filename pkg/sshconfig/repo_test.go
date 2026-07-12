@@ -272,6 +272,93 @@ func TestBackupSurvivesReloadBetweenEdits(t *testing.T) {
 	}
 }
 
+// TestBackupRecreatedAfterExternalDeletion: if the .bak vanishes mid-session
+// (user cleanup, tmp reaper), Save must notice and re-snapshot before writing —
+// otherwise every later edit is unrecoverable until the process restarts.
+func TestBackupRecreatedAfterExternalDeletion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host web\n    User old\n")
+
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetHostField("web", "User", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path + ".bak"); err != nil {
+		t.Fatal(err)
+	}
+	// Service does Save+Refresh after every edit; mirror that.
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetHostField("web", "User", "second"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	bak, err := os.ReadFile(path + ".bak")
+	if err != nil {
+		t.Fatalf("backup not re-created after external deletion: %v", err)
+	}
+	// Best available snapshot at that point is the pre-write on-disk content.
+	if want := "Host web\n    User first\n"; string(bak) != want {
+		t.Errorf("backup = %q, want %q", bak, want)
+	}
+}
+
+// TestExternalEditRearmsBackup: content that arrived on disk from outside
+// sshush (hot-reload watcher flow) must be re-snapshotted before sshush's next
+// write, so Restore never silently reverts the user's manual edits.
+func TestExternalEditRearmsBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host web\n    User old\n")
+
+	r := New(path)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	// First sshush edit: .bak = original.
+	if err := r.SetHostField("web", "User", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	// External edit (vim), picked up by the watcher-driven reload.
+	external := "Host web\n    User first\nHost db\n    User admin\n"
+	writeFile(t, path, external)
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	// Next sshush edit must snapshot the externally edited state first.
+	if err := r.SetHostField("web", "User", "second"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	bak, err := os.ReadFile(path + ".bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(bak) != external {
+		t.Errorf("backup = %q, want externally edited content %q (Restore would destroy the external edit)", bak, external)
+	}
+}
+
 func TestDeleteHostField(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config")

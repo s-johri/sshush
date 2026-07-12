@@ -4,6 +4,7 @@
 package sshconfig
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -56,14 +57,19 @@ type FileRepo struct {
 	// against (per OpenSSH, ~/.ssh). Empty means ~/.ssh.
 	SshDir string
 
-	files    []*loadedFile   // parse order: main file first, then includes
-	dirty    map[string]bool // files mutated since load, keyed by path
-	backedUp map[string]bool // files whose .bak has been written this session
+	files []*loadedFile   // parse order: main file first, then includes
+	dirty map[string]bool // files mutated since load, keyed by path
+	// backedUp marks files whose .bak has been written. It must survive
+	// reloads (the service reloads after every Save; resetting it would let
+	// the next edit clobber the .bak with already-edited content). Load
+	// clears an entry only when the file changed outside sshush, so the next
+	// Save re-snapshots the external state before writing over it.
+	backedUp map[string]bool
 }
 
 // New returns a FileRepo for path. Empty path defaults to ~/.ssh/config.
 func New(path string) *FileRepo {
-	return &FileRepo{Path: path}
+	return &FileRepo{Path: path, backedUp: map[string]bool{}}
 }
 
 // Load parses the user config and every file it Includes, building the unified
@@ -76,18 +82,27 @@ func (r *FileRepo) Load() (*config.SshConfigModel, error) {
 		return nil, err
 	}
 
+	// Remember each file's last-known bytes (kept current by Save) so a
+	// reload can tell our own writes apart from external edits.
+	prevRaw := map[string][]byte{}
+	for _, lf := range r.files {
+		prevRaw[lf.path] = lf.raw
+	}
+
 	r.files = nil
 	r.dirty = map[string]bool{}
-	// backedUp must survive reloads: a .bak is the snapshot from before the
-	// session's FIRST edit, and the service reloads (Refresh) after every Save.
-	// Resetting it here would let the next edit overwrite the .bak with
-	// already-edited content, breaking Restore. Initialize once, never reset.
-	if r.backedUp == nil {
-		r.backedUp = map[string]bool{}
-	}
 	visited := map[string]bool{}
 	if err := r.loadFile(main, 0, visited); err != nil {
 		return nil, err
+	}
+
+	// A file that changed outside sshush (editor, Restore) makes the .bak
+	// stale: re-arm the backup so the next Save snapshots the new state
+	// instead of letting Restore silently revert the external edits.
+	for _, lf := range r.files {
+		if prev, ok := prevRaw[lf.path]; ok && !bytes.Equal(prev, lf.raw) {
+			delete(r.backedUp, lf.path)
+		}
 	}
 
 	model := &config.SshConfigModel{
@@ -489,18 +504,31 @@ func (r *FileRepo) Save() error {
 		if !r.dirty[lf.path] {
 			continue
 		}
-		if !r.backedUp[lf.path] {
+		if !r.backupOnDisk(lf.path) {
 			if err := os.WriteFile(lf.path+".bak", lf.raw, fileMode(lf.path)); err != nil {
 				return fmt.Errorf("backup %s: %w", lf.path, err)
 			}
 			r.backedUp[lf.path] = true
 		}
-		if err := os.WriteFile(lf.path, []byte(lf.cfg.String()), fileMode(lf.path)); err != nil {
+		data := []byte(lf.cfg.String())
+		if err := os.WriteFile(lf.path, data, fileMode(lf.path)); err != nil {
 			return fmt.Errorf("write %s: %w", lf.path, err)
 		}
+		lf.raw = data // keep last-known bytes current so reloads can spot external edits
 		r.dirty[lf.path] = false
 	}
 	return nil
+}
+
+// backupOnDisk reports whether this session's .bak for path was written and is
+// still present. Checking the disk guards against the .bak being deleted
+// externally mid-session, which would otherwise leave later edits unrecoverable.
+func (r *FileRepo) backupOnDisk(path string) bool {
+	if !r.backedUp[path] {
+		return false
+	}
+	_, err := os.Stat(path + ".bak")
+	return err == nil
 }
 
 // BackupPaths returns the loaded config files that have a sibling ".bak" to

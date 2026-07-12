@@ -58,6 +58,9 @@ func TestThemeContrast(t *testing.T) {
 			{"Green", p.theme.Green, p.theme.Bg, 3.0},
 			{"HostTag", p.theme.HostTag, p.theme.Bg, 3.0},
 			{"Accent/SelBg", p.theme.Accent, p.theme.SelBg, 3.0},
+			// Borders are decoration, not text: they only need to be
+			// discernible, so the floor is well below the text minimums.
+			{"Border", p.theme.Border, p.theme.Bg, 1.3},
 		}
 		for _, c := range checks {
 			ratio, ok := contrastRatio(c.fg, c.bg)

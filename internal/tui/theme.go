@@ -46,7 +46,7 @@ var presets = []preset{
 	{"gruvbox-dark", Theme{Primary: "#fe8019", Accent: "#83a598", Green: "#b8bb26", Dim: "#928374", Err: "#fb4934", Gold: "#fabd2f", Border: "#504945", SelBg: "#3c3836", Text: "#ebdbb2", Subtle: "#928374", HostTag: "#d3869b", Bg: "#282828"}},
 	{"gruvbox-light", Theme{Primary: "#af3a03", Accent: "#076678", Green: "#79740e", Dim: "#7c6f64", Err: "#9d0006", Gold: "#b57614", Border: "#d5c4a1", SelBg: "#ebdbb2", Text: "#3c3836", Subtle: "#928374", HostTag: "#8f3f71", Bg: "#fbf1c7"}},
 
-	{"solarized-dark", Theme{Primary: "#268bd2", Accent: "#2aa198", Green: "#859900", Dim: "#657b83", Err: "#dc322f", Gold: "#b58900", Border: "#073642", SelBg: "#073642", Text: "#93a1a1", Subtle: "#657b83", HostTag: "#6c71c4", Bg: "#002b36"}},
+	{"solarized-dark", Theme{Primary: "#268bd2", Accent: "#2aa198", Green: "#859900", Dim: "#657b83", Err: "#dc322f", Gold: "#b58900", Border: "#586e75", SelBg: "#073642", Text: "#93a1a1", Subtle: "#657b83", HostTag: "#6c71c4", Bg: "#002b36"}},
 	{"solarized-light", Theme{Primary: "#268bd2", Accent: "#0e8a7d", Green: "#728600", Dim: "#657b83", Err: "#dc322f", Gold: "#a07d00", Border: "#93a1a1", SelBg: "#eee8d5", Text: "#586e75", Subtle: "#657b83", HostTag: "#6c71c4", Bg: "#fdf6e3"}},
 
 	{"catppuccin-mocha", Theme{Primary: "#f5c2e7", Accent: "#89dceb", Green: "#a6e3a1", Dim: "#6c7086", Err: "#f38ba8", Gold: "#f9e2af", Border: "#45475a", SelBg: "#313244", Text: "#cdd6f4", Subtle: "#7f849c", HostTag: "#cba6f7", Bg: "#1e1e2e"}},

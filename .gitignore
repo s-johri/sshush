@@ -46,3 +46,13 @@ config.bak
 # local test fixtures with real data (commit sanitized fixtures under testdata/ explicitly)
 /.ssh/
 testdata/local/
+
+# Brainstorm session artifacts
+.superpowers/
+
+# Serena MCP state
+.serena/
+CONTEXT.md
+
+# Docs working files (keep docs/superpowers/ plans/specs and demo assets tracked)
+docs/adr/
