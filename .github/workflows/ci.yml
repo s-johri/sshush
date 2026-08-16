@@ -32,3 +32,21 @@ jobs:
       # ssh-agent/ssh-add/ssh-keygen, so the e2e-tagged suite runs here too.
       - name: Test (e2e)
         run: go test -tags e2e ./...
+
+  # YAML formatting is checked once, on Linux only. The settings live in
+  # .yamlfmt at the repo root. The version is pinned so a new yamlfmt release
+  # cannot fail CI on an unrelated change.
+  yaml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install yamlfmt
+        run: go install github.com/google/yamlfmt/cmd/yamlfmt@v0.21.0
+
+      - name: Verify YAML formatting
+        run: yamlfmt -lint .

@@ -3,9 +3,9 @@
 title: sshush
 tagline: Interactive terminal UI for SSH keys, ssh-agent, and ~/.ssh/config
 description: >-
-  sshush is an interactive terminal UI (TUI) for managing SSH keys, the
-  ssh-agent, and your ~/.ssh/config — load and unload keys, connect to hosts,
-  edit your config safely, and audit permissions without leaving the terminal.
+  sshush is an interactive terminal UI (TUI) for managing SSH keys, the ssh-agent,
+  and your ~/.ssh/config — load and unload keys, connect to hosts, edit your config
+  safely, and audit permissions without leaving the terminal.
 url: "https://s-johri.github.io"
 baseurl: "/sshush"
 theme: jekyll-theme-primer

@@ -1,0 +1,15 @@
+# yamlfmt configuration
+#
+# Defaults strip blank lines and collapse the padding before trailing
+# comments, which hurts readability in CI and release config.
+# retain_line_breaks and pad_line_comments keep files as written.
+# max_line_length re-wraps folded scalars (">") instead of joining them
+# into one very long line.
+gitignore_excludes: true
+exclude:
+  - .serena
+formatter:
+  type: basic
+  retain_line_breaks: true
+  pad_line_comments: 2
+  max_line_length: 80

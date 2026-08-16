@@ -16,8 +16,8 @@ body:
     attributes:
       label: Proposed Solution
       description: >
-        What you'd like to see. If it involves the TUI, mention which pane and
-        how it would fit the existing keybindings.
+        What you'd like to see. If it involves the TUI, mention which pane and how
+        it would fit the existing keybindings.
     validations:
       required: true
 
@@ -33,6 +33,7 @@ body:
     id: context
     attributes:
       label: Additional Context
-      description: "Anything else that would help, e.g. how other SSH tooling handles this."
+      description: "Anything else that would help, e.g. how other SSH tooling handles
+        this."
     validations:
       required: false

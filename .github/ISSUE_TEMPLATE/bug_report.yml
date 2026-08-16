@@ -42,8 +42,8 @@ body:
     attributes:
       label: Actual Behavior
       description: >
-        What actually happened. Include the exact error message or anything
-        printed to the terminal (stderr), and a screenshot of the TUI if it helps.
+        What actually happened. Include the exact error message or anything printed
+        to the terminal (stderr), and a screenshot of the TUI if it helps.
     validations:
       required: true
 
@@ -99,9 +99,9 @@ body:
     attributes:
       label: SSH setup (if relevant)
       description: >
-        Anything unusual about your config that may matter, e.g. a custom config
-        location (config_path / SSHUSH_CONFIG / ssh_dir), Include directives,
-        Match blocks, or a non-default ssh-agent.
+        Anything unusual about your config that may matter, e.g. a custom config location
+        (config_path / SSHUSH_CONFIG / ssh_dir), Include directives, Match blocks,
+        or a non-default ssh-agent.
     validations:
       required: false
 
