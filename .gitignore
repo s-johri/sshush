@@ -28,6 +28,7 @@
 SCRATCH.md
 NOTES.local.md
 TODO.local.md
+docs/code-review-findings.md
 
 # SSH material — NEVER commit real keys/configs/backups
 id_rsa
