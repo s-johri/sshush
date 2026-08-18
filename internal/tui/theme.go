@@ -1,27 +1,41 @@
 package tui
 
 import (
+	"image/color"
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
+
+// Color is one palette entry: a hex string ("#rrggbb" or "#rgb"), a 256-color
+// palette index ("212"), or "" for the terminal default. In lipgloss v2
+// Color is a function that returns color.Color, not a string type, so the
+// palette keeps its own string form. The string is necessary twice: readableOn
+// parses the hex digits for luminance, and "" is the sentinel for "do not set
+// this color at all".
+type Color string
+
+// lg converts a palette entry to a lipgloss color. An entry that lipgloss
+// cannot parse, "" included, becomes a no-op color that renders no escape
+// sequence, which gives the terminal default.
+func (c Color) lg() color.Color { return lipgloss.Color(string(c)) }
 
 // Theme is the full color palette. Every style is rebuilt from one of these via
 // applyTheme, so the look is swappable at runtime.
 type Theme struct {
-	Primary lipgloss.Color // accents, titles, active tab background
-	Accent  lipgloss.Color // selection text, status, flash-good
-	Green   lipgloss.Color // loaded-key badge
-	Dim     lipgloss.Color // muted text
-	Err     lipgloss.Color // errors / destructive / flash-bad
-	Gold    lipgloss.Color // default-key star, key caps
-	Border  lipgloss.Color // box borders
-	SelBg   lipgloss.Color // selected-row background
-	Text    lipgloss.Color // body text (so it doesn't inherit the terminal fg)
-	Subtle  lipgloss.Color // help labels
-	HostTag lipgloss.Color // hosts-using-a-key tag
-	Bg      lipgloss.Color // full-screen background ("" = terminal default)
+	Primary Color // accents, titles, active tab background
+	Accent  Color // selection text, status, flash-good
+	Green   Color // loaded-key badge
+	Dim     Color // muted text
+	Err     Color // errors / destructive / flash-bad
+	Gold    Color // default-key star, key caps
+	Border  Color // box borders
+	SelBg   Color // selected-row background
+	Text    Color // body text (so it doesn't inherit the terminal fg)
+	Subtle  Color // help labels
+	HostTag Color // hosts-using-a-key tag
+	Bg      Color // full-screen background ("" = terminal default)
 }
 
 // defaultTheme is the built-in palette (256-color indices), terminal background.
@@ -76,43 +90,43 @@ func applyTheme(t Theme) {
 	colDim, colErr, colGold = t.Dim, t.Err, t.Gold
 	colBorder, colSelBg, colBg = t.Border, t.SelBg, t.Bg
 
-	appTitleStyle = themed(t).Bold(true).Foreground(t.Primary)
-	titleStyle = themed(t).Bold(true).Foreground(t.Primary)
+	appTitleStyle = themed(t).Bold(true).Foreground(t.Primary.lg())
+	titleStyle = themed(t).Bold(true).Foreground(t.Primary.lg())
 	tabActive = titleStyle
 	// Text on a colored fill (tab/flash) picks black or white by the fill's
 	// luminance, so it stays readable on both bright and dark accent colors.
-	tabSelected = lipgloss.NewStyle().Bold(true).Foreground(readableOn(t.Primary)).Background(t.Primary).Padding(0, 1)
-	tabUnselected = themed(t).Foreground(t.Dim).Padding(0, 1)
-	headerStyle = themed(t).Foreground(t.Dim).Underline(true)
-	selectedRow = lipgloss.NewStyle().Bold(true).Foreground(t.Accent).Background(t.SelBg)
-	loadedBadge = themed(t).Foreground(t.Green)
-	textStyle = themed(t).Foreground(t.Text)
-	dimStyle = themed(t).Foreground(t.Dim)
-	errStyle = themed(t).Bold(true).Foreground(t.Err)
-	starStyle = themed(t).Foreground(t.Gold)
-	keyCap = themed(t).Bold(true).Foreground(t.Gold)
-	statusStyle = themed(t).Foreground(t.Accent)
-	boxStyle = themed(t).Border(lipgloss.RoundedBorder()).BorderForeground(t.Border).Padding(0, 1)
-	helpKey = themed(t).Bold(true).Foreground(t.Accent)
-	helpLabel = themed(t).Bold(true).Foreground(t.Subtle)
-	hostTagStyle = themed(t).Foreground(t.HostTag)
-	flashGoodStyle = lipgloss.NewStyle().Bold(true).Foreground(readableOn(t.Accent)).Background(t.Accent)
-	flashBadStyle = lipgloss.NewStyle().Bold(true).Foreground(readableOn(t.Err)).Background(t.Err)
+	tabSelected = lipgloss.NewStyle().Bold(true).Foreground(readableOn(t.Primary).lg()).Background(t.Primary.lg()).Padding(0, 1)
+	tabUnselected = themed(t).Foreground(t.Dim.lg()).Padding(0, 1)
+	headerStyle = themed(t).Foreground(t.Dim.lg()).Underline(true)
+	selectedRow = lipgloss.NewStyle().Bold(true).Foreground(t.Accent.lg()).Background(t.SelBg.lg())
+	loadedBadge = themed(t).Foreground(t.Green.lg())
+	textStyle = themed(t).Foreground(t.Text.lg())
+	dimStyle = themed(t).Foreground(t.Dim.lg())
+	errStyle = themed(t).Bold(true).Foreground(t.Err.lg())
+	starStyle = themed(t).Foreground(t.Gold.lg())
+	keyCap = themed(t).Bold(true).Foreground(t.Gold.lg())
+	statusStyle = themed(t).Foreground(t.Accent.lg())
+	boxStyle = themed(t).Border(lipgloss.RoundedBorder()).BorderForeground(t.Border.lg()).Padding(0, 1)
+	helpKey = themed(t).Bold(true).Foreground(t.Accent.lg())
+	helpLabel = themed(t).Bold(true).Foreground(t.Subtle.lg())
+	hostTagStyle = themed(t).Foreground(t.HostTag.lg())
+	flashGoodStyle = lipgloss.NewStyle().Bold(true).Foreground(readableOn(t.Accent).lg()).Background(t.Accent.lg())
+	flashBadStyle = lipgloss.NewStyle().Bold(true).Foreground(readableOn(t.Err).lg()).Background(t.Err.lg())
 }
 
 // readableOn returns black or white — whichever reads better on fill color c
 // (by Rec. 601 luminance). Non-hex colors (256-palette indices, used only by the
 // bright default/mono/high-contrast fills) fall back to black.
-func readableOn(c lipgloss.Color) lipgloss.Color {
+func readableOn(c Color) Color {
 	r, g, b, ok := parseHex(string(c))
 	if !ok {
-		return lipgloss.Color("16")
+		return Color("16")
 	}
 	lum := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
 	if lum < 140 {
-		return lipgloss.Color("#ffffff")
+		return Color("#ffffff")
 	}
-	return lipgloss.Color("#000000")
+	return Color("#000000")
 }
 
 // parseHex parses "#rgb" / "#rrggbb" into 8-bit components.
@@ -140,16 +154,22 @@ func parseHex(s string) (r, g, b uint8, ok bool) {
 func themed(t Theme) lipgloss.Style {
 	s := lipgloss.NewStyle()
 	if t.Bg != "" {
-		s = s.Background(t.Bg)
+		s = s.Background(t.Bg.lg())
 	}
 	return s
 }
 
 const ansiReset = "\x1b[0m"
 
+// ansiResets are the reset sequences an inner style can end with. lipgloss v1
+// wrote the parameter out as "\x1b[0m"; v2 omits the default parameter and
+// writes "\x1b[m". A terminal reads both as a full reset, so the fill has to
+// look for both.
+var ansiResets = []string{ansiReset, "\x1b[m"}
+
 // bgOpenSeq returns the escape that sets the theme background (no reset).
 func bgOpenSeq() string {
-	r := lipgloss.NewStyle().Background(colBg).Render("@")
+	r := lipgloss.NewStyle().Background(colBg.lg()).Render("@")
 	if i := strings.IndexByte(r, '@'); i > 0 {
 		return r[:i]
 	}
@@ -157,7 +177,7 @@ func bgOpenSeq() string {
 }
 
 // applyBackground paints the whole screen with the theme background. Inner
-// styled spans end with a full reset (\x1b[0m) which also clears the background,
+// styled spans end with a full reset, which also clears the background,
 // so after every reset we re-assert the bg; each line is then padded to width
 // and the output is filled down to the terminal height. The result is a solid
 // background instead of color only where text happens to be.
@@ -174,7 +194,9 @@ func applyBackground(s string, width, height int) string {
 		lines = append(lines, "")
 	}
 	for i, line := range lines {
-		line = strings.ReplaceAll(line, ansiReset, ansiReset+open) // keep bg after inner resets
+		for _, reset := range ansiResets { // keep bg after inner resets
+			line = strings.ReplaceAll(line, reset, reset+open)
+		}
 		if width > 0 {
 			if pad := width - lipgloss.Width(line); pad > 0 {
 				line += strings.Repeat(" ", pad)

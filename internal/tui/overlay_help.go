@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // helpOverlay shows the full keybinding reference, scrolling when it is taller
@@ -35,7 +35,7 @@ func (o *helpOverlay) maxScroll(m *Model) int {
 }
 
 // Update scrolls; any non-scroll key closes the overlay.
-func (o *helpOverlay) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *helpOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		o.scroll--

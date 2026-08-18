@@ -3,14 +3,14 @@ package tui
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // restoreOverlay is the restore-from-backup y/n gate. It is stateless — the
 // files to revert are read from the service at render time.
 type restoreOverlay struct{}
 
-func (o *restoreOverlay) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *restoreOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() != "y" && msg.String() != "Y" {
 		m.status = "restore cancelled"
 		return nil, nil

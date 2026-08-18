@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/s-johri/sshush/pkg/perms"
 )
 
@@ -14,7 +14,7 @@ type permsOverlay struct {
 	issues []perms.Issue
 }
 
-func (o *permsOverlay) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *permsOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() != "y" && msg.String() != "Y" {
 		m.status = "permissions unchanged"
 		return nil, nil

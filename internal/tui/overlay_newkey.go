@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
 )
@@ -36,13 +36,12 @@ const (
 func newNewKeyWizard() *newKeyWizard {
 	ti := textinput.New()
 	ti.CharLimit = 256
-	ti.Width = 40
-	ti.PromptStyle = textStyle
-	ti.TextStyle = textStyle
+	ti.SetWidth(40)
+	styleTextInput(&ti)
 	return &newKeyWizard{input: ti}
 }
 
-func (o *newKeyWizard) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *newKeyWizard) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() == "esc" {
 		m.status = "cancelled"
 		return nil, nil
@@ -61,7 +60,7 @@ func (o *newKeyWizard) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
 
 // updateAlgo selects the algorithm, then advances to bits/curve selection
 // (rsa/ecdsa) or straight to the filename (ed25519).
-func (o *newKeyWizard) updateAlgo(msg tea.KeyMsg) (overlay, tea.Cmd) {
+func (o *newKeyWizard) updateAlgo(msg tea.KeyPressMsg) (overlay, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		if o.algoCursor > 0 {
@@ -85,7 +84,7 @@ func (o *newKeyWizard) updateAlgo(msg tea.KeyMsg) (overlay, tea.Cmd) {
 }
 
 // updateBits selects rsa bits / ecdsa curve, then advances to the filename.
-func (o *newKeyWizard) updateBits(msg tea.KeyMsg) (overlay, tea.Cmd) {
+func (o *newKeyWizard) updateBits(msg tea.KeyPressMsg) (overlay, tea.Cmd) {
 	opts := bitsOptions(o.algo)
 	switch msg.String() {
 	case "up", "k":
@@ -113,7 +112,7 @@ func (o *newKeyWizard) toNameStep() (overlay, tea.Cmd) {
 }
 
 // updateName collects the key file name, then advances to the comment step.
-func (o *newKeyWizard) updateName(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *newKeyWizard) updateName(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() == "enter" {
 		name := strings.TrimSpace(o.input.Value())
 		if name == "" {
@@ -141,7 +140,7 @@ func (o *newKeyWizard) commentOrDefault(name string) string {
 
 // updateComment collects the -C comment and runs ssh-keygen interactively (via
 // ExecProcess) so it can prompt for a passphrase.
-func (o *newKeyWizard) updateComment(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *newKeyWizard) updateComment(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() == "enter" {
 		m.status = "running ssh-keygen…"
 		cmd, _, err := keys.GenerateCommand(keys.GenerateOpts{

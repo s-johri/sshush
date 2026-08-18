@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/s-johri/sshush/pkg/knownhosts"
 )
 
@@ -27,7 +27,7 @@ func (o *knownHostsOverlay) capacity(m *Model) int {
 	return 1
 }
 
-func (o *knownHostsOverlay) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *knownHostsOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	if o.confirm {
 		if msg.String() == "y" || msg.String() == "Y" {
 			return o.remove(m)

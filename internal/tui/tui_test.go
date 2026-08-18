@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/s-johri/sshush/pkg/clip"
 	"github.com/s-johri/sshush/pkg/config"
 	"github.com/s-johri/sshush/pkg/keys"
@@ -113,7 +112,7 @@ func snapshot() *config.SshConfigModel {
 	}
 }
 
-func key(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
+func key(s string) tea.KeyPressMsg { return tea.KeyPressMsg{Code: rune(s[0]), Text: s} }
 
 func feed(m Model, msg tea.Msg) Model {
 	out, _ := m.Update(msg)
@@ -128,7 +127,7 @@ func TestSnapshotSortedAndRendered(t *testing.T) {
 		t.Fatalf("ids not sorted: %+v", m.ids)
 	}
 
-	view := m.View()
+	view := view(m)
 	if !strings.Contains(view, "alpha") || !strings.Contains(view, "●") {
 		t.Errorf("keys view missing loaded key/badge:\n%s", view)
 	}
@@ -147,11 +146,11 @@ func TestNavClampAndTab(t *testing.T) {
 		t.Fatalf("cursor over-advanced to %d", m.vp[paneKeys].cursor)
 	}
 
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.active != paneHosts {
 		t.Fatalf("tab did not switch to hosts pane: %d", m.active)
 	}
-	if v := m.View(); !strings.Contains(v, "deploy@example.com:22") {
+	if v := view(m); !strings.Contains(v, "deploy@example.com:22") {
 		t.Errorf("hosts view missing destination:\n%s", v)
 	}
 }
@@ -165,7 +164,7 @@ func TestToggleAgentOnlyKeyRejected(t *testing.T) {
 	m := New(&fakeService{model: snap})
 	m = feed(m, refreshedMsg{model: snap})
 
-	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = out.(Model)
 	if cmd != nil {
 		t.Error("agent-only key should not dispatch ssh-add")
@@ -191,15 +190,15 @@ func TestEditFlowConfirmWrites(t *testing.T) {
 	svc := &fakeService{model: snapshot()}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // switch to Hosts pane
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // switch to Hosts pane
 
 	m = feed(m, key("e")) // open editor
 	if _, ok := m.modal.(*editOverlay); !ok {
 		t.Fatalf("expected editOverlay, got %T", m.modal)
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // HostName -> User (prefilled "deploy")
-	m = feed(m, key("2"))                     // -> "deploy2"
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // HostName -> User (prefilled "deploy")
+	m = feed(m, key("2"))                          // -> "deploy2"
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if o := m.modal.(*editOverlay); o.phase != edPhaseConfirm {
 		t.Fatalf("expected confirm phase, got %d", o.phase)
 	}
@@ -264,7 +263,7 @@ func TestRestoreFlow(t *testing.T) {
 	if _, ok := m2.modal.(*restoreOverlay); !ok {
 		t.Fatalf("R should open the restore confirm, got %T", m2.modal)
 	}
-	if v := m2.View(); !strings.Contains(v, "/x/config") {
+	if v := view(m2); !strings.Contains(v, "/x/config") {
 		t.Errorf("confirm should list the backup file:\n%s", v)
 	}
 	out, cmd := m2.Update(key("y"))
@@ -300,9 +299,9 @@ func TestMatchHostReadOnly(t *testing.T) {
 	svc := &fakeService{model: snap}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snap})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
 
-	if v := m.View(); !strings.Contains(v, "*.corp") || !strings.Contains(v, "match · read-only") {
+	if v := view(m); !strings.Contains(v, "*.corp") || !strings.Contains(v, "match · read-only") {
 		t.Errorf("Match block should render its pattern with a match/read-only tag:\n%s", v)
 	}
 
@@ -322,7 +321,7 @@ func TestMatchHostReadOnly(t *testing.T) {
 	}
 
 	// Enter (connect) is also refused.
-	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	mm := out.(Model)
 	if cmd != nil || !strings.Contains(mm.status, "read-only") {
 		t.Errorf("connect on Match block not blocked: cmd=%v status=%q", cmd, mm.status)
@@ -333,10 +332,10 @@ func TestEditFlowCancelNoWrite(t *testing.T) {
 	svc := &fakeService{model: snapshot()}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m = feed(m, key("e"))
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // to confirm
-	m = feed(m, key("n"))                       // cancel
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // to confirm
+	m = feed(m, key("n"))                            // cancel
 
 	if m.modal != nil {
 		t.Errorf("cancel should close the overlay, got %T", m.modal)
@@ -350,10 +349,10 @@ func TestAddOptionFlow(t *testing.T) {
 	svc := &fakeService{model: snapshot()}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
 
-	m = feed(m, key("e"))                       // open edit overlay
-	m = feed(m, tea.KeyMsg{Type: tea.KeyCtrlO}) // add option from inside edit
+	m = feed(m, key("e"))                                     // open edit overlay
+	m = feed(m, tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl}) // add option from inside edit
 	if o := m.modal.(*editOverlay); o.phase != edPhaseOptName {
 		t.Fatalf("expected option-name phase, got %d", o.phase)
 	}
@@ -361,14 +360,14 @@ func TestAddOptionFlow(t *testing.T) {
 	for _, r := range "ForwardAgent" {
 		m = feed(m, key(string(r)))
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // name -> value entry
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // name -> value entry
 	if o := m.modal.(*editOverlay); o.phase != edPhaseValue || o.newKey != "ForwardAgent" {
 		t.Fatalf("after key entry: phase=%d newKey=%q", o.phase, o.newKey)
 	}
 	for _, r := range "yes" {
 		m = feed(m, key(string(r)))
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> confirm
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // -> confirm
 
 	out, cmd := m.Update(key("y"))
 	m = out.(Model)
@@ -391,14 +390,14 @@ func TestDeleteDirectiveFlow(t *testing.T) {
 	svc := &fakeService{model: snap}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snap})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
 
-	m = feed(m, key("e"))                     // edit; present fields = [User, ForwardAgent]
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // User -> ForwardAgent
+	m = feed(m, key("e"))                          // edit; present fields = [User, ForwardAgent]
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // User -> ForwardAgent
 	if o := m.modal.(*editOverlay); o.activeField() != "ForwardAgent" {
 		t.Fatalf("expected ForwardAgent active, got %q", o.activeField())
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyCtrlD}) // request delete
+	m = feed(m, tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl}) // request delete
 	if o := m.modal.(*editOverlay); o.phase != edPhaseConfirmDel {
 		t.Fatalf("expected delete-confirm phase, got %d", o.phase)
 	}
@@ -413,11 +412,11 @@ func TestDeleteDirectiveFlow(t *testing.T) {
 func TestHelpLinePerPane(t *testing.T) {
 	m := New(&fakeService{model: snapshot()})
 	m = feed(m, refreshedMsg{model: snapshot()})
-	if !strings.Contains(m.View(), "load/unload") {
+	if !strings.Contains(view(m), "load/unload") {
 		t.Error("keys pane help should mention load/unload")
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
-	v := m.View()
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	v := view(m)
 	if strings.Contains(v, "load/unload") {
 		t.Error("hosts pane help should NOT mention load/unload")
 	}
@@ -430,7 +429,7 @@ func TestNewHostFlow(t *testing.T) {
 	svc := &fakeService{model: snapshot()}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
 
 	m = feed(m, key("n"))
 	if _, ok := m.modal.(*newHostWizard); !ok {
@@ -440,23 +439,23 @@ func TestNewHostFlow(t *testing.T) {
 	for _, r := range "db" {
 		m = feed(m, key(string(r)))
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> HostName
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // -> HostName
 	// step 1: HostName
 	for _, r := range "10.0.0.1" {
 		m = feed(m, key(string(r)))
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> User
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // skip User -> Port
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // -> User
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // skip User -> Port
 	// step 3: Port
 	for _, r := range "2200" {
 		m = feed(m, key(string(r)))
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // basic fields done -> options loop
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // basic fields done -> options loop
 	if w := m.modal.(*newHostWizard); w.phase != nhPhaseOptKey {
 		t.Fatalf("expected options loop, got phase %d", w.phase)
 	}
 	// blank option name finishes the wizard
-	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = out.(Model)
 	if cmd == nil {
 		t.Fatal("blank option should dispatch AddHost")
@@ -475,32 +474,32 @@ func TestNewHostWithCustomOption(t *testing.T) {
 	svc := &fakeService{model: snapshot()}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
 	m = feed(m, key("n"))
 
 	for _, r := range "web" { // alias
 		m = feed(m, key(string(r)))
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> HostName
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // skip -> User
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // skip -> Port
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // skip -> options loop
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // -> HostName
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // skip -> User
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // skip -> Port
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // skip -> options loop
 
 	for _, r := range "ForwardAgent" {
 		m = feed(m, key(string(r)))
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // name -> value
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // name -> value
 	if w := m.modal.(*newHostWizard); w.phase != nhPhaseOptVal {
 		t.Fatalf("expected option value phase, got %d", w.phase)
 	}
 	for _, r := range "yes" {
 		m = feed(m, key(string(r)))
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // value stored -> back to option name
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // value stored -> back to option name
 	if w := m.modal.(*newHostWizard); w.phase != nhPhaseOptKey {
 		t.Fatalf("expected to loop back for another option, got %d", w.phase)
 	}
-	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // blank -> finish
+	out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // blank -> finish
 	m = out.(Model)
 	cmd()
 
@@ -516,18 +515,18 @@ func TestNewHostInvalidPort(t *testing.T) {
 	svc := &fakeService{model: snapshot()}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m = feed(m, key("n"))
 	for _, r := range "db" {
 		m = feed(m, key(string(r)))
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> HostName
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> User
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // -> Port
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // -> HostName
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // -> User
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // -> Port
 	for _, r := range "abc" {
 		m = feed(m, key(string(r)))
 	}
-	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = out.(Model)
 	w, ok := m.modal.(*newHostWizard)
 	if cmd != nil || !ok || w.phase != nhPhaseBasics {
@@ -542,7 +541,7 @@ func TestDeleteHostFlow(t *testing.T) {
 	svc := &fakeService{model: snapshot()}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
 
 	m = feed(m, key("d"))
 	if o, ok := m.modal.(*deleteConfirmOverlay); !ok || o.host != "web" {
@@ -573,7 +572,7 @@ func TestDeleteKeyFlowConfirm(t *testing.T) {
 	if o, ok := m.modal.(*deleteConfirmOverlay); !ok || o.key != "id_ed" {
 		t.Fatalf("expected key delete confirm, got %T %+v", m.modal, m.modal)
 	}
-	if !strings.Contains(m.View(), "IRREVERSIBLE") {
+	if !strings.Contains(view(m), "IRREVERSIBLE") {
 		t.Error("key delete confirm should warn it is irreversible")
 	}
 	out, cmd := m.Update(key("y"))
@@ -615,7 +614,7 @@ func TestNewKeyGenEd25519SkipsBits(t *testing.T) {
 		t.Fatalf("expected newKeyWizard, got %T", m.modal)
 	}
 	// ed25519 is first; selecting it skips the bits step and prefills the name.
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	w = m.modal.(*newKeyWizard)
 	if w.phase != nkPhaseName {
 		t.Fatalf("ed25519 should go straight to filename, got phase %d", w.phase)
@@ -627,7 +626,7 @@ func TestNewKeyGenEd25519SkipsBits(t *testing.T) {
 		t.Errorf("filename default = %q", w.input.Value())
 	}
 	// filename accepted -> comment phase, prefilled with the filename.
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	w = m.modal.(*newKeyWizard)
 	if w.phase != nkPhaseComment {
 		t.Fatalf("expected comment phase, got %d", w.phase)
@@ -635,7 +634,7 @@ func TestNewKeyGenEd25519SkipsBits(t *testing.T) {
 	if w.input.Value() != "id_ed25519" {
 		t.Errorf("comment default = %q, want filename", w.input.Value())
 	}
-	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // accept default comment
+	out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // accept default comment
 	m = out.(Model)
 	if cmd == nil || m.modal != nil {
 		t.Error("comment accept should dispatch keygen and close the wizard")
@@ -646,8 +645,8 @@ func TestNewKeyCustomComment(t *testing.T) {
 	m := New(&fakeService{model: snapshot()})
 	m = feed(m, refreshedMsg{model: snapshot()})
 	m = feed(m, key("n"))
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // ed25519 -> filename
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // accept filename -> comment
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // ed25519 -> filename
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // accept filename -> comment
 	w := m.modal.(*newKeyWizard)
 	w.input.SetValue("sj@work")
 	if got := w.commentOrDefault("id_ed25519"); got != "sj@work" {
@@ -665,20 +664,20 @@ func TestNewKeyGenRsaPicksBits(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()})
 
 	m = feed(m, key("n"))
-	m = feed(m, key("j"))                       // ed25519 -> rsa
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // select rsa -> bits step
+	m = feed(m, key("j"))                            // ed25519 -> rsa
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // select rsa -> bits step
 	w := m.modal.(*newKeyWizard)
 	if w.phase != nkPhaseBits || w.algo != config.AlgRSA {
 		t.Fatalf("expected rsa bits step, phase=%d algo=%q", w.phase, w.algo)
 	}
-	m = feed(m, key("j"))                       // 3072 -> 4096
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // select 4096 -> filename
+	m = feed(m, key("j"))                            // 3072 -> 4096
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // select 4096 -> filename
 	w = m.modal.(*newKeyWizard)
 	if w.phase != nkPhaseName || w.bits != 4096 {
 		t.Fatalf("bits not selected: phase=%d bits=%d", w.phase, w.bits)
 	}
-	if !strings.Contains(m.View(), "rsa, 4096 bits") {
-		t.Errorf("filename step should summarize algo/bits:\n%s", m.View())
+	if !strings.Contains(view(m), "rsa, 4096 bits") {
+		t.Errorf("filename step should summarize algo/bits:\n%s", view(m))
 	}
 }
 
@@ -739,17 +738,17 @@ func TestKeyPickerAttachDetach(t *testing.T) {
 	svc := &fakeService{model: keyPickerSnap()}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: keyPickerSnap()})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
 
 	m = feed(m, key("i"))
 	if _, ok := m.modal.(*pickerOverlay); !ok {
 		t.Fatalf("expected pickerOverlay, got %T", m.modal)
 	}
 	// disk keys sorted: id_a (attached), id_b (not). Cursor 0 = id_a -> detach.
-	if !strings.Contains(m.View(), "●") {
+	if !strings.Contains(view(m), "●") {
 		t.Error("picker should mark attached key")
 	}
-	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = out.(Model)
 	cmd()
 	if len(svc.detached) != 1 || svc.detached[0] != "web/id_a" {
@@ -761,7 +760,7 @@ func TestKeyPickerAttachDetach(t *testing.T) {
 
 	// Move to id_b and attach.
 	m = feed(m, key("j"))
-	out, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	out, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = out.(Model)
 	cmd()
 	if len(svc.attached) != 1 || svc.attached[0] != "web/id_b" {
@@ -779,15 +778,15 @@ func TestWildcardHostShownAndWarned(t *testing.T) {
 	svc := &fakeService{model: snap}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snap})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
 
-	if !strings.Contains(m.View(), "pattern defaults") {
+	if !strings.Contains(view(m), "pattern defaults") {
 		t.Error("wildcard host should be listed with a pattern marker")
 	}
 	// Delete confirm should warn it is a wildcard.
 	m = feed(m, key("d"))
-	if !strings.Contains(m.View(), "wildcard block") {
-		t.Errorf("delete confirm should warn about wildcard:\n%s", m.View())
+	if !strings.Contains(view(m), "wildcard block") {
+		t.Errorf("delete confirm should warn about wildcard:\n%s", view(m))
 	}
 }
 
@@ -942,7 +941,7 @@ func TestToggleDefaultKey(t *testing.T) {
 	if !fs.IsDefault("id_ed") || !strings.Contains(m.status, "added default") {
 		t.Errorf("first press should add default; status=%q defaults=%v", m.status, fs.defaults)
 	}
-	if !strings.Contains(m.View(), "★") {
+	if !strings.Contains(view(m), "★") {
 		t.Error("default key should be marked")
 	}
 
@@ -1016,7 +1015,7 @@ func TestKeysShowAssociatedHosts(t *testing.T) {
 	m := New(&fakeService{model: snap})
 	m = feed(m, refreshedMsg{model: snap})
 
-	view := m.View()
+	view := view(m)
 	// id_a is used by prod and web; both should appear on the keys pane.
 	if !strings.Contains(view, "prod") || !strings.Contains(view, "web") {
 		t.Errorf("keys pane should list hosts using each key:\n%s", view)
@@ -1064,8 +1063,8 @@ func TestScrollKeepsCursorVisible(t *testing.T) {
 	if end-start != cap {
 		t.Errorf("window size %d, want %d", end-start, cap)
 	}
-	if !strings.Contains(m.View(), "rows ") || !strings.Contains(m.View(), "of 40") {
-		t.Errorf("expected scroll indicator:\n%s", m.View())
+	if !strings.Contains(view(m), "rows ") || !strings.Contains(view(m), "of 40") {
+		t.Errorf("expected scroll indicator:\n%s", view(m))
 	}
 }
 
@@ -1076,7 +1075,7 @@ func TestPageAndEndKeys(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snap})
 
 	cap := m.listCapacity()
-	m = feed(m, tea.KeyMsg{Type: tea.KeyPgDown})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	if m.vp[paneKeys].cursor != cap {
 		t.Errorf("pgdown cursor = %d, want %d", m.vp[paneKeys].cursor, cap)
 	}
@@ -1108,7 +1107,7 @@ func TestLayoutFitsHeight(t *testing.T) {
 					m = feed(m, agentDoneMsg{verb: "a status message"})
 					m.loading = false
 				}
-				v := m.View()
+				v := view(m)
 				if lines := strings.Count(v, "\n") + 1; lines > h {
 					t.Errorf("w=%d h=%d status=%v: view has %d lines (> height)", w, h, withStatus, lines)
 				}
@@ -1141,13 +1140,13 @@ func TestFilterNarrowsKeys(t *testing.T) {
 	if len(vis) != 1 || vis[0].Name != "alpha" {
 		t.Fatalf("filter 'alp' => %v", vis)
 	}
-	view := m.View()
+	view := view(m)
 	if !strings.Contains(view, "alpha") || strings.Contains(view, "zeta") {
 		t.Errorf("filtered view should show alpha only:\n%s", view)
 	}
 
 	// enter keeps the query but exits the input.
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.filtering || m.filterQuery() != "alp" {
 		t.Errorf("after enter: filtering=%v query=%q", m.filtering, m.filterQuery())
 	}
@@ -1158,7 +1157,7 @@ func TestFilterNarrowsKeys(t *testing.T) {
 	}
 
 	// esc clears the filter.
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if m.filterQuery() != "" || len(m.visibleIDs()) != 2 {
 		t.Errorf("esc should clear filter; query=%q visible=%d", m.filterQuery(), len(m.visibleIDs()))
 	}
@@ -1176,10 +1175,10 @@ func TestFilterMatchesAlgoAndHosts(t *testing.T) {
 	if vis := m.visibleIDs(); len(vis) != 1 || vis[0].Name != "zeta" {
 		t.Errorf("algo filter 'rsa' => %v", vis)
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 
 	// Switch to Hosts and filter by hostname.
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m = feed(m, key("/"))
 	for _, r := range "example" {
 		m = feed(m, key(string(r)))
@@ -1213,9 +1212,9 @@ func TestConnectToHostDispatches(t *testing.T) {
 	svc := &fakeService{model: snapshot()}
 	m := New(svc)
 	m = feed(m, refreshedMsg{model: snapshot()})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
 
-	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = out.(Model)
 	if cmd == nil {
 		t.Fatal("enter on a host should dispatch ssh")
@@ -1231,9 +1230,9 @@ func TestConnectWildcardRejected(t *testing.T) {
 	}
 	m := New(&fakeService{model: snap})
 	m = feed(m, refreshedMsg{model: snap})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
 
-	out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = out.(Model)
 	if cmd != nil {
 		t.Error("should not ssh to a pattern host")
@@ -1279,22 +1278,22 @@ func TestPaneSwitchClampsCursorUnderFilter(t *testing.T) {
 	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 40})
 	m = feed(m, refreshedMsg{model: snap})
 
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // -> Hosts
-	m = feed(m, key("G"))                     // cursor at prod (index 4 of 5)
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // -> Hosts
+	m = feed(m, key("G"))                          // cursor at prod (index 4 of 5)
 	if m.vp[paneHosts].cursor != 4 {
 		t.Fatalf("setup: hosts cursor = %d, want 4", m.vp[paneHosts].cursor)
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // -> Keys
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // -> Keys
 
 	// Apply a global filter that leaves only 4 hosts (web0..web3).
 	m = feed(m, key("/"))
 	for _, r := range "web" {
 		m = feed(m, key(string(r)))
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // apply, exit filter input
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // apply, exit filter input
 
 	// Switching back to Hosts must clamp the now-out-of-range cursor.
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if got := m.vp[paneHosts].cursor; got != 3 {
 		t.Errorf("hosts cursor after switch = %d, want 3 (clamped)", got)
 	}
@@ -1308,7 +1307,7 @@ func TestCtrlCQuitsFromFilter(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snapshot()})
 	m = feed(m, key("/")) // focus filter input
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("ctrl+c should dispatch quit even while filtering")
 	}
@@ -1325,7 +1324,7 @@ func TestEndKeyOnEmptyList(t *testing.T) {
 	for _, r := range "zzzzz" {
 		m = feed(m, key(string(r)))
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = feed(m, key("G"))
 	if m.vp[paneKeys].cursor != 0 {
 		t.Errorf("end on empty list left cursor at %d, want 0", m.vp[paneKeys].cursor)
@@ -1343,8 +1342,8 @@ func TestPermsAuditAndFix(t *testing.T) {
 	if _, ok := m.modal.(*permsOverlay); !ok {
 		t.Fatalf("expected permsOverlay, got %T", m.modal)
 	}
-	if !strings.Contains(m.View(), "id_rsa") || !strings.Contains(m.View(), "0600") {
-		t.Errorf("perms overlay should list the issue:\n%s", m.View())
+	if !strings.Contains(view(m), "id_rsa") || !strings.Contains(view(m), "0600") {
+		t.Errorf("perms overlay should list the issue:\n%s", view(m))
 	}
 
 	m = feed(m, key("y")) // confirm fix
@@ -1395,8 +1394,8 @@ func TestKnownHostsBrowseAndRemove(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected knownHostsOverlay, got %T", m.modal)
 	}
-	if !strings.Contains(m.View(), "github.com") || !strings.Contains(m.View(), "gitlab.com") {
-		t.Errorf("known_hosts overlay should list entries:\n%s", m.View())
+	if !strings.Contains(view(m), "github.com") || !strings.Contains(view(m), "gitlab.com") {
+		t.Errorf("known_hosts overlay should list entries:\n%s", view(m))
 	}
 
 	// Select second entry, request delete, confirm.
@@ -1443,7 +1442,7 @@ func TestKnownHostsCancelDelete(t *testing.T) {
 	if len(svc.khRemoved) != 0 {
 		t.Errorf("cancel must not remove: %v", svc.khRemoved)
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEsc}) // close
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEsc}) // close
 	if m.modal != nil {
 		t.Error("esc should close the overlay")
 	}
@@ -1467,7 +1466,7 @@ func TestCopyKeyPublicAndFingerprint(t *testing.T) {
 	if _, ok := m.modal.(*copyOverlay); !ok {
 		t.Fatalf("expected copyOverlay active, got %T", m.modal)
 	}
-	v := m.View()
+	v := view(m)
 	if !strings.Contains(v, "public key") || !strings.Contains(v, "fingerprint") {
 		t.Errorf("copy menu missing options:\n%s", v)
 	}
@@ -1489,7 +1488,7 @@ func TestCopyHostSshCommand(t *testing.T) {
 
 	m := New(&fakeService{model: snapshot()}) // host web: deploy@example.com:22
 	m = feed(m, refreshedMsg{model: snapshot()})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // Hosts pane
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
 
 	m = feed(m, key("c"))
 	out, cmd := m.Update(key("s"))
@@ -1508,7 +1507,7 @@ func TestHelpOverlay(t *testing.T) {
 	if _, ok := m.modal.(*helpOverlay); !ok {
 		t.Fatalf("? should open help, got %T", m.modal)
 	}
-	v := m.View()
+	v := view(m)
 	for _, want := range []string{"keybindings", "Navigation", "Keys pane", "Hosts pane", "known_hosts"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("help missing %q:\n%s", want, v)
@@ -1531,24 +1530,24 @@ func TestHelpFitsAndScrolls(t *testing.T) {
 	for _, n := range []int{0, 3, 100} { // top, mid, past-bottom
 		mm := m
 		for i := 0; i < n; i++ {
-			out, _ := mm.Update(tea.KeyMsg{Type: tea.KeyDown})
+			out, _ := mm.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 			mm = out.(Model)
 		}
-		if lines := strings.Count(mm.View(), "\n") + 1; lines > 14 {
+		if lines := strings.Count(view(mm), "\n") + 1; lines > 14 {
 			t.Errorf("scroll=%d: help is %d lines, exceeds height 14", n, lines)
 		}
-		if !strings.Contains(mm.View(), "scroll") {
+		if !strings.Contains(view(mm), "scroll") {
 			t.Errorf("scroll=%d: overflowing help should show a scroll hint", n)
 		}
 	}
 
 	// Scrolling down reveals later sections.
 	for i := 0; i < 100; i++ {
-		out, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		out, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = out.(Model)
 	}
-	if !strings.Contains(m.View(), "delete directive") {
-		t.Errorf("scrolling to the bottom should reveal the last rows:\n%s", m.View())
+	if !strings.Contains(view(m), "delete directive") {
+		t.Errorf("scrolling to the bottom should reveal the last rows:\n%s", view(m))
 	}
 	// A non-scroll key still closes.
 	m = feed(m, key("x"))
@@ -1570,12 +1569,12 @@ func TestSinglePaneShowsActiveOnly(t *testing.T) {
 	m := New(&fakeService{model: snap})
 	m = feed(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = feed(m, refreshedMsg{model: snap})
-	v := m.View()
+	v := view(m)
 	if !strings.Contains(v, "keyonly") || strings.Contains(v, "hostonly") {
 		t.Errorf("keys pane should show only keys:\n%s", v)
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab}) // -> hosts
-	v = m.View()
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // -> hosts
+	v = view(m)
 	if !strings.Contains(v, "hostonly") || strings.Contains(v, "keyonly") {
 		t.Errorf("hosts pane should show only hosts:\n%s", v)
 	}
@@ -1591,7 +1590,7 @@ func TestRowTruncationInColumn(t *testing.T) {
 	m := New(&fakeService{model: snap})
 	m = feed(m, tea.WindowSizeMsg{Width: 100, Height: 20}) // wide → ~46-col columns
 	m = feed(m, refreshedMsg{model: snap})
-	v := m.View()
+	v := view(m)
 	if !strings.Contains(v, "…") {
 		t.Errorf("long row should be truncated with an ellipsis:\n%s", v)
 	}
@@ -1701,13 +1700,13 @@ func TestThemeSwitcherApply(t *testing.T) {
 	if _, ok := m.modal.(*themeOverlay); !ok {
 		t.Fatalf("t should open the theme picker, got %T", m.modal)
 	}
-	if v := m.View(); !strings.Contains(v, "dracula") || !strings.Contains(v, "nord") {
+	if v := view(m); !strings.Contains(v, "dracula") || !strings.Contains(v, "nord") {
 		t.Errorf("theme picker should list presets:\n%s", v)
 	}
 	// Move to the 2nd preset and apply.
 	m = feed(m, key("j"))
 	want := presets[1].name
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if fs.themeName != want || m.modal != nil {
 		t.Errorf("apply: themeName=%q modal=%v, want %q/closed", fs.themeName, m.modal, want)
 	}
@@ -1725,7 +1724,7 @@ func TestThemeSwitcherCancelReverts(t *testing.T) {
 	if colPrimary == nord.Primary {
 		t.Fatal("preview should have changed the live theme")
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEsc}) // cancel
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEsc}) // cancel
 	if fs.themeName != "nord" {
 		t.Errorf("cancel must not persist: %q", fs.themeName)
 	}
@@ -1745,10 +1744,7 @@ func draculaIdx() int {
 }
 
 func TestBackgroundFillsWholeScreen(t *testing.T) {
-	prof := lipgloss.ColorProfile()
-	defer lipgloss.SetColorProfile(prof)
 	defer applyTheme(defaultTheme)
-	lipgloss.SetColorProfile(termenv.TrueColor)
 	applyTheme(presets[draculaIdx()].theme) // has Bg
 
 	out := applyBackground("hi\nthere", 10, 6)
@@ -1767,16 +1763,25 @@ func TestBackgroundFillsWholeScreen(t *testing.T) {
 	}
 }
 
+// TestBackgroundNoColorEmitsNoEscape: the screen fill must reduce to plain text
+// under the no-color profile.
+//
+// v1 asserted this on the raw output, because the global Ascii profile made
+// Style.Render emit nothing. v2 always renders full-fidelity ANSI and reduces
+// it at the output layer, which for sshush is the bubbletea renderer running
+// the profile that programOpts picks for NO_COLOR. So the assertion moves to
+// the reduced string, and it still catches a fill that emits a sequence the
+// reduction does not remove.
 func TestBackgroundNoColorEmitsNoEscape(t *testing.T) {
-	prof := lipgloss.ColorProfile()
-	defer lipgloss.SetColorProfile(prof)
 	defer applyTheme(defaultTheme)
-	lipgloss.SetColorProfile(termenv.Ascii) // NO_COLOR / no-color terminal
-	applyTheme(presets[draculaIdx()].theme) // bg theme, but ascii strips color
+	applyTheme(presets[draculaIdx()].theme) // a theme that sets a background
 
-	out := applyBackground("hi", 10, 3)
-	if strings.ContainsRune(out, '\x1b') {
-		t.Errorf("ascii profile must stay escape-free, got %q", out)
+	raw := applyBackground("hi", 10, 3)
+	if !strings.ContainsRune(raw, '\x1b') {
+		t.Fatal("setup: the dracula background rendered no escapes")
+	}
+	if out := plain(raw); strings.ContainsRune(out, '\x1b') {
+		t.Errorf("no-color profile must stay escape-free, got %q", out)
 	}
 }
 
@@ -1786,8 +1791,8 @@ func TestRefreshErrorShown(t *testing.T) {
 	if m.err == nil {
 		t.Fatal("error not recorded")
 	}
-	if !strings.Contains(m.View(), "boom") {
-		t.Errorf("error not shown in view:\n%s", m.View())
+	if !strings.Contains(view(m), "boom") {
+		t.Errorf("error not shown in view:\n%s", view(m))
 	}
 }
 
@@ -1869,4 +1874,105 @@ func TestSSHCommandForNoHostnameFallsBack(t *testing.T) {
 	if got := m.sshCommandFor(h); got != "ssh -F /work/sshcfg bare" {
 		t.Errorf("fallback = %q", got)
 	}
+}
+
+// TestSpaceActivatesLikeEnter guards a silent v2 breakage: KeyPressMsg.String()
+// returns "space" for the space bar, where v1 returned " ". A key switch that
+// still compares against " " keeps compiling and stops responding.
+func TestSpaceActivatesLikeEnter(t *testing.T) {
+	if got := key(" ").String(); got != "space" {
+		t.Fatalf("space key String() = %q, want %q", got, "space")
+	}
+
+	svc := &fakeService{model: snapshot()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
+
+	out, cmd := m.Update(key(" "))
+	m = out.(Model)
+	if cmd == nil {
+		t.Fatal("space on a host should dispatch ssh, as enter does")
+	}
+	if !strings.Contains(m.status, "connecting to web") {
+		t.Errorf("status = %q", m.status)
+	}
+}
+
+// TestViewKeepsAltScreen guards the other silent v2 breakage: AltScreen moved
+// from a program option onto the View. Without it sshush renders inline and
+// overwrites the scrollback, which compiles and passes every content test.
+func TestViewKeepsAltScreen(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, refreshedMsg{model: snapshot()})
+
+	v := m.View()
+	if !v.AltScreen {
+		t.Error("View must set AltScreen, or sshush tramples the scrollback")
+	}
+	if v.Content != m.render() {
+		t.Error("View content should be the rendered screen")
+	}
+}
+
+// assertFullyPainted checks that every row of a themed screen paints edge to
+// edge: it opens with the background, and no reset inside it is left without
+// the background being set again. A bare reset means the rest of that row shows
+// the terminal default instead of the theme.
+func assertFullyPainted(t *testing.T, out, open string) {
+	t.Helper()
+	for i, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, open) {
+			t.Errorf("row %d does not open with the background: %.60q", i, line)
+		}
+		for _, reset := range []string{"\x1b[0m", "\x1b[m"} {
+			for at := 0; ; {
+				j := strings.Index(line[at:], reset)
+				if j < 0 {
+					break
+				}
+				at += j + len(reset)
+				if at == len(line) {
+					continue // the row terminator
+				}
+				if !strings.HasPrefix(line[at:], open) {
+					t.Errorf("row %d: background lost after a reset: %.80q", i, line[at:])
+				}
+			}
+		}
+	}
+}
+
+// TestBackgroundSurvivesInnerResets: the screen fill must set the theme
+// background again after every reset that an inner style emits.
+//
+// A styled span ends with an SGR reset, which clears the background too, so the
+// rest of that row would paint on the terminal default. lipgloss v1 wrote the
+// reset as "\x1b[0m" and v2 writes "\x1b[m", and a fill that knows only the v1
+// spelling leaves a bare gap after every styled span.
+func TestBackgroundSurvivesInnerResets(t *testing.T) {
+	defer applyTheme(defaultTheme)
+	applyTheme(presets[draculaIdx()].theme)
+
+	open := bgOpenSeq()
+	if open == "" {
+		t.Fatal("setup: the theme has no background")
+	}
+	assertFullyPainted(t, applyBackground(titleStyle.Render("sshush"), 30, 1), open)
+}
+
+// TestThemedScreenPaintsEdgeToEdge is the whole-screen form of the check: a
+// real render, every row, with a theme that sets a background.
+func TestThemedScreenPaintsEdgeToEdge(t *testing.T) {
+	defer applyTheme(defaultTheme)
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, tea.WindowSizeMsg{Width: 90, Height: 24})
+	m = feed(m, refreshedMsg{model: snapshot()})
+	applyTheme(presets[draculaIdx()].theme)
+
+	out := m.render()
+	if n := len(strings.Split(out, "\n")); n != 24 {
+		t.Errorf("render filled %d rows, want 24 (the terminal height)", n)
+	}
+	assertFullyPainted(t, out, bgOpenSeq())
 }

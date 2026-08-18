@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/s-johri/sshush/pkg/config"
 )
 
@@ -40,14 +40,13 @@ const (
 func newNewHostWizard() *newHostWizard {
 	ti := textinput.New()
 	ti.CharLimit = 256
-	ti.Width = 40
-	ti.PromptStyle = textStyle
-	ti.TextStyle = textStyle
+	ti.SetWidth(40)
+	styleTextInput(&ti)
 	ti.Focus()
 	return &newHostWizard{input: ti}
 }
 
-func (o *newHostWizard) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *newHostWizard) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() == "esc" {
 		m.status = "cancelled"
 		return nil, nil

@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // themeOverlay is the live theme picker: ↑/↓ preview, r randomize, enter applies
@@ -16,7 +16,7 @@ type themeOverlay struct {
 	orig   string // theme name to revert to on cancel
 }
 
-func (o *themeOverlay) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *themeOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		if o.cursor > 0 {

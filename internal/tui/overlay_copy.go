@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/s-johri/sshush/pkg/clip"
 )
 
@@ -13,7 +13,7 @@ type copyOverlay struct {
 	opts []copyOption
 }
 
-func (o *copyOverlay) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *copyOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "c":
 		return nil, nil

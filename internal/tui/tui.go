@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	// agent is imported only to build the ssh-add command handed to
 	// tea.ExecProcess, which yields the terminal so a passphrase prompt works.
@@ -306,7 +306,7 @@ func New(svc service.Service) Model {
 	fi := textinput.New()
 	fi.Placeholder = "filter…"
 	fi.CharLimit = 80
-	fi.Width = 30
+	fi.SetWidth(30)
 
 	return Model{svc: svc, loading: true, filterInput: fi}
 }
@@ -369,7 +369,7 @@ func (m Model) selectedKey() (config.Identity, bool) {
 
 // handleFilterKey drives the live filter input. enter applies and exits the
 // input (keeping the query); esc clears it; anything else edits and re-filters.
-func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleFilterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.filtering = false
@@ -628,13 +628,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// ctrl+c always quits, even from an overlay or the filter input.
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
@@ -698,7 +698,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "end", "G":
 		m.setCursor(m.active, m.rowCount()-1)
 		return m, nil
-	case "enter", " ":
+	case "enter", "space":
 		if m.active == paneHosts {
 			return m.connectToHost()
 		}
@@ -1314,9 +1314,9 @@ func (m Model) rowCountFor(p pane) int {
 var (
 	// Palette colors and styles — all assigned by applyTheme (see theme.go),
 	// so the look is swappable at runtime.
-	colPrimary, colAccent, colGreen, colDim lipgloss.Color
-	colErr, colGold, colBorder, colSelBg    lipgloss.Color
-	colBg                                   lipgloss.Color
+	colPrimary, colAccent, colGreen, colDim Color
+	colErr, colGold, colBorder, colSelBg    Color
+	colBg                                   Color
 
 	appTitleStyle, titleStyle, tabActive        lipgloss.Style
 	tabSelected, tabUnselected, headerStyle     lipgloss.Style
@@ -1361,7 +1361,18 @@ func applyPadding(s string, x, y int) string {
 // by the padding, then layers the padding, the theme background (at full size,
 // so it covers the padding), and any active screen-shake over the whole output
 // (so overlays get them too).
-func (m Model) View() string {
+// View wraps the rendered screen in a tea.View. AltScreen lives here in
+// bubbletea v2, not on a program option, so sshush keeps the alternate screen
+// buffer and leaves the scrollback intact.
+func (m Model) View() tea.View {
+	v := tea.NewView(m.render())
+	v.AltScreen = true
+	return v
+}
+
+// render draws the whole screen: the current pane or overlay, then padding,
+// background and shake.
+func (m Model) render() string {
 	padX, padY := m.padding()
 	inner := m.reduced()
 	out := inner.viewInner()
@@ -1457,7 +1468,10 @@ func (m Model) boxInner() int {
 func (m Model) box(content string) string {
 	s := boxStyle
 	if m.width > 4 {
-		s = s.Width(m.width - 2)
+		// Width counts the border in lipgloss v2, so this is the full outer
+		// width. v1 counted only the content and the padding, and the same box
+		// needed m.width-2 there.
+		s = s.Width(m.width)
 	}
 	return s.Render(strings.TrimRight(content, "\n"))
 }

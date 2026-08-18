@@ -9,11 +9,10 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	selfupdate "github.com/creativeprojects/go-selfupdate"
 	"github.com/mattn/go-isatty"
-	"github.com/muesli/termenv"
 	"github.com/s-johri/sshush/internal/tui"
 	"github.com/s-johri/sshush/pkg/agent"
 	"github.com/s-johri/sshush/pkg/appconfig"
@@ -151,16 +150,30 @@ func newService(sshDir, configPath string) service.Service {
 	return service.New(keys.New(sshDir), repo, agent.New(""))
 }
 
+// programOpts returns the bubbletea options for the interactive run. A
+// non-empty NO_COLOR forces a profile that emits no escape sequences.
+//
+// The check stays explicit, on top of the detection that bubbletea does,
+// because no-color.org disables color for any non-empty value while the
+// detection parses the value as a boolean. That detection keeps color on for
+// NO_COLOR=yes.
+//
+// The profile is NoTTY rather than Ascii because Ascii drops only color and
+// keeps bold and underline. v1 used termenv.Ascii, which dropped all three.
+func programOpts(noColor string) []tea.ProgramOption {
+	if noColor != "" {
+		return []tea.ProgramOption{tea.WithColorProfile(colorprofile.NoTTY)}
+	}
+	return nil
+}
+
 func runTUI() {
 	// The interactive UI needs a real terminal; subcommands above don't.
 	if !isatty.IsTerminal(os.Stdout.Fd()) {
 		fmt.Fprintln(os.Stderr, "sshush: a terminal is required for the interactive UI (try `sshush help`)")
 		os.Exit(1)
 	}
-	// Honor NO_COLOR explicitly (in addition to termenv's own detection).
-	if os.Getenv("NO_COLOR") != "" {
-		lipgloss.SetColorProfile(termenv.Ascii)
-	}
+	opts := programOpts(os.Getenv("NO_COLOR"))
 
 	// App settings (default identity, SSH dir/config overrides). Best-effort.
 	settings := appconfig.New("")
@@ -194,7 +207,7 @@ func runTUI() {
 		model = model.WithWatcher(w)
 	}
 
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model, opts...)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "sshush: %v\n", err)
 		os.Exit(1)

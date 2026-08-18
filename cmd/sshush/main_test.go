@@ -94,3 +94,17 @@ func TestCompletionScripts(t *testing.T) {
 		t.Error("unknown shell should error")
 	}
 }
+
+// TestProgramOptsNoColor: any non-empty NO_COLOR must select a program option,
+// and an empty one must not. no-color.org disables color for any value, so
+// "yes" counts as much as "1".
+func TestProgramOptsNoColor(t *testing.T) {
+	for _, v := range []string{"1", "yes", "0", "false", "anything"} {
+		if got := programOpts(v); len(got) != 1 {
+			t.Errorf("NO_COLOR=%q: got %d options, want 1", v, len(got))
+		}
+	}
+	if got := programOpts(""); len(got) != 0 {
+		t.Errorf("NO_COLOR unset: got %d options, want 0", len(got))
+	}
+}

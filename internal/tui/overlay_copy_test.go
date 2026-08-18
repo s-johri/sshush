@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/s-johri/sshush/pkg/clip"
 )
 
@@ -27,7 +27,7 @@ func TestCopyOverlayInIsolation(t *testing.T) {
 	}
 
 	// esc closes with no command.
-	if next, cmd := o.Update(tea.KeyMsg{Type: tea.KeyEsc}, &m); next != nil || cmd != nil {
+	if next, cmd := o.Update(tea.KeyPressMsg{Code: tea.KeyEsc}, &m); next != nil || cmd != nil {
 		t.Errorf("esc should close: next=%v cmd=%v", next, cmd)
 	}
 

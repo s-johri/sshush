@@ -4,21 +4,16 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestViewIsPadded(t *testing.T) {
-	prev := lipgloss.ColorProfile()
-	defer lipgloss.SetColorProfile(prev)
-	lipgloss.SetColorProfile(termenv.Ascii)
 
 	m := New(&fakeService{model: snapshot()})
 	m = feed(m, tea.WindowSizeMsg{Width: 60, Height: 20})
 	m = feed(m, refreshedMsg{model: snapshot()})
 
-	lines := strings.Split(m.View(), "\n")
+	lines := strings.Split(view(m), "\n")
 	if strings.TrimSpace(lines[0]) != "" {
 		t.Errorf("first line should be blank padding, got %q", lines[0])
 	}
@@ -32,15 +27,12 @@ func TestViewIsPadded(t *testing.T) {
 }
 
 func TestPaddingDroppedWhenNarrow(t *testing.T) {
-	prev := lipgloss.ColorProfile()
-	defer lipgloss.SetColorProfile(prev)
-	lipgloss.SetColorProfile(termenv.Ascii)
 
 	m := New(&fakeService{model: snapshot()})
 	m = feed(m, tea.WindowSizeMsg{Width: 36, Height: 10})
 	m = feed(m, refreshedMsg{model: snapshot()})
 
-	lines := strings.Split(m.View(), "\n")
+	lines := strings.Split(view(m), "\n")
 	if strings.HasPrefix(lines[0], "  ") || strings.TrimSpace(lines[0]) == "" {
 		t.Errorf("narrow terminal must not be padded, first line %q", lines[0])
 	}

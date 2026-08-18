@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
 	"github.com/s-johri/sshush/pkg/knownhosts"
 	"github.com/s-johri/sshush/pkg/perms"
 )
@@ -63,9 +61,6 @@ func assertNoBareText(t *testing.T, name, v string) {
 // TestOverlayBodiesFullyStyled renders every overlay under a truecolor theme
 // and asserts no body text leaks the terminal foreground (M26 bleed).
 func TestOverlayBodiesFullyStyled(t *testing.T) {
-	prevProfile := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(prevProfile)
 	defer applyTheme(defaultTheme)
 	drac, _ := themeByName("dracula")
 	applyTheme(drac)

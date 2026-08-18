@@ -4,9 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/s-johri/sshush/pkg/config"
 )
 
@@ -38,15 +37,12 @@ func colSnap() *config.SshConfigModel {
 // name/algo/hosts/comment columns start at identical offsets in the header and
 // in every row — the original bug was fields shifting when ★ was absent.
 func TestKeysPaneColumnsAligned(t *testing.T) {
-	prev := lipgloss.ColorProfile()
-	defer lipgloss.SetColorProfile(prev)
-	lipgloss.SetColorProfile(termenv.Ascii) // plain text: offsets are countable
 	fs := &fakeSettings{defaults: []config.IdentityID{"id_def"}}
 	m := New(&fakeService{model: colSnap()}).WithSettings(fs)
 	m = feed(m, tea.WindowSizeMsg{Width: 100, Height: 24})
 	m = feed(m, refreshedMsg{model: colSnap()})
 
-	v := m.View()
+	v := view(m)
 	var header, defRow, plainRow string
 	for _, ln := range strings.Split(v, "\n") {
 		switch {
@@ -86,15 +82,12 @@ func TestKeysPaneColumnsAligned(t *testing.T) {
 
 // TestHostsPaneHeaderAligned: the hosts header columns line up with row content.
 func TestHostsPaneHeaderAligned(t *testing.T) {
-	prev := lipgloss.ColorProfile()
-	defer lipgloss.SetColorProfile(prev)
-	lipgloss.SetColorProfile(termenv.Ascii)
 	m := New(&fakeService{model: colSnap()})
 	m = feed(m, tea.WindowSizeMsg{Width: 100, Height: 24})
 	m = feed(m, refreshedMsg{model: colSnap()})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
 
-	v := m.View()
+	v := view(m)
 	var header, row string
 	for _, ln := range strings.Split(v, "\n") {
 		switch {

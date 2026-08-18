@@ -3,12 +3,10 @@ package tui
 import (
 	"math"
 	"testing"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // relLuminance is the WCAG relative luminance of a hex color (0 black..1 white).
-func relLuminance(c lipgloss.Color) (float64, bool) {
+func relLuminance(c Color) (float64, bool) {
 	r, g, b, ok := parseHex(string(c))
 	if !ok {
 		return 0, false // 256-color index (default theme): not auditable
@@ -24,7 +22,7 @@ func relLuminance(c lipgloss.Color) (float64, bool) {
 }
 
 // contrastRatio is the WCAG contrast ratio between two hex colors (1..21).
-func contrastRatio(a, b lipgloss.Color) (float64, bool) {
+func contrastRatio(a, b Color) (float64, bool) {
 	la, ok1 := relLuminance(a)
 	lb, ok2 := relLuminance(b)
 	if !ok1 || !ok2 {
@@ -44,8 +42,8 @@ func TestThemeContrast(t *testing.T) {
 		}
 		checks := []struct {
 			role string
-			fg   lipgloss.Color
-			bg   lipgloss.Color
+			fg   Color
+			bg   Color
 			min  float64
 		}{
 			{"Text", p.theme.Text, p.theme.Bg, 4.5},

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/s-johri/sshush/pkg/config"
 )
 
@@ -15,7 +15,7 @@ type deleteConfirmOverlay struct {
 	key  config.IdentityID // key to delete, when deleting a key's files
 }
 
-func (o *deleteConfirmOverlay) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *deleteConfirmOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() != "y" && msg.String() != "Y" {
 		m.status = "deletion cancelled"
 		return nil, nil

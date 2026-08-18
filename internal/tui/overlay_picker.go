@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/s-johri/sshush/pkg/config"
 )
 
@@ -15,7 +15,7 @@ type pickerOverlay struct {
 	cursor int
 }
 
-func (o *pickerOverlay) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *pickerOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	disk := m.diskKeys()
 	switch msg.String() {
 	case "esc", "q":
@@ -28,7 +28,7 @@ func (o *pickerOverlay) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
 		if o.cursor < len(disk)-1 {
 			o.cursor++
 		}
-	case "enter", " ":
+	case "enter", "space":
 		if o.cursor >= len(disk) {
 			return o, nil
 		}

@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/s-johri/sshush/pkg/config"
 )
 
@@ -36,9 +36,8 @@ const (
 func newEditOverlay(host config.Host) *editOverlay {
 	ti := textinput.New()
 	ti.CharLimit = 256
-	ti.Width = 40
-	ti.PromptStyle = textStyle
-	ti.TextStyle = textStyle
+	ti.SetWidth(40)
+	styleTextInput(&ti)
 	o := &editOverlay{host: host.ID, fields: presentFields(host)}
 	o.input = ti
 	o.input.SetValue(o.currentFieldValue(host))
@@ -96,7 +95,7 @@ func (o *editOverlay) currentFieldValue(host config.Host) string {
 	}
 }
 
-func (o *editOverlay) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *editOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	switch o.phase {
 	case edPhaseValue:
 		return o.updateValue(msg, m)
@@ -109,7 +108,7 @@ func (o *editOverlay) Update(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
 
 // updateValue drives value entry. tab cycles fields (existing edits only);
 // ctrl+d deletes the active directive; enter confirms.
-func (o *editOverlay) updateValue(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *editOverlay) updateValue(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	editingExisting := o.newKey == "" && len(o.fields) > 0
 	switch msg.String() {
 	case "esc":
@@ -154,7 +153,7 @@ func (o *editOverlay) updateValue(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
 }
 
 // updateOptName collects an option name, then transitions to value entry.
-func (o *editOverlay) updateOptName(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *editOverlay) updateOptName(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.status = "add cancelled"
@@ -176,7 +175,7 @@ func (o *editOverlay) updateOptName(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd)
 }
 
 // updateConfirm gates writes and deletes: only "y" proceeds.
-func (o *editOverlay) updateConfirm(msg tea.KeyMsg, m *Model) (overlay, tea.Cmd) {
+func (o *editOverlay) updateConfirm(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() != "y" && msg.String() != "Y" {
 		m.status = "cancelled"
 		return nil, nil
