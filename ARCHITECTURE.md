@@ -199,8 +199,9 @@ bump. The "why it hurts" column is the user pain sshush removes.
 | 36 | Fingerprint + randomart view (`ssh-keygen -lv`) | verifying a server key by eye is fiddly | v1.3.0 |
 | 37 | Connection / auth test (up/down/auth badge) | "will it even connect?" needs a manual attempt | v1.3.0 |
 | 38 | Backup & restore (export/import keys + config) | moving to a new machine is manual and risky | v1.4.0 |
+| 47 | Open host in a code editor (remote dev over SSH) | to open a remote codebase in Zed/VS Code, you must type the host and the full remote path by hand, with no path completion | v1.3.0 |
 
-Connectivity actions (20, 32, 37) reuse the `tea.ExecProcess` terminal-handover
+Connectivity actions (20, 32, 37, 47) reuse the `tea.ExecProcess` terminal-handover
 pattern already used for `ssh-add`/`ssh-keygen`.
 
 ### Additional planned work
@@ -579,5 +580,53 @@ See the "Beyond v1.0" table above. Brief notes:
   up/down/auth badge; run async, never block the UI.
 - **38 backup/restore**: tar (optionally age/gpg-encrypted) of keys + config;
   restore with collision/perms checks.
+
+### Milestone 47 detail
+
+Open a remote directory in a local code editor that supports SSH remotes (for
+example Zed or VS Code), from the Hosts pane.
+
+- **Hotkey:** `o` on a host (free today) opens a prompt: "Open `<alias>`: remote
+  path". `Enter` launches the editor, `Esc` cancels. Wildcard (`Host *`) and
+  `Match` blocks are not openable.
+- **Configurable editor:** a new `[editor]` table in `config.toml`. `command` is
+  a template with `{host}` (the alias) and `{path}` (the remote path). The
+  template is split into argv and run directly, never through a shell. Presets
+  for known editors, so most users only set `editor = "zed"`:
+  - `zed`: `zed ssh://{host}/{path}`
+  - `code`: `code --remote ssh-remote+{host} {path}`
+  - `cursor`: `cursor --remote ssh-remote+{host} {path}`
+  - custom: any template, for example
+    `command = "kitty -e ssh -t {host} nvim {path}"`.
+- **Alias resolution:** pass the alias, so the user's own config (`ProxyJump`,
+  `IdentityFile`, `Port`) applies. Zed and VS Code call the system `ssh`. Under a
+  custom config location (`config_path` / `SSHUSH_CONFIG` / `ssh_dir`), the
+  editor does not see `-F`. In that case, warn in the status line; do not guess.
+- **Launch:** GUI editors detach, so start them with `exec.Command(...).Start()`
+  (not `tea.ExecProcess`) and keep the TUI running. A template that runs in the
+  terminal (for example `nvim`) sets `terminal = true` and uses
+  `tea.ExecProcess`, the same handover as connect-to-host (M20).
+- **Remote path autocomplete:** `Tab` in the path prompt completes the last
+  path segment from the remote host.
+  - Probe: `ssh -o BatchMode=yes -o ConnectTimeout=5 <alias> -- ls -1Ap -- <dir>`.
+    Shell-quote `<dir>` on the remote side; expand a leading `~` remotely.
+    Show only directories (entries that end in `/`). Filter by the typed prefix
+    locally.
+  - Speed: reuse one connection for all probes with
+    `-o ControlMaster=auto -o ControlPath=<runtime dir>/sshush-%C -o ControlPersist=60`,
+    so the second `Tab` does not do a new handshake. Cache listings per
+    `(alias, dir)` for the life of the prompt.
+  - Run each probe in a `tea.Cmd`. Never block the UI. Show a spinner while a
+    probe runs; drop results for a stale prefix.
+  - `BatchMode=yes` means no password or passphrase prompt. If the probe fails
+    on auth, show "autocomplete needs a key in the agent" and let the user type
+    the path by hand. The editor launch still works.
+  - Keep recent paths per host in the app state, and offer them first (before
+    the first probe returns).
+- **Tests:** template parse/split and placeholder substitution (paths with
+  spaces and quotes), preset lookup, completion filter + stale-result drop with
+  a fake runner, and an e2e case against the local sshd from the M29 suite.
+- **Out of scope:** JetBrains Gateway (needs its own protocol URL), and editors
+  that must install a server on the host by themselves; the editor owns that step.
 
 Tests ride alongside each pkg milestone, not deferred. Parse/write corruption = worst-case bug; round-trip test guards it.
