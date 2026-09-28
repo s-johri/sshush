@@ -2,20 +2,22 @@
 
 Interactive CLI/TUI to switch SSH keys, inspect the agent, view hosts, and edit SSH config.
 
-**Status:** through `v0.7.0` (milestones 0–30, 39, 40, 42, 43) — full read/merge
-pipeline, agent switch (load/unload/unload-all), host directive + key/host CRUD
-with backup+confirm, wildcard hosts, read-only `Match` blocks, restore-from-backup,
-key↔host association, hot reload, app config with multiple default identities +
-auto-load, configurable SSH dir/config path, multi-algorithm key generation,
-scrollable panes, live search/filter, connect-to-host, permission audit+fix,
-known_hosts management, clipboard copy, smart shell-init, help overlay, opt-in
-motion system, 16 color themes (fg+bg, in-app switcher), launch update-check,
-lipgloss styling, e2e suite + ubuntu/macOS CI, packaging (completions, man page,
-install script, brew/AUR config), and a versioned self-update/release pipeline.
-Adaptive two-column layout (M41) was tried and reverted — full-height single pane
-reads better and avoids row truncation. `Match`-block editing is deferred
-(surfaced read-only for now); brew/AUR/install-script publishing awaits public
-releases + tap/AUR secrets. Next window: v0.9.0 (v1.0 stabilization) → `v1.0.0`.
+**Status:** through `v0.10.0` (milestones 0-31, 39, 40, 42, 43). Shipped: full
+read and merge pipeline, agent switch (load, unload, unload-all), host directive
+and key and host CRUD with backup and confirm, wildcard hosts, read-only `Match`
+blocks, restore-from-backup, key-to-host association, hot reload, app config with
+multiple default identities and auto-load, configurable SSH dir and config path,
+multi-algorithm key generation, scrollable panes, live search and filter,
+connect-to-host, permission audit and fix, known_hosts management, clipboard copy,
+smart shell-init, help overlay, opt-in motion system, 16 color themes (fg and bg,
+in-app switcher), launch update-check, e2e suite with ubuntu and macOS CI,
+packaging (completions, man page, install script, brew and AUR config), and a
+versioned self-update and release pipeline. `v0.9.3` fixed `.bak` handling
+across reloads. `v0.10.0` moved the TUI to the Charm v2 stack (bubbletea,
+lipgloss and bubbles v2). Adaptive two-column layout (M41) was tried and
+reverted, because the full-height single pane reads better. `Match`-block
+editing is deferred. Brew, AUR and install-script publishing need public
+releases and tap and AUR secrets. Next: end the soak period and tag `v1.0.0`.
 Tests cover every `pkg`; see [README.md](README.md) for usage.
 
 ## Decisions (locked)
@@ -183,6 +185,8 @@ users get value before 1.0; the API/config surface only freezes at the RC.
 | 31 | v1.0 stabilization: error-handling audit, config schema freeze, docs/screenshots, CHANGELOG — *done (RC ready; demo GIF needs `vhs docs/demo.tape`)* | low |
 | 🏷 | **v0.9.0** — release candidate (feature-complete, schema frozen) | — |
 | — | soak period: bug-fix-only patch releases (v0.9.x) from real-world use | — |
+| 🏷 | **v0.9.3**: `.bak` survives reloads and re-arms on external edits; border contrast fix | — |
+| 🏷 | **v0.10.0**: migrate to the Charm v2 stack (no change to look or keys) | — |
 | 🏷 | **v1.0.0** — stable release (tag + announce) | — |
 
 ### Beyond v1.0 — planned features

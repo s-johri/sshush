@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-18
+
+### Changed
+- The TUI now uses the Charm v2 stack (bubbletea, lipgloss and bubbles v2). The
+  look and the key bindings do not change.
+- `NO_COLOR` still disables color for any non-empty value (for example
+  `NO_COLOR=yes`), and it also removes bold and underline, as in earlier
+  releases.
+
+## [0.9.3] - 2026-07-12
+
+### Fixed
+- The config `.bak` now survives the reload that follows each save. Before, the
+  second edit in a session could overwrite the `.bak` with already-edited
+  content, so restore did not go back to the original file.
+- When the config changes outside sshush (an editor, or a restore), the next
+  save makes a new `.bak` of that state. If the `.bak` is deleted during a
+  session, the next save writes it again.
+- Box borders are easier to see in the gruvbox-light, solarized-dark,
+  solarized-light and tokyonight-day themes. The contrast gate now checks the
+  border color too.
+
 ## [0.9.2] - 2026-06-14
 
 ### Added
@@ -120,7 +142,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hot reload.
 - Versioned self-update (`sshush update`) and a goreleaser release pipeline.
 
-[Unreleased]: https://github.com/s-johri/sshush/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/s-johri/sshush/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/s-johri/sshush/compare/v0.9.3...v0.10.0
+[0.9.3]: https://github.com/s-johri/sshush/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/s-johri/sshush/compare/v0.9.1...v0.9.2
 [0.7.0]: https://github.com/s-johri/sshush/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/s-johri/sshush/compare/v0.5.1...v0.6.0
