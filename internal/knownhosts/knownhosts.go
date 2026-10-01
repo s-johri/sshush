@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/s-johri/sshush/internal/fsutil"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -108,7 +109,7 @@ func (r *Remover) Remove(path string, e Entry) error {
 	}
 
 	kept := append(lines[:e.Line], lines[e.Line+1:]...)
-	if err := os.WriteFile(path, []byte(strings.Join(kept, "\n")), mode); err != nil {
+	if err := fsutil.WriteFile(path, []byte(strings.Join(kept, "\n")), mode); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
@@ -123,7 +124,7 @@ func (r *Remover) backup(path string, data []byte, mode os.FileMode) error {
 			return nil
 		}
 	}
-	if err := os.WriteFile(bak, data, mode); err != nil {
+	if err := fsutil.WriteFile(bak, data, mode); err != nil {
 		return fmt.Errorf("backup %s: %w", path, err)
 	}
 	if r.backedUp == nil {

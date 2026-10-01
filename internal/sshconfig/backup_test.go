@@ -277,3 +277,42 @@ func backupFiles(r *FileRepo) []string {
 	}
 	return out
 }
+
+// TestSaveAndRestoreThroughSymlink guards T18: with ~/.ssh/config linked to
+// a dotfiles file, a save and a restore write the target and keep the link.
+func TestSaveAndRestoreThroughSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dotfiles", "ssh_config")
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	orig := "Host a\n    User old\n"
+	writeFile(t, target, orig)
+	link := filepath.Join(dir, "config")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	isLink := func() bool {
+		fi, err := os.Lstat(link)
+		return err == nil && fi.Mode()&os.ModeSymlink != 0
+	}
+
+	r := New(link)
+	r.BackupDir = t.TempDir()
+	editAndSave(t, r, "a", "User", "new")
+	if !isLink() {
+		t.Fatal("save replaced the link")
+	}
+	if got, _ := os.ReadFile(target); string(got) != "Host a\n    User new\n" {
+		t.Errorf("target after save = %q", got)
+	}
+	if _, err := r.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if !isLink() {
+		t.Fatal("restore replaced the link")
+	}
+	if got, _ := os.ReadFile(target); string(got) != orig {
+		t.Errorf("target after restore = %q", got)
+	}
+}

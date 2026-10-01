@@ -21,6 +21,7 @@ import (
 
 	sshcfg "github.com/kevinburke/ssh_config"
 	"github.com/s-johri/sshush/internal/config"
+	"github.com/s-johri/sshush/internal/fsutil"
 )
 
 // ErrNotImplemented is returned by stubbed methods during scaffolding.
@@ -989,13 +990,13 @@ func (r *FileRepo) Save() error {
 			if err := os.MkdirAll(filepath.Dir(bak), 0o700); err != nil {
 				return fmt.Errorf("backup %s: %w", lf.path, err)
 			}
-			if err := os.WriteFile(bak, lf.raw, 0o600); err != nil {
+			if err := fsutil.WriteFile(bak, lf.raw, 0o600); err != nil {
 				return fmt.Errorf("backup %s: %w", lf.path, err)
 			}
 			r.backedUp[lf.path] = true
 		}
 		data := lf.render()
-		if err := os.WriteFile(lf.path, data, fileMode(lf.path)); err != nil {
+		if err := fsutil.WriteFile(lf.path, data, 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", lf.path, err)
 		}
 		lf.raw = data // keep last-known bytes current so reloads can spot external edits
@@ -1219,7 +1220,7 @@ func (r *FileRepo) Restore() ([]string, error) {
 		if err := r.savePreRestore(lf.path); err != nil {
 			return restored, err
 		}
-		if err := os.WriteFile(lf.path, data, fileMode(lf.path)); err != nil {
+		if err := fsutil.WriteFile(lf.path, data, 0o600); err != nil {
 			return restored, fmt.Errorf("restore %s: %w", lf.path, err)
 		}
 		restored = append(restored, lf.path)
@@ -1238,14 +1239,6 @@ func (r *FileRepo) findHost(h config.HostID) (*loadedFile, *sshcfg.Host) {
 	return nil, nil
 }
 
-// fileMode returns the file's current permissions, or 0600 if it can't stat.
-func fileMode(path string) os.FileMode {
-	if fi, err := os.Stat(path); err == nil {
-		return fi.Mode().Perm()
-	}
-	return 0o600
-}
-
 // savePreRestore copies the current content of path to preRestorePath(path),
 // so that the restore can be undone. A missing file has nothing to save.
 func (r *FileRepo) savePreRestore(path string) error {
@@ -1260,7 +1253,7 @@ func (r *FileRepo) savePreRestore(path string) error {
 	if err := os.MkdirAll(filepath.Dir(pre), 0o700); err != nil {
 		return fmt.Errorf("save %s before restore: %w", path, err)
 	}
-	if err := os.WriteFile(pre, cur, 0o600); err != nil {
+	if err := fsutil.WriteFile(pre, cur, 0o600); err != nil {
 		return fmt.Errorf("save %s before restore: %w", path, err)
 	}
 	return nil

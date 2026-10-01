@@ -11,7 +11,6 @@ package appconfig
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +20,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/s-johri/sshush/internal/config"
+	"github.com/s-johri/sshush/internal/fsutil"
 )
 
 // Config is the on-disk settings document.
@@ -252,10 +252,6 @@ func (s *Store) save() error {
 	if s.loadErr != nil {
 		return fmt.Errorf("not saved: %s did not load (%v); fix or remove it", path, s.loadErr)
 	}
-	// Write to the target of a symlink (a dotfiles setup), not over the link.
-	if real, err := filepath.EvalSymlinks(path); err == nil {
-		path = real
-	}
 	data, err := s.encode()
 	if err != nil {
 		return err
@@ -263,7 +259,7 @@ func (s *Store) save() error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return writeAtomic(path, data)
+	return fsutil.WriteFile(path, data, 0o644) // keeps a symlink and the mode
 }
 
 // encode returns the file content: the raw document from the last Load with
@@ -318,42 +314,6 @@ var knownKeys = func() []string {
 	}
 	return out
 }()
-
-// writeAtomic writes data to a temp file next to path, then renames it over
-// path. It keeps the mode of an existing file (default 0644).
-func writeAtomic(path string, data []byte) (err error) {
-	mode := os.FileMode(0o644)
-	if fi, statErr := os.Stat(path); statErr == nil {
-		mode = fi.Mode().Perm()
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return statErr
-	}
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	defer func() {
-		if err != nil {
-			os.Remove(tmp)
-		}
-	}()
-	if _, err = f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	if err = os.Chmod(tmp, mode); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
 
 // resolve returns s.Path or the default settings path.
 func (s *Store) resolve() (string, error) {

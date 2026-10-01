@@ -25,6 +25,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- Saves and restores of the SSH config, backups, `config.toml` and
+  `known_hosts` now write a temp file and rename it into place, so a crash or a
+  full disk never leaves a half-written file. A symlinked file (for example
+  `~/.ssh/config` linked into a dotfiles repo) keeps its link, and its target
+  gets the new content. The file mode is kept.
 - Fixing permissions (`P`) now tries every file, also after one fails, and
   says how many were fixed and which failed. Before, it stopped at the first
   error and said only "fix failed", although it had changed some files.
