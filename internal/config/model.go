@@ -62,6 +62,11 @@ type Host struct {
 	// "Match Host *.example.com" or "Match all". Empty for normal Host blocks.
 	MatchCriteria string
 
+	// Duplicates is how many later blocks have the same alias. ssh uses the
+	// first block, so sshush shows and edits that one; the others are
+	// mostly ignored by ssh.
+	Duplicates int
+
 	// Options is a map of additional ssh options that can be used for this host, such as "ProxyCommand", "ForwardAgent", etc.
 	Options map[string]string
 }

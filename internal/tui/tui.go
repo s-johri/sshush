@@ -1771,6 +1771,17 @@ func (m Model) hostsLines(w int) []string {
 		nameCol := padClip(h.Name, 20)
 		plain := nameCol + " " + dest
 		styled := textStyle.Render(nameCol) + " " + dimStyle.Render(dest)
+		// ssh uses the first block for an alias, and sshush shows and edits
+		// that one. Mark the others so an edit that "does nothing" in ssh is
+		// not a surprise.
+		if h.Duplicates > 0 {
+			tag := fmt.Sprintf("+%d duplicate", h.Duplicates)
+			if h.Duplicates > 1 {
+				tag += "s"
+			}
+			plain += "  " + tag
+			styled += "  " + hostTagStyle.Render(tag)
+		}
 		lines = append(lines, m.listRow(paneHosts, i, plain, styled, w))
 	}
 	if ind := m.scrollIndicator(paneHosts); ind != "" {

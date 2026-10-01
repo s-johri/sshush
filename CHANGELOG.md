@@ -25,6 +25,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- For a host alias in more than one block, sshush now shows, edits and deletes
+  the first block in the order OpenSSH reads the files (an `Include` counts at
+  its line). This is the block that ssh uses. Before, sshush showed the last
+  block but edited the first one, so an edit could seem to do nothing. The
+  Hosts pane marks such an alias with "+N duplicate".
 - With `ssh_dir` set, the new-key wizard now creates the key in that
   directory. Before, it always used `~/.ssh`.
 - With `config_path` set to a file outside the SSH directory (for example in a

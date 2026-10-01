@@ -2080,3 +2080,23 @@ func TestNewKeyRejectsUnsafeName(t *testing.T) {
 		t.Errorf("status = %q, want a key name error", m.status)
 	}
 }
+
+// TestHostsPaneMarksDuplicateAlias: an alias in more than one block is
+// marked, so the user knows that edits change only the first block (T9).
+func TestHostsPaneMarksDuplicateAlias(t *testing.T) {
+	snap := snapshot()
+	for id, h := range snap.Hosts {
+		if !h.IsPattern && !h.IsMatch {
+			h.Duplicates = 1
+			snap.Hosts[id] = h
+			break
+		}
+	}
+	m := New(&fakeService{model: snap})
+	m = feed(m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = feed(m, refreshedMsg{model: snap})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
+	if v := view(m); !strings.Contains(v, "+1 duplicate") {
+		t.Errorf("Hosts pane does not mark the duplicate alias:\n%s", v)
+	}
+}

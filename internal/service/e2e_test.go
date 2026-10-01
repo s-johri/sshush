@@ -177,3 +177,42 @@ func TestE2EIncludeGlobEditSeenBySsh(t *testing.T) {
 		}
 	}
 }
+
+// TestE2EDuplicateAliasMatchesSsh: for an alias in two blocks (one through an
+// Include at the top), sshush must show the User that ssh uses (T9).
+func TestE2EDuplicateAliasMatchesSsh(t *testing.T) {
+	dir := t.TempDir()
+	inc := filepath.Join(dir, "inc.conf")
+	main := filepath.Join(dir, "config")
+	cases := map[string]string{
+		"include first": "Include " + inc + "\n\nHost dup\n    User frommain\n",
+		"include last":  "Host dup\n    User frommain\n\nInclude " + inc + "\n",
+	}
+	for name, content := range cases {
+		if err := os.WriteFile(inc, []byte("Host dup\n    User frominc\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(main, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		repo := sshconfig.New(main)
+		repo.SshDir = dir
+		model, err := repo.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command("ssh", "-G", "-F", main, "dup").Output()
+		if err != nil {
+			t.Fatalf("%s: ssh -G: %v", name, err)
+		}
+		var sshUser string
+		for _, line := range strings.Split(string(out), "\n") {
+			if v, ok := strings.CutPrefix(line, "user "); ok {
+				sshUser = v
+			}
+		}
+		if got := model.Hosts["dup"].User; got != sshUser {
+			t.Errorf("%s: sshush shows User %q, ssh uses %q", name, got, sshUser)
+		}
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +51,13 @@ type loadedFile struct {
 	path string
 	raw  []byte
 	cfg  *sshcfg.Config
+	// order is the chain of Include line numbers that led to this file (empty
+	// for the main file). With hostLines it puts the blocks of all files in
+	// the order OpenSSH reads them.
+	order []int
+	// hostLines are the line numbers of the Host and Match lines, one per
+	// non-implicit block in cfg.Hosts.
+	hostLines []int
 }
 
 // FileRepo is a ConfigRepo backed by an on-disk config file plus its Includes.
@@ -101,7 +109,7 @@ func (r *FileRepo) Load() (*config.SshConfigModel, error) {
 	r.dirty = map[string]bool{}
 	r.warnings = nil
 	visited := map[string]bool{}
-	if err := r.loadFile(main, 0, visited); err != nil {
+	if err := r.loadFile(main, nil, visited); err != nil {
 		return nil, err
 	}
 
@@ -121,20 +129,24 @@ func (r *FileRepo) Load() (*config.SshConfigModel, error) {
 	}
 	for _, lf := range r.files {
 		model.SourceFiles = append(model.SourceFiles, lf.path)
-		for _, h := range lf.cfg.Hosts {
-			host, ok := hostFromAST(h)
-			if !ok {
-				continue // wildcard-only / empty block: nothing to surface
-			}
-			model.Hosts[host.ID] = host
+	}
+	// ssh uses the first block for an alias, so the model shows that one and
+	// counts the others.
+	for _, b := range r.blocks() {
+		if first, ok := model.Hosts[b.model.ID]; ok {
+			first.Duplicates++
+			model.Hosts[b.model.ID] = first
+			continue
 		}
+		model.Hosts[b.model.ID] = b.model
 	}
 	return model, nil
 }
 
 // loadFile parses one file, records it, then recurses into its Includes.
-func (r *FileRepo) loadFile(path string, depth int, visited map[string]bool) error {
-	if depth > maxIncludeDepth {
+// order is the chain of Include line numbers that led here.
+func (r *FileRepo) loadFile(path string, order []int, visited map[string]bool) error {
+	if len(order) > maxIncludeDepth {
 		return nil
 	}
 	abs, err := filepath.Abs(path)
@@ -158,12 +170,16 @@ func (r *FileRepo) loadFile(path string, depth int, visited map[string]bool) err
 	if err != nil {
 		return err
 	}
-	r.files = append(r.files, &loadedFile{path: path, raw: raw, cfg: cfg})
+	hostLines, includes := scanDirectives(raw)
+	r.files = append(r.files, &loadedFile{path: path, raw: raw, cfg: cfg, order: order, hostLines: hostLines})
 
-	for _, inc := range includeTargets(raw) {
-		for _, target := range r.resolveInclude(inc) {
-			if err := r.loadFile(target, depth+1, visited); err != nil {
-				return err
+	for _, inc := range includes {
+		sub := append(append([]int(nil), order...), inc.line)
+		for _, arg := range inc.args {
+			for _, target := range r.resolveInclude(arg) {
+				if err := r.loadFile(target, sub, visited); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -255,22 +271,80 @@ func identityIDFromPath(p string) config.IdentityID {
 	return config.IdentityID(base)
 }
 
-// includeTargets scans raw config bytes for Include directive arguments. The
-// ssh_config library resolves Includes into unexported state, so enumeration is
-// done here from the source lines.
-func includeTargets(raw []byte) []string {
-	var out []string
-	for _, line := range strings.Split(string(raw), "\n") {
+// includeLine is one Include directive: its line number and its arguments.
+type includeLine struct {
+	line int
+	args []string
+}
+
+// scanDirectives scans raw config bytes for the line numbers of Host and
+// Match lines, and for Include directives. The ssh_config library resolves
+// Includes into unexported state and keeps no block positions, so this is
+// done here from the source lines. "Key=value" and indented lines count.
+func scanDirectives(raw []byte) (hostLines []int, includes []includeLine) {
+	for n, line := range strings.Split(string(raw), "\n") {
 		t := strings.TrimSpace(line)
 		if t == "" || strings.HasPrefix(t, "#") {
 			continue
 		}
-		fields := strings.Fields(t)
-		if len(fields) < 2 || !strings.EqualFold(fields[0], "Include") {
-			continue
+		// The keyword ends at a space, a tab or "=" (ssh_config(5)).
+		key, rest := t, ""
+		if i := strings.IndexAny(t, " \t="); i >= 0 {
+			key, rest = t[:i], t[i:]
 		}
-		out = append(out, fields[1:]...)
+		switch strings.ToLower(key) {
+		case "host", "match":
+			hostLines = append(hostLines, n)
+		case "include":
+			rest = strings.TrimLeft(rest, " \t")
+			args := strings.Fields(strings.TrimPrefix(rest, "="))
+			if len(args) > 0 {
+				includes = append(includes, includeLine{line: n, args: args})
+			}
+		}
 	}
+	return hostLines, includes
+}
+
+// block is one host block with its place in OpenSSH's read order.
+type block struct {
+	lf    *loadedFile
+	host  *sshcfg.Host
+	model config.Host
+	key   []int // Include line chain, then the block's own line
+}
+
+// blocks returns every surfaced host block in the order OpenSSH reads them:
+// an Include's blocks come at the Include line. For an alias in more than
+// one block, the first one in this list is the one ssh uses.
+func (r *FileRepo) blocks() []block {
+	var out []block
+	for _, lf := range r.files {
+		var hosts []*sshcfg.Host
+		for _, h := range lf.cfg.Hosts {
+			if !isImplicitHost(h) {
+				hosts = append(hosts, h)
+			}
+		}
+		// If the line scan disagrees with the parser, fall back to the block
+		// index: the order inside the file stays right.
+		lines := lf.hostLines
+		if len(lines) != len(hosts) {
+			lines = make([]int, len(hosts))
+			for i := range lines {
+				lines[i] = i
+			}
+		}
+		for i, h := range hosts {
+			mh, ok := hostFromAST(h)
+			if !ok {
+				continue // wildcard-only / empty block: nothing to surface
+			}
+			key := append(append([]int(nil), lf.order...), lines[i])
+			out = append(out, block{lf: lf, host: h, model: mh, key: key})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return slices.Compare(out[i].key, out[j].key) < 0 })
 	return out
 }
 
@@ -467,19 +541,17 @@ func (r *FileRepo) AddHost(h config.Host) error {
 
 // DeleteHost removes a host block from whichever file defines it.
 func (r *FileRepo) DeleteHost(h config.HostID) error {
-	for _, lf := range r.files {
-		for i, host := range lf.cfg.Hosts {
-			if mh, ok := hostFromAST(host); ok && mh.ID == h {
-				if isMatchHost(host) {
-					return ErrMatchReadOnly
-				}
-				lf.cfg.Hosts = append(lf.cfg.Hosts[:i], lf.cfg.Hosts[i+1:]...)
-				r.dirty[lf.path] = true
-				return nil
-			}
-		}
+	lf, host := r.findHost(h)
+	if host == nil {
+		return fmt.Errorf("unknown host %q", h)
 	}
-	return fmt.Errorf("unknown host %q", h)
+	if isMatchHost(host) {
+		return ErrMatchReadOnly
+	}
+	i := slices.Index(lf.cfg.Hosts, host)
+	lf.cfg.Hosts = append(lf.cfg.Hosts[:i], lf.cfg.Hosts[i+1:]...)
+	r.dirty[lf.path] = true
+	return nil
 }
 
 // ensureMainFile returns the main loadedFile, creating an empty one (and its
@@ -658,13 +730,12 @@ func (r *FileRepo) Restore() ([]string, error) {
 	return restored, nil
 }
 
-// findHost locates the file and AST host block for a model HostID.
+// findHost locates the file and AST host block for a model HostID: the first
+// block for that alias in OpenSSH order, which is the one the model shows.
 func (r *FileRepo) findHost(h config.HostID) (*loadedFile, *sshcfg.Host) {
-	for _, lf := range r.files {
-		for _, host := range lf.cfg.Hosts {
-			if mh, ok := hostFromAST(host); ok && mh.ID == h {
-				return lf, host
-			}
+	for _, b := range r.blocks() {
+		if b.model.ID == h {
+			return b.lf, b.host
 		}
 	}
 	return nil, nil
