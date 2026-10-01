@@ -38,6 +38,7 @@ const maxIncludeDepth = 5
 type ConfigRepo interface {
 	Load() (*config.SshConfigModel, error)
 	SetHostField(h config.HostID, key, val string) error
+	AddHostOption(h config.HostID, key, val string) error
 	DeleteHostField(h config.HostID, key string) error
 	AddHostIdentity(h config.HostID, path string) error
 	RemoveHostIdentity(h config.HostID, id config.IdentityID) error
@@ -250,8 +251,9 @@ func hostFromAST(h *sshcfg.Host) (config.Host, bool) {
 		ID:        config.HostID(name),
 		Name:      name,
 		IsPattern: isPattern,
-		Options:   map[string]string{},
+		Options:   map[string][]string{},
 	}
+	seen := map[string]bool{} // directives already read, in lower case
 	// A Match block is keyed and labeled by its criteria, not its patterns, so
 	// it can't be confused with (or collide with) a Host of the same name.
 	if isMatchHost(h) {
@@ -267,22 +269,44 @@ func hostFromAST(h *sshcfg.Host) (config.Host, bool) {
 			continue
 		}
 		val := strings.TrimSpace(kv.Value)
+		// ssh uses the first value of a directive that it reads once.
 		switch {
 		case strings.EqualFold(kv.Key, "HostName"):
-			host.Hostname = val
+			if !seen["hostname"] {
+				host.Hostname = val
+			}
 		case strings.EqualFold(kv.Key, "User"):
-			host.User = val
+			if !seen["user"] {
+				host.User = val
+			}
 		case strings.EqualFold(kv.Key, "Port"):
-			host.Port, _ = strconv.Atoi(val)
+			if !seen["port"] {
+				host.Port, _ = strconv.Atoi(val)
+			}
 		case strings.EqualFold(kv.Key, "IdentityFile"):
 			id := identityIDFromPath(val)
 			host.Identities = append(host.Identities, id)
 			host.IdentityFiles = append(host.IdentityFiles, strings.Trim(val, `"`))
 		default:
-			host.Options[kv.Key] = val
+			key := optionKey(host.Options, kv.Key)
+			if len(host.Options[key]) == 0 || config.Repeatable(key) {
+				host.Options[key] = append(host.Options[key], val)
+			}
 		}
+		seen[strings.ToLower(kv.Key)] = true
 	}
 	return host, true
+}
+
+// optionKey returns the spelling under which opts already has key (ssh
+// reads keywords without case), or key itself.
+func optionKey(opts map[string][]string, key string) string {
+	for k := range opts {
+		if strings.EqualFold(k, key) {
+			return k
+		}
+	}
+	return key
 }
 
 // matchCriteria renders a Match block's condition for display, reconstructing
@@ -758,6 +782,33 @@ func (r *FileRepo) DeleteHostField(h config.HostID, key string) error {
 	return nil
 }
 
+// AddHostOption appends a new key=val line to host h, also when h already
+// has that directive. Use it for a repeatable directive (see
+// config.Repeatable), where SetHostField would change the existing line.
+func (r *FileRepo) AddHostOption(h config.HostID, key, val string) error {
+	if err := r.writable(); err != nil {
+		return err
+	}
+	if err := config.ValidateOption(key); err != nil {
+		return err
+	}
+	if err := config.ValidateValue(key, val); err != nil {
+		return err
+	}
+	lf, host := r.findHost(h)
+	if host == nil {
+		return fmt.Errorf("unknown host %q", h)
+	}
+	if isMatchHost(host) {
+		return ErrMatchReadOnly
+	}
+	kv := &sshcfg.KV{Key: key, Value: val}
+	setKVIndent(kv, blockIndent(host))
+	host.Nodes = append(host.Nodes, kv)
+	r.dirty[lf.path] = true
+	return nil
+}
+
 // AddHostIdentity appends an IdentityFile directive to host h (IdentityFile may
 // appear multiple times). In-memory until Save.
 func (r *FileRepo) AddHostIdentity(h config.HostID, path string) error {
@@ -850,7 +901,9 @@ func (r *FileRepo) AddHost(h config.Host) error {
 		host.Nodes = append(host.Nodes, newKV("Port", strconv.Itoa(h.Port)))
 	}
 	for _, k := range sortedKeys(h.Options) { // deterministic option order
-		host.Nodes = append(host.Nodes, newKV(k, h.Options[k]))
+		for _, v := range h.Options[k] {
+			host.Nodes = append(host.Nodes, newKV(k, v))
+		}
 	}
 	host.Nodes = append(host.Nodes, &sshcfg.Empty{}) // trailing blank line
 
@@ -897,7 +950,7 @@ func (r *FileRepo) ensureMainFile() (*loadedFile, error) {
 }
 
 // sortedKeys returns a map's keys in sorted order for deterministic output.
-func sortedKeys(m map[string]string) []string {
+func sortedKeys(m map[string][]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -976,8 +1029,10 @@ func validateNewHost(h config.Host) error {
 		if err := config.ValidateOption(k); err != nil {
 			return err
 		}
-		if err := config.ValidateValue(k, h.Options[k]); err != nil {
-			return err
+		for _, v := range h.Options[k] {
+			if err := config.ValidateValue(k, v); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

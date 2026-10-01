@@ -29,6 +29,7 @@ type Service interface {
 	RemoveKeyFromAgent(config.IdentityID) error
 	UnloadAllKeys() error
 	EditHost(h config.HostID, field, val string) error
+	AddHostOption(h config.HostID, field, val string) error
 	DeleteHostField(h config.HostID, field string) error
 	AttachKey(h config.HostID, id config.IdentityID) error
 	DetachKey(h config.HostID, id config.IdentityID) error
@@ -313,6 +314,21 @@ func (a *App) EditHost(h config.HostID, field, val string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if err := a.Config.SetHostField(h, field, val); err != nil {
+		return err
+	}
+	if err := a.Config.Save(); err != nil {
+		return err
+	}
+	_, err := a.refresh()
+	return err
+}
+
+// AddHostOption appends a field=val line to host h (for a repeatable
+// directive such as LocalForward), persists, and refreshes.
+func (a *App) AddHostOption(h config.HostID, field, val string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := a.Config.AddHostOption(h, field, val); err != nil {
 		return err
 	}
 	if err := a.Config.Save(); err != nil {

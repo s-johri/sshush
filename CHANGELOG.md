@@ -25,6 +25,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- A host with more than one `LocalForward`, `RemoteForward`,
+  `DynamicForward`, `SendEnv`, `SetEnv` or `CertificateFile` line now keeps
+  every value. The copied `ssh` command has one `-o` for each. Before, only the
+  last one was kept.
+- For a directive that ssh reads once (`HostName`, `User`, `Port`, `ProxyJump`
+  and the others), sshush now shows the first value, as ssh uses it. Before, it
+  showed the last one.
+- Adding a repeatable directive with `ctrl+o` adds a line, also when the host
+  already has one. The edit screen does not edit or delete a directive that
+  has more than one line; it says to edit those lines in the config file.
 - The copied `ssh` command for a host now uses each `IdentityFile` path as
   written in the config. Before, it looked up a key by file name, so a key in
   another directory with the same name could be used instead.

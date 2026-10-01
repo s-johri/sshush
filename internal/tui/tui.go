@@ -820,7 +820,9 @@ func (m Model) sshCommandFor(h config.Host) string {
 		parts = append(parts, "-i", shellQuote(p))
 	}
 	for _, k := range sortedOptionKeys(h.Options) {
-		parts = append(parts, "-o", k+"="+shellQuote(h.Options[k]))
+		for _, v := range h.Options[k] { // every value of a repeatable directive
+			parts = append(parts, "-o", k+"="+shellQuote(v))
+		}
 	}
 	dest := expandHostToken(h.Hostname, alias)
 	if h.User != "" {
@@ -876,7 +878,7 @@ func shellQuote(s string) string {
 }
 
 // sortedOptionKeys returns a host's option names in sorted order (determinism).
-func sortedOptionKeys(m map[string]string) []string {
+func sortedOptionKeys(m map[string][]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

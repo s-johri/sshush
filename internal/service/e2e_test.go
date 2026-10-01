@@ -164,7 +164,7 @@ func TestE2EIncludeGlobEditSeenBySsh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pj := model.Hosts["work"].Options["ProxyJump"]; pj != "" {
+	if pj := model.Hosts["work"].Options["ProxyJump"]; len(pj) != 0 {
 		t.Errorf("model ProxyJump = %q after delete, want empty", pj)
 	}
 	out, err := exec.Command("ssh", "-G", "-F", cfgPath, "work").Output()

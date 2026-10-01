@@ -20,6 +20,7 @@ type fakeService struct {
 	model        *config.SshConfigModel
 	err          error
 	edits        []string
+	addedOptions []string
 	deletes      []string
 	addedHosts   []config.Host
 	deletedHosts []config.HostID
@@ -45,6 +46,10 @@ func (f *fakeService) Refresh() (*config.SshConfigModel, error)   { return f.mod
 func (f *fakeService) AddKeyToAgent(config.IdentityID) error      { return nil }
 func (f *fakeService) RemoveKeyFromAgent(config.IdentityID) error { return nil }
 func (f *fakeService) UnloadAllKeys() error                       { f.unloadedAll++; return nil }
+func (f *fakeService) AddHostOption(h config.HostID, field, val string) error {
+	f.addedOptions = append(f.addedOptions, string(h)+"/"+field+"="+val)
+	return nil
+}
 func (f *fakeService) EditHost(h config.HostID, field, val string) error {
 	f.edits = append(f.edits, string(h)+"."+field+"="+val)
 	return nil
@@ -395,7 +400,7 @@ func TestDeleteDirectiveFlow(t *testing.T) {
 	snap := &config.SshConfigModel{
 		Hosts: map[config.HostID]config.Host{
 			"web": {ID: "web", Name: "web", User: "deploy",
-				Options: map[string]string{"ForwardAgent": "yes"}},
+				Options: map[string][]string{"ForwardAgent": {"yes"}}},
 		},
 	}
 	svc := &fakeService{model: snap}
@@ -523,7 +528,7 @@ func TestNewHostWithCustomOption(t *testing.T) {
 	if len(svc.addedHosts) != 1 {
 		t.Fatalf("host not added: %v", svc.addedHosts)
 	}
-	if got := svc.addedHosts[0].Options["ForwardAgent"]; got != "yes" {
+	if got := svc.addedHosts[0].Options["ForwardAgent"]; len(got) != 1 || got[0] != "yes" {
 		t.Errorf("custom option not collected: %v", svc.addedHosts[0].Options)
 	}
 }
@@ -789,7 +794,7 @@ func TestWildcardHostShownAndWarned(t *testing.T) {
 	snap := &config.SshConfigModel{
 		Hosts: map[config.HostID]config.Host{
 			"*": {ID: "*", Name: "*", IsPattern: true,
-				Options: map[string]string{"ServerAliveInterval": "60"}},
+				Options: map[string][]string{"ServerAliveInterval": {"60"}}},
 		},
 	}
 	svc := &fakeService{model: snap}
@@ -1851,7 +1856,7 @@ func TestSSHCommandForExplicitExpansion(t *testing.T) {
 			"db": {ID: "db", Name: "db", Hostname: "10.0.0.5", User: "postgres", Port: 2222,
 				Identities:    []config.IdentityID{"id_a"},
 				IdentityFiles: []string{"/k/id_a"},
-				Options:       map[string]string{"ProxyJump": "bastion", "ForwardAgent": "yes"}},
+				Options:       map[string][]string{"ProxyJump": {"bastion"}, "ForwardAgent": {"yes"}}},
 		},
 	}
 	m := New(&fakeService{model: snap})
@@ -1874,7 +1879,7 @@ func TestSSHCommandForShellQuotesSpaces(t *testing.T) {
 			"sp": {ID: "sp", Name: "sp", Hostname: "h.example", User: "me",
 				Identities:    []config.IdentityID{"id_sp"},
 				IdentityFiles: []string{"/home/u/My Keys/id_rsa"},
-				Options:       map[string]string{"ProxyCommand": "ssh -W %h:%p bastion"}},
+				Options:       map[string][]string{"ProxyCommand": {"ssh -W %h:%p bastion"}}},
 		},
 	}
 	m := New(&fakeService{model: snap})
@@ -2369,5 +2374,74 @@ func TestSSHCommandForNoHostnameQuotes(t *testing.T) {
 	if got, want := m.sshCommandFor(config.Host{ID: "-x", Name: "-oProxyCommand=evil"}),
 		"ssh -F '/home/u/My Configs/ssh' -- -oProxyCommand=evil"; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// The tests below guard T15 in the TUI.
+
+func TestSSHCommandForRepeatedOptions(t *testing.T) {
+	h := config.Host{ID: "f", Name: "f", Hostname: "f.example", Options: map[string][]string{
+		"LocalForward": {"8080 localhost:80", "8443 localhost:443"},
+	}}
+	want := "ssh -o LocalForward='8080 localhost:80' -o LocalForward='8443 localhost:443' f.example"
+	if got := commandFor(t, h); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// fwdSnap is a host with two LocalForward lines.
+func fwdSnap() *config.SshConfigModel {
+	return &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{},
+		Hosts: map[config.HostID]config.Host{"f": {ID: "f", Name: "f", Hostname: "f.example",
+			Options: map[string][]string{"LocalForward": {"8080 localhost:80", "8443 localhost:443"}}}},
+	}
+}
+
+// TestEditRefusesMultiLineDirective: SetHostField changes only the first
+// line, so the overlay must not offer to edit or delete a directive with
+// more than one line.
+func TestEditRefusesMultiLineDirective(t *testing.T) {
+	svc := &fakeService{model: fwdSnap()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: fwdSnap()})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = feed(m, key("e"))
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // HostName -> LocalForward
+	o := m.modal.(*editOverlay)
+	if o.activeField() != "LocalForward" {
+		t.Fatalf("active field = %q", o.activeField())
+	}
+	m = enter(m)
+	if o := m.modal.(*editOverlay); o.phase != edPhaseValue || !strings.Contains(m.status, "2 lines") {
+		t.Errorf("edit of a 2-line directive: phase %d, status %q", o.phase, m.status)
+	}
+	m = feed(m, tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	if o := m.modal.(*editOverlay); o.phase != edPhaseValue {
+		t.Errorf("ctrl+d on a 2-line directive: phase %d", o.phase)
+	}
+	if len(svc.edits) != 0 {
+		t.Errorf("edits = %v", svc.edits)
+	}
+}
+
+// TestAddRepeatableOptionAppends: ctrl+o with a repeatable name adds a line.
+func TestAddRepeatableOptionAppends(t *testing.T) {
+	svc := &fakeService{model: fwdSnap()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: fwdSnap()})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = feed(m, key("e"))
+	m = feed(m, tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = enter(typeText(m, "LocalForward"))
+	m = enter(typeText(m, "9000 localhost:90"))
+	out, cmd := m.Update(key("y"))
+	m = out.(Model)
+	if cmd == nil {
+		t.Fatal("y did not dispatch")
+	}
+	cmd()
+	if len(svc.addedOptions) != 1 || svc.addedOptions[0] != "f/LocalForward=9000 localhost:90" {
+		t.Errorf("added options = %v, edits = %v", svc.addedOptions, svc.edits)
 	}
 }

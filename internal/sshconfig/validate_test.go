@@ -43,7 +43,7 @@ func TestAddHostRejectsBadHost(t *testing.T) {
 		{ID: "a b", Name: "a b"},
 		{ID: "n", Name: "n", Port: 70000},
 		{ID: "n", Name: "n", User: "a b"},
-		{ID: "n", Name: "n", Options: map[string]string{"ForwadAgent": "yes"}},
+		{ID: "n", Name: "n", Options: map[string][]string{"ForwadAgent": {"yes"}}},
 	} {
 		if err := r.AddHost(h); err == nil {
 			t.Errorf("AddHost(%+v) = nil, want an error", h)

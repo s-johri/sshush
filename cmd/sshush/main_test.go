@@ -23,14 +23,15 @@ func (s *stubService) AddKeyToAgent(id config.IdentityID) error {
 	s.added = append(s.added, id)
 	return nil
 }
-func (s *stubService) RemoveKeyFromAgent(config.IdentityID) error       { return nil }
-func (s *stubService) UnloadAllKeys() error                             { return nil }
-func (s *stubService) EditHost(config.HostID, string, string) error     { return nil }
-func (s *stubService) DeleteHostField(config.HostID, string) error      { return nil }
-func (s *stubService) AttachKey(config.HostID, config.IdentityID) error { return nil }
-func (s *stubService) DetachKey(config.HostID, config.IdentityID) error { return nil }
-func (s *stubService) AddHost(config.Host) error                        { return nil }
-func (s *stubService) DeleteHost(config.HostID) error                   { return nil }
+func (s *stubService) RemoveKeyFromAgent(config.IdentityID) error        { return nil }
+func (s *stubService) UnloadAllKeys() error                              { return nil }
+func (s *stubService) EditHost(config.HostID, string, string) error      { return nil }
+func (s *stubService) AddHostOption(config.HostID, string, string) error { return nil }
+func (s *stubService) DeleteHostField(config.HostID, string) error       { return nil }
+func (s *stubService) AttachKey(config.HostID, config.IdentityID) error  { return nil }
+func (s *stubService) DetachKey(config.HostID, config.IdentityID) error  { return nil }
+func (s *stubService) AddHost(config.Host) error                         { return nil }
+func (s *stubService) DeleteHost(config.HostID) error                    { return nil }
 func (s *stubService) GenerateKey(keys.GenerateOpts) (config.Identity, error) {
 	return config.Identity{}, nil
 }

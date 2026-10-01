@@ -58,7 +58,7 @@ func TestLoadWithInclude(t *testing.T) {
 	if len(web.Identities) != 1 || web.Identities[0] != config.IdentityID("id_ed25519") {
 		t.Errorf("web identities = %v, want [id_ed25519]", web.Identities)
 	}
-	if web.Options["ForwardAgent"] != "yes" {
+	if fa := web.Options["ForwardAgent"]; len(fa) != 1 || fa[0] != "yes" {
 		t.Errorf("web ForwardAgent = %q, want yes", web.Options["ForwardAgent"])
 	}
 
@@ -77,7 +77,7 @@ func TestLoadWithInclude(t *testing.T) {
 	if !star.IsPattern {
 		t.Errorf("'*' host should be flagged IsPattern")
 	}
-	if star.Options["ServerAliveInterval"] != "60" {
+	if sa := star.Options["ServerAliveInterval"]; len(sa) != 1 || sa[0] != "60" {
 		t.Errorf("wildcard options not parsed: %v", star.Options)
 	}
 }
@@ -583,7 +583,7 @@ func TestMatchBlocksSurfacedReadOnly(t *testing.T) {
 	if !mh.IsMatch || mh.MatchCriteria != "Match Host *.corp.example.com" {
 		t.Errorf("match flags wrong: IsMatch=%v criteria=%q", mh.IsMatch, mh.MatchCriteria)
 	}
-	if mh.Options["ProxyJump"] != "bastion" {
+	if pj := mh.Options["ProxyJump"]; len(pj) != 1 || pj[0] != "bastion" {
 		t.Errorf("ProxyJump not surfaced on Match block: %v", mh.Options)
 	}
 	if ma, ok := model.Hosts["Match all"]; !ok || !ma.IsMatch {

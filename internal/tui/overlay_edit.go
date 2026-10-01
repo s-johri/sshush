@@ -91,8 +91,28 @@ func (o *editOverlay) currentFieldValue(host config.Host) string {
 		}
 		return strconv.Itoa(host.Port)
 	default:
-		return host.Options[o.activeField()]
+		if vals := host.Options[o.activeField()]; len(vals) > 0 {
+			return vals[0]
+		}
+		return ""
 	}
+}
+
+// multiLine returns how many lines the active existing field has, when it
+// has more than one (a repeatable directive). The overlay edits one line, so
+// it refuses such a field: the user edits those lines in the file.
+func (o *editOverlay) multiLine(m *Model) int {
+	if o.newKey != "" {
+		return 0
+	}
+	host, ok := m.hostByID(o.host)
+	if !ok {
+		return 0
+	}
+	if n := len(host.Options[o.activeField()]); n > 1 {
+		return n
+	}
+	return 0
 }
 
 func (o *editOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
@@ -141,6 +161,10 @@ func (o *editOverlay) updateValue(msg tea.KeyPressMsg, m *Model) (overlay, tea.C
 		}
 		return o, nil
 	case "ctrl+d":
+		if n := o.multiLine(m); n > 0 {
+			m.status = fmt.Sprintf("%s has %d lines; edit them in the config file", o.activeField(), n)
+			return o, nil
+		}
 		if editingExisting {
 			o.phase = edPhaseConfirmDel
 		}
@@ -148,6 +172,10 @@ func (o *editOverlay) updateValue(msg tea.KeyPressMsg, m *Model) (overlay, tea.C
 	case "enter":
 		if o.newKey == "" && len(o.fields) == 0 {
 			m.status = "no directives set — ctrl+o to add one"
+			return o, nil
+		}
+		if n := o.multiLine(m); n > 0 {
+			m.status = fmt.Sprintf("%s has %d lines; edit them in the config file", o.activeField(), n)
 			return o, nil
 		}
 		if strings.TrimSpace(o.input.Value()) == "" {
@@ -203,6 +231,13 @@ func (o *editOverlay) updateConfirm(msg tea.KeyPressMsg, m *Model) (overlay, tea
 		}
 	}
 	val := strings.TrimSpace(o.input.Value())
+	if o.newKey != "" && config.Repeatable(field) {
+		// A new line for a repeatable directive; EditHost would change the
+		// line that is already there.
+		return nil, func() tea.Msg {
+			return editDoneMsg{verb: "added", err: m.svc.AddHostOption(host, field, val)}
+		}
+	}
 	return nil, func() tea.Msg {
 		return editDoneMsg{verb: "saved", err: m.svc.EditHost(host, field, val)}
 	}

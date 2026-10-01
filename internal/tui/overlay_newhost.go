@@ -151,9 +151,13 @@ func (o *newHostWizard) enterOptVal(val string, m *Model) (overlay, tea.Cmd) {
 		return o, nil
 	}
 	if o.draft.Options == nil {
-		o.draft.Options = map[string]string{}
+		o.draft.Options = map[string][]string{}
 	}
-	o.draft.Options[o.optKey] = val
+	if config.Repeatable(o.optKey) {
+		o.draft.Options[o.optKey] = append(o.draft.Options[o.optKey], val)
+	} else {
+		o.draft.Options[o.optKey] = []string{val}
+	}
 	m.status = o.optKey + " added"
 	o.optKey = ""
 	o.phase = nhPhaseOptKey
@@ -197,7 +201,9 @@ func (o *newHostWizard) viewConfirm(m *Model) string {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		lines = append(lines, "    "+k+" "+o.draft.Options[k])
+		for _, v := range o.draft.Options[k] {
+			lines = append(lines, "    "+k+" "+v)
+		}
 	}
 	for _, l := range lines {
 		b.WriteString("  " + textStyle.Render(l) + "\n")

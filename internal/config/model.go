@@ -1,6 +1,9 @@
 package config
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type KeyAlgorithm string
 
@@ -72,7 +75,12 @@ type Host struct {
 	Duplicates int
 
 	// Options is a map of additional ssh options that can be used for this host, such as "ProxyCommand", "ForwardAgent", etc.
-	Options map[string]string
+	//
+	// Each key maps to its values in file order. A repeatable directive
+	// (LocalForward, SendEnv, …; see Repeatable) keeps every value, because
+	// ssh applies all of them. Any other directive keeps only its first value,
+	// because ssh uses the first one.
+	Options map[string][]string
 }
 
 // SshConfigModel represents the entire ssh configuration, including all hosts and identities.
@@ -123,3 +131,15 @@ type RewriteCheck struct {
 	// it is set, the save is refused.
 	Unsafe string
 }
+
+// repeatable are the ssh_config(5) directives that ssh applies every time
+// they appear, in lower case. IdentityFile is one too, but Host keeps it in
+// Identities and IdentityFiles.
+var repeatable = map[string]bool{
+	"localforward": true, "remoteforward": true, "dynamicforward": true,
+	"sendenv": true, "setenv": true, "certificatefile": true,
+}
+
+// Repeatable reports whether ssh applies every occurrence of directive key,
+// not just the first.
+func Repeatable(key string) bool { return repeatable[strings.ToLower(key)] }
