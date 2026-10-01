@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -2027,5 +2028,23 @@ func TestReloadKeyIgnoredWhileLoading(t *testing.T) {
 	}
 	if _, cmd := m.Update(key("r")); cmd != nil {
 		t.Error("second r while loading started another refresh")
+	}
+}
+
+// brokenSettings is fakeSettings whose config.toml did not load.
+type brokenSettings struct{ fakeSettings }
+
+func (b *brokenSettings) LoadErr() error { return errors.New("toml: line 2: unterminated string") }
+
+// TestSettingsLoadErrorShownOnLaunch: when config.toml did not load, the TUI
+// says so, because the stderr warning is hidden by the alt screen (T7).
+func TestSettingsLoadErrorShownOnLaunch(t *testing.T) {
+	m := New(&fakeService{model: snapshot()}).WithSettings(&brokenSettings{})
+	if !strings.Contains(m.status, "unterminated string") || !strings.Contains(m.status, "not saved") {
+		t.Errorf("status = %q, want the load error and that changes are not saved", m.status)
+	}
+	m = feed(m, refreshedMsg{model: snapshot()})
+	if !strings.Contains(m.status, "unterminated string") {
+		t.Errorf("status after first load = %q, want the error kept", m.status)
 	}
 }

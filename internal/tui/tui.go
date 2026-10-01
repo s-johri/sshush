@@ -411,6 +411,11 @@ func (m Model) WithSettings(s appSettings) Model {
 	if t, ok := themeByName(s.ThemeName()); ok {
 		applyTheme(t)
 	}
+	// The stderr warning is hidden by the alt screen, so repeat it here.
+	if le, ok := s.(interface{ LoadErr() error }); ok && le.LoadErr() != nil {
+		m.status = "config.toml did not load, so changes are not saved: " + le.LoadErr().Error()
+		m.statusSetAt = time.Now()
+	}
 	return m
 }
 

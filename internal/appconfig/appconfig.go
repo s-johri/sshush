@@ -10,9 +10,12 @@
 package appconfig
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -58,6 +61,12 @@ type Store struct {
 	Path     string // settings file path; empty resolves to the default location
 	cfg      Config
 	warnings []string // non-fatal load warnings (e.g. unknown keys)
+	// raw is the whole file as last loaded, unknown keys included, so a save
+	// can write them back.
+	raw map[string]any
+	// loadErr is set when the file exists but did not load. Then sshush runs
+	// with defaults, and save refuses to write them over the user's file.
+	loadErr error
 }
 
 // New returns a Store for path. Empty path uses the default XDG location.
@@ -68,17 +77,29 @@ func New(path string) *Store { return &Store{Path: path} }
 // and recorded in Warnings().
 func (s *Store) Load() (Config, error) {
 	s.warnings = nil
+	s.raw = nil
+	s.loadErr = nil
 	path, err := s.resolve()
 	if err != nil {
+		s.loadErr = err
 		return Config{}, err
 	}
-	var cfg Config
-	md, err := toml.DecodeFile(path, &cfg)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			s.cfg = Config{}
 			return s.cfg, nil
 		}
+		s.loadErr = err
+		return Config{}, err
+	}
+	var cfg Config
+	md, err := toml.Decode(string(data), &cfg)
+	if err == nil {
+		_, err = toml.Decode(string(data), &s.raw)
+	}
+	if err != nil {
+		s.loadErr = err
 		return Config{}, err
 	}
 	// Surface keys present in the file but not in the schema. The legacy
@@ -94,6 +115,11 @@ func (s *Store) Load() (Config, error) {
 	s.cfg = cfg
 	return cfg, nil
 }
+
+// LoadErr returns why the last Load failed, or nil. A missing file is not a
+// failure. While it is set, every change is refused, so the defaults that
+// sshush runs with never replace the user's file.
+func (s *Store) LoadErr() error { return s.loadErr }
 
 // Warnings returns non-fatal issues from the last Load (e.g. unknown keys). The
 // caller decides how to surface them; sshush prints them to stderr at startup.
@@ -215,20 +241,118 @@ func (s *Store) SetTheme(name string) error {
 }
 
 // save writes the current settings, creating the parent directory as needed.
+// It keeps keys that this version does not know, and writes through a temp
+// file and a rename, so a crash never leaves a half-written file. It refuses
+// to write after a failed Load.
 func (s *Store) save() error {
 	path, err := s.resolve()
+	if err != nil {
+		return err
+	}
+	if s.loadErr != nil {
+		return fmt.Errorf("not saved: %s did not load (%v); fix or remove it", path, s.loadErr)
+	}
+	// Write to the target of a symlink (a dotfiles setup), not over the link.
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
+	data, err := s.encode()
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.Create(path)
+	return writeAtomic(path, data)
+}
+
+// encode returns the file content: the raw document from the last Load with
+// the known keys replaced by the current settings.
+func (s *Store) encode() ([]byte, error) {
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(s.cfg); err != nil {
+		return nil, err
+	}
+	var known map[string]any
+	if _, err := toml.Decode(buf.String(), &known); err != nil {
+		return nil, err
+	}
+	out := map[string]any{}
+	for k, v := range s.raw {
+		out[k] = v
+	}
+	for _, k := range knownKeys {
+		old, isTable := out[k].(map[string]any)
+		cur, curTable := known[k].(map[string]any)
+		delete(out, k)
+		switch {
+		case isTable && curTable: // keep unknown keys inside a known table
+			merged := map[string]any{}
+			for kk, vv := range old {
+				merged[kk] = vv
+			}
+			for kk, vv := range cur {
+				merged[kk] = vv
+			}
+			out[k] = merged
+		case known[k] != nil:
+			out[k] = known[k]
+		}
+	}
+	buf.Reset()
+	if err := toml.NewEncoder(&buf).Encode(out); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// knownKeys are the top-level keys of Config, from its toml tags.
+var knownKeys = func() []string {
+	var out []string
+	t := reflect.TypeOf(Config{})
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("toml"), ",")
+		if name != "" && name != "-" {
+			out = append(out, name)
+		}
+	}
+	return out
+}()
+
+// writeAtomic writes data to a temp file next to path, then renames it over
+// path. It keeps the mode of an existing file (default 0644).
+func writeAtomic(path string, data []byte) (err error) {
+	mode := os.FileMode(0o644)
+	if fi, statErr := os.Stat(path); statErr == nil {
+		mode = fi.Mode().Perm()
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp*")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	return toml.NewEncoder(f).Encode(s.cfg)
+	tmp := f.Name()
+	defer func() {
+		if err != nil {
+			os.Remove(tmp)
+		}
+	}()
+	if _, err = f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = os.Chmod(tmp, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // resolve returns s.Path or the default settings path.

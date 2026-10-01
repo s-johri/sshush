@@ -222,7 +222,7 @@ func runTUI() {
 	if _, err := settings.Load(); err != nil {
 		// Malformed config.toml: warn, then run with built-in defaults rather
 		// than refusing to start.
-		fmt.Fprintf(os.Stderr, "sshush: reading config: %v (using defaults)\n", err)
+		fmt.Fprintf(os.Stderr, "sshush: reading config: %v (using defaults; settings changes are not saved)\n", err)
 	}
 	warnConfig(settings)
 

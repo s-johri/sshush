@@ -25,6 +25,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- When `config.toml` does not load (for example a TOML syntax error), sshush
+  no longer writes its defaults over the file when you press `t`, `s` or `m`.
+  It shows the reason in the TUI and refuses to save until you fix the file.
+- Saving `config.toml` keeps keys that this version does not know, writes
+  through a temp file and a rename, keeps the file mode, and writes through a
+  symlink instead of replacing it. Comments in the file are still lost on save.
 - A reload (`r` or a file change) and an edit no longer run at the same time.
   Before, an edit could be lost while sshush reported it as saved, or sshush
   could crash with "concurrent map writes". `r` does nothing while a load runs.
