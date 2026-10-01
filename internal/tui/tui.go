@@ -1613,7 +1613,7 @@ var helpReference = []helpSection{
 		{"d", "delete the key files (irreversible)"},
 	}},
 	{"Hosts pane", []helpItem{
-		{"enter", "ssh into the host"},
+		{"enter/space", "ssh into the host"},
 		{"c", "copy ssh command"},
 		{"e", "edit host directives"},
 		{"i", "attach / detach keys"},
@@ -1630,7 +1630,7 @@ var helpReference = []helpSection{
 	{"In overlays", []helpItem{
 		{"esc", "cancel / close"},
 		{"y / n", "confirm / decline a write"},
-		{"tab", "next field (edit) / next algorithm (new key)"},
+		{"tab", "next field (host edit)"},
 		{"ctrl+o", "add option (host edit)"},
 		{"ctrl+d", "delete directive (host edit)"},
 	}},

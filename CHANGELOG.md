@@ -187,6 +187,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The app now has padding around its content instead of sitting flush against the
   terminal edges; the padding is dropped automatically on very small terminals.
 
+## [0.9.1] - 2026-06-11
+
+### Changed
+- Internal restructuring, with no change in behavior: every modal screen (copy
+  menu, theme picker, known_hosts browser, permissions, help, restore, key
+  picker, delete confirms, new-key and new-host wizards, host editor) now uses
+  one overlay interface, and pane scrolling moved into a shared viewport
+  module. All access to the ssh_config library's private fields is in one
+  adapter file, with a test that fails on an incompatible library upgrade.
+- The README lists the current features (connect, copy, permissions, themes,
+  `Match` blocks).
+
+## [0.9.0] - 2026-06-04
+
+### Added
+- A demo GIF in the README, generated from a vhs tape.
+
+### Changed
+- The `config.toml` schema is frozen: within 1.x, keys are only added, never
+  removed or changed in meaning.
+
+### Fixed
+- Unknown keys in `config.toml` now print a warning on launch and on
+  `restore`, so a typo is visible. They are still ignored.
+- A `config.toml` that does not load now prints a warning on launch and sshush
+  runs with defaults. Before, the error was not shown.
+
 ## [0.7.0] - 2026-06-04
 
 ### Added
@@ -275,6 +302,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 [0.10.0]: https://github.com/s-johri/sshush/compare/v0.9.3...v0.10.0
 [0.9.3]: https://github.com/s-johri/sshush/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/s-johri/sshush/compare/v0.9.1...v0.9.2
+[0.9.1]: https://github.com/s-johri/sshush/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/s-johri/sshush/compare/v0.7.0...v0.9.0
 [0.7.0]: https://github.com/s-johri/sshush/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/s-johri/sshush/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/s-johri/sshush/compare/v0.5.0...v0.5.1

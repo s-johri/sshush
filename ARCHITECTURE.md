@@ -221,7 +221,7 @@ the existing windows above (not a separate phase).
 | 40 | Smart `shell-init` | detect whether the snippet is already in `~/.bashrc`/`~/.zshrc`: nudge to add it when a default is set (only if absent), and warn on `shell-init` if a stub is already present (avoid duplicates) | v0.4.0 |
 | 41 | Adaptive layout | ~~wide → two-column (Keys + Hosts side by side); tall → fill vertical space~~ **Reverted.** Two-column was built then removed: side-by-side panes truncated host tags + default status, and felt cramped. Kept the tall half only — full-height single pane that grows to fit, no pagination | v0.5.0 (reverted) |
 | 42 | Auto update-check on launch | async, non-blocking: check latest release in a `tea.Cmd`, surface "update available → run `sshush update`" as a transient status. Off for `dev` builds; respects a `check_updates = false` setting — *done* | v0.7.0 |
-| 43 | `curl \| bash` install script | host an `install.sh` (detect OS/arch → download the right release asset + checksum verify → drop `sshush` on PATH); one-line install in the README — *done; needs public releases (repo is private, so assets are auth-gated)* | v0.7.0 |
+| 43 | `curl \| bash` install script | host an `install.sh` (detect OS/arch → download the right release asset + checksum verify → drop `sshush` on PATH); one-line install in the README — *done* | v0.7.0 |
 
 ### Beyond v1.0 — fun & flair
 

@@ -21,9 +21,9 @@ config editor, and connection launcher in one keyboard-driven app, written in
 Go. Switch keys, see what's loaded in the agent, browse and connect to hosts,
 and edit your config safely without leaving the terminal.
 
-> Status: in active development. Edits to your SSH config are gated behind a
-> confirmation and a backup is written before the first change, but treat
-> it as pre-1.0 software.
+> Status: stable. From 1.0, the command line and the `config.toml` schema
+> follow semantic versioning. Edits to your SSH config are gated behind a
+> confirmation, and a backup is written before the first change.
 
 ## Features
 
@@ -35,7 +35,7 @@ and edit your config safely without leaving the terminal.
 - **Hosts pane** — hosts from `~/.ssh/config` and its `Include`d files with their
   connection details (`user@hostname:port`), including wildcard (`Host *`) and
   read-only `Match` blocks.
-- **Connect to a host** — press `Enter` on a host to `ssh` into it; your own
+- **Connect to a host** — press `Enter` (or space) on a host to `ssh` into it; your own
   config (`ProxyJump`, `IdentityFile`, …) applies, and the terminal is handed to
   the session. Under a custom config location (`config_path` / `SSHUSH_CONFIG` /
   `ssh_dir`), the connection runs `ssh -F <config> <alias>` so aliases resolve
@@ -201,7 +201,7 @@ sshush help         # show help
 
 | Key | Action |
 |-----|--------|
-| `↵` enter | `ssh` into the selected host |
+| `↵` enter / space | `ssh` into the selected host |
 | `e` | edit host directives (`tab` to cycle, `ctrl+o` add option, `ctrl+d` delete) |
 | `i` | attach / detach keys for the host |
 | `c` | copy a ready-to-run `ssh` command to the clipboard |
