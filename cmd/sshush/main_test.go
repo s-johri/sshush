@@ -35,13 +35,13 @@ func (s *stubService) DeleteHost(config.HostID) error                    { retur
 func (s *stubService) GenerateKey(keys.GenerateOpts) (config.Identity, error) {
 	return config.Identity{}, nil
 }
-func (s *stubService) DeleteKey(config.IdentityID) error        { return nil }
-func (s *stubService) AuditPermissions() ([]perms.Issue, error) { return nil, nil }
-func (s *stubService) FixPermissions([]perms.Issue) error       { return nil }
-func (s *stubService) KnownHosts() ([]knownhosts.Entry, error)  { return nil, nil }
-func (s *stubService) RemoveKnownHost(knownhosts.Entry) error   { return nil }
-func (s *stubService) CanRestore() bool                         { return len(s.backups) > 0 }
-func (s *stubService) Backups() []config.Backup                 { return s.backups }
+func (s *stubService) DeleteKey(config.IdentityID) error                   { return nil }
+func (s *stubService) AuditPermissions() ([]perms.Issue, error)            { return nil, nil }
+func (s *stubService) FixPermissions([]perms.Issue) ([]perms.Issue, error) { return nil, nil }
+func (s *stubService) KnownHosts() ([]knownhosts.Entry, error)             { return nil, nil }
+func (s *stubService) RemoveKnownHost(knownhosts.Entry) error              { return nil }
+func (s *stubService) CanRestore() bool                                    { return len(s.backups) > 0 }
+func (s *stubService) Backups() []config.Backup                            { return s.backups }
 func (s *stubService) RewriteCheck(config.HostID) config.RewriteCheck {
 	return config.RewriteCheck{}
 }

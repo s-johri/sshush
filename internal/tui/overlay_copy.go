@@ -32,8 +32,8 @@ func (o *copyOverlay) View(m *Model) string {
 	b.WriteString(titleStyle.Render("Copy to clipboard") + "\n\n")
 	for _, opt := range o.opts {
 		preview := opt.content
-		if len(preview) > 48 {
-			preview = preview[:48] + "…"
+		if r := []rune(preview); len(r) > 48 { // cut on a rune, not inside one
+			preview = string(r[:48]) + "…"
 		}
 		b.WriteString("  " + keyCap.Render(opt.key) + "  " + opt.label + "  " + dimStyle.Render(preview) + "\n")
 	}

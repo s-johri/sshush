@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/s-johri/sshush/internal/config"
@@ -109,5 +110,30 @@ func TestRemoveKnownHostKeepsFirstBackup(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(path + ".bak"); string(got) != orig {
 		t.Errorf(".bak = %q, want the original", got)
+	}
+}
+
+// TestFixPermissionsReportsPartialResult guards T16: one failed chmod must
+// not stop the others, and the result must say which files were fixed.
+func TestFixPermissionsReportsPartialResult(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "id_rsa")
+	if err := os.WriteFile(good, []byte("k"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "gone")
+	a := New(fakeScanner{}, &fakeConfig{model: &config.SshConfigModel{}}, &fakeAgent{})
+	fixed, err := a.FixPermissions([]perms.Issue{
+		{Path: missing, Want: 0o600},
+		{Path: good, Want: 0o600},
+	})
+	if err == nil || !strings.Contains(err.Error(), missing) {
+		t.Errorf("err = %v, want one that names %s", err, missing)
+	}
+	if len(fixed) != 1 || fixed[0].Path != good {
+		t.Errorf("fixed = %v, want [%s]", fixed, good)
+	}
+	if fi, _ := os.Stat(good); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %o, want 600 (the chmod after the failure did not run)", fi.Mode().Perm())
 	}
 }

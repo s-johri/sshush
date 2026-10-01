@@ -38,7 +38,7 @@ type Service interface {
 	GenerateKey(keys.GenerateOpts) (config.Identity, error)
 	DeleteKey(config.IdentityID) error
 	AuditPermissions() ([]perms.Issue, error)
-	FixPermissions([]perms.Issue) error
+	FixPermissions([]perms.Issue) ([]perms.Issue, error)
 	KnownHosts() ([]knownhosts.Entry, error)
 	RemoveKnownHost(e knownhosts.Entry) error
 	CanRestore() bool
@@ -241,17 +241,22 @@ func (a *App) RemoveKnownHost(e knownhosts.Entry) error {
 	return a.kh.Remove(path, e)
 }
 
-// FixPermissions chmods each issue to its suggested mode, stopping at the first
-// error.
-func (a *App) FixPermissions(issues []perms.Issue) error {
+// FixPermissions chmods each issue to its suggested mode. Each chmod is
+// independent, so a failure does not stop the others. It returns the issues
+// that it fixed, and an error that names each file that failed.
+func (a *App) FixPermissions(issues []perms.Issue) ([]perms.Issue, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	var fixed []perms.Issue
+	var errs []error
 	for _, i := range issues {
 		if err := perms.Fix(i); err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
+		fixed = append(fixed, i)
 	}
-	return nil
+	return fixed, errors.Join(errs...)
 }
 
 // diskIdentity returns a cached identity that has a usable on-disk key path.

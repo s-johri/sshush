@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -21,6 +22,7 @@ type fakeService struct {
 	err          error
 	edits        []string
 	addedOptions []string
+	permFail     string // FixPermissions fails for this path
 	deletes      []string
 	addedHosts   []config.Host
 	deletedHosts []config.HostID
@@ -83,9 +85,18 @@ func (f *fakeService) DeleteKey(id config.IdentityID) error {
 	return nil
 }
 func (f *fakeService) AuditPermissions() ([]perms.Issue, error) { return f.permIssues, f.permErr }
-func (f *fakeService) FixPermissions(is []perms.Issue) error {
+func (f *fakeService) FixPermissions(is []perms.Issue) ([]perms.Issue, error) {
 	f.fixedPerms += len(is)
-	return nil
+	var fixed []perms.Issue
+	for _, i := range is {
+		if i.Path != f.permFail {
+			fixed = append(fixed, i)
+		}
+	}
+	if f.permFail != "" {
+		return fixed, errors.New("chmod " + f.permFail + ": permission denied")
+	}
+	return fixed, nil
 }
 func (f *fakeService) KnownHosts() ([]knownhosts.Entry, error) { return f.khEntries, f.khErr }
 func (f *fakeService) RemoveKnownHost(ent knownhosts.Entry) error {
@@ -2443,5 +2454,35 @@ func TestAddRepeatableOptionAppends(t *testing.T) {
 	cmd()
 	if len(svc.addedOptions) != 1 || svc.addedOptions[0] != "f/LocalForward=9000 localhost:90" {
 		t.Errorf("added options = %v, edits = %v", svc.addedOptions, svc.edits)
+	}
+}
+
+// TestPermsPartialFixReported guards T16: when some chmods fail, the status
+// says how many files were fixed and which failed.
+func TestPermsPartialFixReported(t *testing.T) {
+	svc := &fakeService{model: snapshot(), permIssues: []perms.Issue{
+		{Path: "/a", Want: 0o600}, {Path: "/b", Want: 0o600},
+	}, permFail: "/b"}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("P"))
+	m = feed(m, key("y"))
+	if !strings.Contains(m.status, "fixed 1 of 2") || !strings.Contains(m.status, "/b") {
+		t.Errorf("status = %q, want the partial result", m.status)
+	}
+}
+
+// TestCopyPreviewCutsOnRune guards T16: the preview must not cut a
+// multi-byte character in two.
+func TestCopyPreviewCutsOnRune(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	content := strings.Repeat("a", 47) + "é" + "tail"
+	m.modal = &copyOverlay{opts: []copyOption{{"p", "public key", content}}}
+	v := view(m)
+	if !utf8.ValidString(v) {
+		t.Errorf("view is not valid UTF-8:\n%q", v)
+	}
+	if !strings.Contains(v, strings.Repeat("a", 47)+"é…") {
+		t.Errorf("preview not cut after 48 characters:\n%s", v)
 	}
 }

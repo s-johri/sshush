@@ -20,8 +20,11 @@ func (o *permsOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) 
 		return nil, nil
 	}
 	n := len(o.issues)
-	if err := m.svc.FixPermissions(o.issues); err != nil {
-		m.status = "fix failed: " + err.Error()
+	fixed, err := m.svc.FixPermissions(o.issues)
+	if err != nil {
+		// Say what did change: the files before and after the failure.
+		msg := strings.ReplaceAll(err.Error(), "\n", "; ")
+		m.status = fmt.Sprintf("fixed %d of %d file(s); failed: %s", len(fixed), n, msg)
 		return nil, nil
 	}
 	m.status = fmt.Sprintf("fixed permissions on %d file(s)", n)

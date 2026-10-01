@@ -25,6 +25,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- Fixing permissions (`P`) now tries every file, also after one fails, and
+  says how many were fixed and which failed. Before, it stopped at the first
+  error and said only "fix failed", although it had changed some files.
+- The copy preview no longer cuts a multi-byte character in two.
 - A host with more than one `LocalForward`, `RemoteForward`,
   `DynamicForward`, `SendEnv`, `SetEnv` or `CertificateFile` line now keeps
   every value. The copied `ssh` command has one `-o` for each. Before, only the
