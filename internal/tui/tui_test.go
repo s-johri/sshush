@@ -1817,13 +1817,15 @@ type errFake struct{}
 
 func (errFake) Error() string { return "boom" }
 
+// TestSSHArgsUseConfigFlagOnlyWhenCustom also guards T14: "--" ends the
+// options, so an alias that starts with "-" cannot be read as one.
 func TestSSHArgsUseConfigFlagOnlyWhenCustom(t *testing.T) {
 	m := New(&fakeService{model: snapshot()})
-	if got := m.sshArgs("web"); !slicesEqual(got, []string{"web"}) {
-		t.Errorf("default config: args = %v, want [web]", got)
+	if got := m.sshArgs("web"); !slicesEqual(got, []string{"--", "web"}) {
+		t.Errorf("default config: args = %v, want [-- web]", got)
 	}
 	m = m.WithConfigFlag("/work/sshcfg")
-	if got := m.sshArgs("web"); !slicesEqual(got, []string{"-F", "/work/sshcfg", "web"}) {
+	if got := m.sshArgs("web"); !slicesEqual(got, []string{"-F", "/work/sshcfg", "--", "web"}) {
 		t.Errorf("custom config: args = %v", got)
 	}
 }
@@ -1847,8 +1849,9 @@ func TestSSHCommandForExplicitExpansion(t *testing.T) {
 		},
 		Hosts: map[config.HostID]config.Host{
 			"db": {ID: "db", Name: "db", Hostname: "10.0.0.5", User: "postgres", Port: 2222,
-				Identities: []config.IdentityID{"id_a"},
-				Options:    map[string]string{"ProxyJump": "bastion", "ForwardAgent": "yes"}},
+				Identities:    []config.IdentityID{"id_a"},
+				IdentityFiles: []string{"/k/id_a"},
+				Options:       map[string]string{"ProxyJump": "bastion", "ForwardAgent": "yes"}},
 		},
 	}
 	m := New(&fakeService{model: snap})
@@ -1869,8 +1872,9 @@ func TestSSHCommandForShellQuotesSpaces(t *testing.T) {
 		},
 		Hosts: map[config.HostID]config.Host{
 			"sp": {ID: "sp", Name: "sp", Hostname: "h.example", User: "me",
-				Identities: []config.IdentityID{"id_sp"},
-				Options:    map[string]string{"ProxyCommand": "ssh -W %h:%p bastion"}},
+				Identities:    []config.IdentityID{"id_sp"},
+				IdentityFiles: []string{"/home/u/My Keys/id_rsa"},
+				Options:       map[string]string{"ProxyCommand": "ssh -W %h:%p bastion"}},
 		},
 	}
 	m := New(&fakeService{model: snap})
@@ -2302,5 +2306,68 @@ func TestEditChecksOptionAndValue(t *testing.T) {
 	m = enter(typeText(m, "abc"))
 	if o := m.modal.(*editOverlay); o.phase != edPhaseValue || !strings.Contains(m.status, "port") {
 		t.Fatalf("Port abc: phase %d, status %q", o.phase, m.status)
+	}
+}
+
+// The tests below guard T14: the copied ssh command must run what the config
+// says, and must be safe to paste into a shell.
+
+// commandFor returns the copy command for host h, with the given scanned keys.
+func commandFor(t *testing.T, h config.Host, ids ...config.Identity) string {
+	t.Helper()
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{},
+		Hosts:      map[config.HostID]config.Host{h.ID: h},
+	}
+	for _, id := range ids {
+		snap.Identities[id.ID] = id
+	}
+	m := New(&fakeService{model: snap})
+	m = feed(m, refreshedMsg{model: snap})
+	got, _ := m.hostByID(h.ID)
+	return m.sshCommandFor(got)
+}
+
+// TestSSHCommandForIdentityByPath: two keys can have the same file name in
+// different directories. The command must use the path in the config.
+func TestSSHCommandForIdentityByPath(t *testing.T) {
+	h := config.Host{ID: "w", Name: "w", Hostname: "w.example",
+		Identities:    []config.IdentityID{"id_ed25519"},
+		IdentityFiles: []string{"~/work/id_ed25519"}}
+	got := commandFor(t, h, config.Identity{ID: "id_ed25519", Name: "id_ed25519",
+		Path: "/home/u/.ssh/id_ed25519", ExistsOnDisk: true})
+	if want := "ssh -i ~/work/id_ed25519 w.example"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestSSHCommandForQuotesDestination(t *testing.T) {
+	h := config.Host{ID: "q", Name: "q", Hostname: "h.example", User: "o'neil"}
+	if got, want := commandFor(t, h), `ssh 'o'\''neil@h.example'`; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestSSHCommandForExpandsHostToken(t *testing.T) {
+	h := config.Host{ID: "web", Name: "web prod", Hostname: "%h.corp.example"}
+	if got, want := commandFor(t, h), "ssh web.corp.example"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	h = config.Host{ID: "p", Name: "p", Hostname: "p%%x"}
+	if got, want := commandFor(t, h), "ssh p%x"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestSSHCommandForNoHostnameQuotes(t *testing.T) {
+	m := New(&fakeService{model: snapshot()}).WithConfigFlag("/home/u/My Configs/ssh")
+	m = feed(m, refreshedMsg{model: snapshot()})
+	if got, want := m.sshCommandFor(config.Host{ID: "bare", Name: "bare"}),
+		"ssh -F '/home/u/My Configs/ssh' bare"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got, want := m.sshCommandFor(config.Host{ID: "-x", Name: "-oProxyCommand=evil"}),
+		"ssh -F '/home/u/My Configs/ssh' -- -oProxyCommand=evil"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

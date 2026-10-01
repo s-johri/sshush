@@ -277,6 +277,7 @@ func hostFromAST(h *sshcfg.Host) (config.Host, bool) {
 		case strings.EqualFold(kv.Key, "IdentityFile"):
 			id := identityIDFromPath(val)
 			host.Identities = append(host.Identities, id)
+			host.IdentityFiles = append(host.IdentityFiles, strings.Trim(val, `"`))
 		default:
 			host.Options[kv.Key] = val
 		}

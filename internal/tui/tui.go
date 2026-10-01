@@ -437,12 +437,19 @@ func (m Model) WithConfigFlag(path string) Model {
 	return m
 }
 
-// sshArgs builds the argv (after "ssh") for connecting to alias.
-func (m Model) sshArgs(alias string) []string {
+// sshFlags are the options that every ssh command from sshush carries: -F
+// when a custom config is set.
+func (m Model) sshFlags() []string {
 	if m.cfgFlag != "" {
-		return []string{"-F", m.cfgFlag, alias}
+		return []string{"-F", m.cfgFlag}
 	}
-	return []string{alias}
+	return nil
+}
+
+// sshArgs builds the argv (after "ssh") for connecting to alias. "--" ends
+// the options, so an alias that starts with "-" is not read as one.
+func (m Model) sshArgs(alias string) []string {
+	return append(m.sshFlags(), "--", alias)
 }
 
 // WithUpdateCheck enables the async launch update-check. check returns the
@@ -793,30 +800,58 @@ func (m Model) beginRestore() (tea.Model, tea.Cmd) {
 // at connect time. Hosts with no HostName fall back to the alias form (with
 // -F when a custom config is set), since there is nothing to expand.
 func (m Model) sshCommandFor(h config.Host) string {
-	if h.Hostname == "" {
-		return "ssh " + strings.Join(m.sshArgs(firstAlias(h.Name)), " ")
-	}
+	alias := firstAlias(h.Name)
 	parts := []string{"ssh"}
+	if h.Hostname == "" {
+		for _, f := range m.sshFlags() {
+			parts = append(parts, shellQuote(f))
+		}
+		if strings.HasPrefix(alias, "-") {
+			parts = append(parts, "--") // or ssh reads the alias as an option
+		}
+		return strings.Join(append(parts, shellQuote(alias)), " ")
+	}
 	if h.Port != 0 {
 		parts = append(parts, "-p", fmt.Sprintf("%d", h.Port))
 	}
-	for _, id := range h.Identities {
-		for _, ident := range m.ids {
-			if ident.ID == id && ident.Path != "" {
-				parts = append(parts, "-i", shellQuote(ident.Path))
-				break
-			}
-		}
+	// The paths as written in the config: a key's file name alone can match
+	// a different key in another directory.
+	for _, p := range h.IdentityFiles {
+		parts = append(parts, "-i", shellQuote(p))
 	}
 	for _, k := range sortedOptionKeys(h.Options) {
 		parts = append(parts, "-o", k+"="+shellQuote(h.Options[k]))
 	}
+	dest := expandHostToken(h.Hostname, alias)
 	if h.User != "" {
-		parts = append(parts, h.User+"@"+h.Hostname)
-	} else {
-		parts = append(parts, h.Hostname)
+		dest = h.User + "@" + dest
 	}
-	return strings.Join(parts, " ")
+	if strings.HasPrefix(dest, "-") {
+		parts = append(parts, "--")
+	}
+	return strings.Join(append(parts, shellQuote(dest)), " ")
+}
+
+// expandHostToken expands the tokens that ssh_config(5) allows in HostName:
+// %h is the alias and %% is a literal %. Other tokens stay as they are.
+func expandHostToken(hostname, alias string) string {
+	var b strings.Builder
+	for i := 0; i < len(hostname); i++ {
+		if hostname[i] == '%' && i+1 < len(hostname) {
+			switch hostname[i+1] {
+			case 'h':
+				b.WriteString(alias)
+				i++
+				continue
+			case '%':
+				b.WriteByte('%')
+				i++
+				continue
+			}
+		}
+		b.WriteByte(hostname[i])
+	}
+	return b.String()
 }
 
 // shellQuote wraps s in single quotes if it contains characters the shell
@@ -828,7 +863,7 @@ func shellQuote(s string) string {
 	safe := true
 	for _, r := range s {
 		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' ||
-			strings.ContainsRune("-_./:@%=+,", r)) {
+			strings.ContainsRune("-_./:@%=+,~", r)) {
 			safe = false
 			break
 		}

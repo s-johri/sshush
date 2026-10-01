@@ -25,6 +25,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- The copied `ssh` command for a host now uses each `IdentityFile` path as
+  written in the config. Before, it looked up a key by file name, so a key in
+  another directory with the same name could be used instead.
+- The copied command expands `%h` and `%%` in `HostName`, as ssh does, and
+  shell-quotes `user@host`, the `-F` path and the alias.
+- Connect runs `ssh -- <alias>`, so an alias that starts with `-` is not read
+  as an ssh option.
 - `known_hosts.bak` is now written once per session, before the first removal.
   Before, each removal overwrote it, so after a second removal the first one
   could not be undone.

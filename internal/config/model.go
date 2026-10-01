@@ -49,6 +49,10 @@ type Host struct {
 	User       string
 	Port       int
 	Identities []IdentityID
+	// IdentityFiles are the IdentityFile values as written in the config, in
+	// order. Identities only has their file names, and two keys in different
+	// directories can have the same name.
+	IdentityFiles []string
 
 	// IsPattern is true when the block's patterns are wildcards (e.g. "Host *").
 	// These set defaults applied to many connections rather than a single host.
