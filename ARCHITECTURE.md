@@ -187,7 +187,7 @@ users get value before 1.0; the API/config surface only freezes at the RC.
 | — | soak period: bug-fix-only patch releases (v0.9.x) from real-world use | — |
 | 🏷 | **v0.9.3**: `.bak` survives reloads and re-arms on external edits; border contrast fix | — |
 | 🏷 | **v0.10.0**: migrate to the Charm v2 stack (no change to look or keys) | — |
-| — | pre-1.0 fixes from the 2026-09-28 review: see [the plan](docs/superpowers/plans/2026-09-28-pre-1.0-fixes.md) | medium |
+| — | pre-1.0 fixes from the 2026-09-28 review (the plan is kept locally) | medium |
 | 🏷 | **v1.0.0** — stable release (tag + announce) | — |
 
 ### Beyond v1.0 — planned features

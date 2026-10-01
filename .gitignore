@@ -55,8 +55,9 @@ testdata/local/
 .serena/
 CONTEXT.md
 
-# Docs working files (keep docs/superpowers/ plans/specs and demo assets tracked)
+# Docs working files: plans, specs and ADRs stay local (demo assets are tracked)
 docs/adr/
+docs/superpowers/
 
 # Intermediate social-card screenshot (docs/social-preview.png is tracked)
 docs/social/
