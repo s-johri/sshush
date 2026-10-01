@@ -107,7 +107,7 @@ func TestRoundTrip(t *testing.T) {
 	}
 
 	for _, lf := range r.files {
-		if got := lf.cfg.String(); got != string(lf.raw) {
+		if got := string(lf.render()); got != string(lf.raw) {
 			t.Errorf("round-trip mismatch for %s:\n--- got ---\n%q\n--- want ---\n%q",
 				lf.path, got, string(lf.raw))
 		}

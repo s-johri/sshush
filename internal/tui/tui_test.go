@@ -2100,3 +2100,49 @@ func TestHostsPaneMarksDuplicateAlias(t *testing.T) {
 		t.Errorf("Hosts pane does not mark the duplicate alias:\n%s", v)
 	}
 }
+
+// TestConfigErrorShown guards T10: when the SSH config does not load, the
+// TUI says so in the status line and at the top of the Hosts pane, and the
+// keys still show.
+func TestConfigErrorShown(t *testing.T) {
+	snap := snapshot()
+	snap.ConfigErr = "open /x/inc.conf: permission denied"
+	m := New(&fakeService{model: snap})
+	m = feed(m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = feed(m, refreshedMsg{model: snap})
+	if !strings.Contains(m.status, "permission denied") {
+		t.Errorf("status = %q, want the config error", m.status)
+	}
+	if len(m.ids) == 0 {
+		t.Error("keys not shown")
+	}
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
+	if v := view(m); !strings.Contains(v, "SSH config did not load") {
+		t.Errorf("Hosts pane does not show the config error:\n%s", v)
+	}
+}
+
+// TestLayoutFitsHeightWithConfigError: the config error line in the Hosts
+// pane must not push the view past the terminal height.
+func TestLayoutFitsHeightWithConfigError(t *testing.T) {
+	snap := &config.SshConfigModel{
+		Identities: map[config.IdentityID]config.Identity{},
+		Hosts:      map[config.HostID]config.Host{},
+		ConfigErr:  "open /x/inc.conf: permission denied",
+	}
+	for i := 0; i < 60; i++ {
+		id := config.HostID(fmt.Sprintf("h%02d", i))
+		snap.Hosts[id] = config.Host{ID: id, Name: string(id), Hostname: "x"}
+	}
+	for _, h := range []int{10, 18, 24} {
+		m := New(&fakeService{model: snap})
+		m = feed(m, tea.WindowSizeMsg{Width: 100, Height: h})
+		m = feed(m, refreshedMsg{model: snap})
+		m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
+		m = feed(m, key("G"))                          // scroll to the end
+		v := view(m)
+		if lines := strings.Count(v, "\n") + 1; lines > h {
+			t.Errorf("h=%d: view has %d lines (> height)", h, lines)
+		}
+	}
+}

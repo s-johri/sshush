@@ -201,7 +201,11 @@ sshush help         # show help
 | `d` | delete the host |
 
 Read-only `Match` blocks are shown for reference; edit/connect actions are
-declined on them.
+declined on them. Every `Match` criterion that OpenSSH accepts (`user`, `exec`,
+`canonical`, `final` and others) loads, and a save writes the block back
+unchanged. If the SSH config does not load (for example a file that cannot be
+read), keys and the agent still work, the Hosts pane says why, and config
+changes are off until the file loads.
 
 **Anywhere**
 

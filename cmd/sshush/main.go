@@ -311,6 +311,9 @@ func restore(yes bool) error {
 	if err != nil {
 		return err
 	}
+	if model.ConfigErr != "" {
+		fmt.Fprintf(os.Stderr, "sshush: warning: the SSH config did not load: %s\n", model.ConfigErr)
+	}
 	for _, w := range model.Warnings {
 		fmt.Fprintf(os.Stderr, "sshush: warning: %s\n", w)
 	}

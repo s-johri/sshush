@@ -25,6 +25,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- A config with a `Match` block that uses `user`, `exec`, `originalhost`,
+  `localuser`, `canonical`, `final`, `localnetwork`, `tagged`, `version` or
+  `!host` now loads. Before, sshush could not load it, `load-default` and
+  `restore` exited 1, and the Keys pane was empty. Such a block shows as
+  read-only, and a save writes it back byte for byte.
+- When the SSH config does not load (for example an `Include`d file that
+  cannot be read), keys and the agent still work, and `load-default` still
+  loads the default keys. The TUI shows why the config did not load, and
+  config changes are refused until it loads. `restore` still works.
 - For a host alias in more than one block, sshush now shows, edits and deletes
   the first block in the order OpenSSH reads the files (an `Include` counts at
   its line). This is the block that ssh uses. Before, sshush showed the last

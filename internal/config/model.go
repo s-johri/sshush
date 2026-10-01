@@ -80,6 +80,11 @@ type SshConfigModel struct {
 	// This can be used for debugging and for determining where a particular host or identity was defined.
 	SourceFiles []string
 
+	// ConfigErr is set when a config file did not load. The model then has
+	// only the hosts that did load, and config changes are refused. Keys and
+	// the agent still work.
+	ConfigErr string
+
 	// Warnings are problems found while loading that do not stop the load,
 	// for example a stale backup file that an Include glob matches.
 	Warnings []string

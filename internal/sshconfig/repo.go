@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -58,6 +59,9 @@ type loadedFile struct {
 	// hostLines are the line numbers of the Host and Match lines, one per
 	// non-implicit block in cfg.Hosts.
 	hostLines []int
+	// opaque maps each placeholder line to the original line that it stands
+	// for (see maskLines). Save writes the original back.
+	opaque map[string]string
 }
 
 // FileRepo is a ConfigRepo backed by an on-disk config file plus its Includes.
@@ -81,6 +85,10 @@ type FileRepo struct {
 	backedUp map[string]bool
 	// warnings collects non-fatal problems found by the current Load.
 	warnings []string
+	// loadErr is the first file that did not load in the current Load. While
+	// it is set, every change and Save is refused: the model is partial, and
+	// a write could drop what did not load. Restore still works.
+	loadErr error
 }
 
 // New returns a FileRepo for path. Empty path defaults to ~/.ssh/config.
@@ -108,6 +116,7 @@ func (r *FileRepo) Load() (*config.SshConfigModel, error) {
 	r.files = nil
 	r.dirty = map[string]bool{}
 	r.warnings = nil
+	r.loadErr = nil
 	visited := map[string]bool{}
 	if err := r.loadFile(main, nil, visited); err != nil {
 		return nil, err
@@ -126,6 +135,9 @@ func (r *FileRepo) Load() (*config.SshConfigModel, error) {
 		Identities: map[config.IdentityID]config.Identity{},
 		Hosts:      map[config.HostID]config.Host{},
 		Warnings:   r.warnings,
+	}
+	if r.loadErr != nil {
+		model.ConfigErr = r.loadErr.Error()
 	}
 	for _, lf := range r.files {
 		model.SourceFiles = append(model.SourceFiles, lf.path)
@@ -163,15 +175,27 @@ func (r *FileRepo) loadFile(path string, order []int, visited map[string]bool) e
 		if errors.Is(err, os.ErrNotExist) {
 			return nil // missing file (incl. main) is not fatal
 		}
-		return err
+		r.failLoad(err) // keep going: show what does load
+		return nil
 	}
 
-	cfg, err := sshcfg.DecodeBytes(raw)
+	masked, opaque := maskLines(raw)
+	cfg, err := sshcfg.DecodeBytes(masked)
+	var hostLines []int
 	if err != nil {
-		return err
+		// Record the file with no blocks, so that Restore can still find
+		// its backup. Its Includes are still followed.
+		r.failLoad(fmt.Errorf("%s: %w", path, err))
+		cfg, _ = sshcfg.DecodeBytes(nil)
+		opaque = nil
 	}
-	hostLines, includes := scanDirectives(raw)
-	r.files = append(r.files, &loadedFile{path: path, raw: raw, cfg: cfg, order: order, hostLines: hostLines})
+	lines, includes := scanDirectives(raw)
+	if err == nil {
+		hostLines = lines
+	}
+	r.files = append(r.files, &loadedFile{
+		path: path, raw: raw, cfg: cfg, order: order, hostLines: hostLines, opaque: opaque,
+	})
 
 	for _, inc := range includes {
 		sub := append(append([]int(nil), order...), inc.line)
@@ -271,6 +295,22 @@ func identityIDFromPath(p string) config.IdentityID {
 	return config.IdentityID(base)
 }
 
+// failLoad records the first load error of the current Load.
+func (r *FileRepo) failLoad(err error) {
+	if r.loadErr == nil {
+		r.loadErr = err
+	}
+}
+
+// writable returns an error when the last Load failed, so no change can be
+// made to (or saved from) a partial model.
+func (r *FileRepo) writable() error {
+	if r.loadErr != nil {
+		return fmt.Errorf("the SSH config did not load, so it cannot be changed: %w", r.loadErr)
+	}
+	return nil
+}
+
 // includeLine is one Include directive: its line number and its arguments.
 type includeLine struct {
 	line int
@@ -283,27 +323,150 @@ type includeLine struct {
 // done here from the source lines. "Key=value" and indented lines count.
 func scanDirectives(raw []byte) (hostLines []int, includes []includeLine) {
 	for n, line := range strings.Split(string(raw), "\n") {
-		t := strings.TrimSpace(line)
-		if t == "" || strings.HasPrefix(t, "#") {
-			continue
-		}
-		// The keyword ends at a space, a tab or "=" (ssh_config(5)).
-		key, rest := t, ""
-		if i := strings.IndexAny(t, " \t="); i >= 0 {
-			key, rest = t[:i], t[i:]
-		}
-		switch strings.ToLower(key) {
+		key, args := splitDirective(line)
+		switch key {
 		case "host", "match":
 			hostLines = append(hostLines, n)
 		case "include":
-			rest = strings.TrimLeft(rest, " \t")
-			args := strings.Fields(strings.TrimPrefix(rest, "="))
 			if len(args) > 0 {
 				includes = append(includes, includeLine{line: n, args: args})
 			}
 		}
 	}
 	return hostLines, includes
+}
+
+// splitDirective returns the lower-case keyword of a config line and its
+// arguments, up to a "#" comment. The keyword ends at a space, a tab or "="
+// (ssh_config(5)). A blank or comment line gives "".
+func splitDirective(line string) (key string, args []string) {
+	t := strings.TrimSpace(line)
+	if t == "" || strings.HasPrefix(t, "#") {
+		return "", nil
+	}
+	rest := ""
+	if i := strings.IndexAny(t, " \t="); i >= 0 {
+		t, rest = t[:i], t[i:]
+	}
+	rest = strings.TrimPrefix(strings.TrimLeft(rest, " \t"), "=")
+	for _, f := range strings.Fields(rest) {
+		if strings.HasPrefix(f, "#") {
+			break
+		}
+		args = append(args, f)
+	}
+	return strings.ToLower(t), args
+}
+
+// matchCriteriaWords are the Match criteria in ssh_config(5).
+var matchCriteriaWords = map[string]bool{
+	"all": true, "canonical": true, "final": true, "exec": true, "localnetwork": true,
+	"host": true, "originalhost": true, "tagged": true, "command": true, "user": true,
+	"localuser": true, "version": true, "sessiontype": true,
+}
+
+// parserSupportsMatch reports whether the ssh_config parser reads a Match
+// line with these arguments correctly: only "all" alone, or "host" and a
+// pattern list. It rejects other criteria, and it misreads "host x user bob"
+// (user and bob become host patterns).
+func parserSupportsMatch(args []string) bool {
+	if len(args) == 1 && strings.EqualFold(args[0], "all") {
+		return true
+	}
+	if len(args) < 2 || !strings.EqualFold(args[0], "host") {
+		return false
+	}
+	for _, a := range args[1:] {
+		if matchCriteriaWords[strings.ToLower(strings.TrimPrefix(a, "!"))] {
+			return false
+		}
+	}
+	return true
+}
+
+// opaqueMarker matches the placeholder that maskLines writes.
+var opaqueMarker = regexp.MustCompile(`__sshush_opaque_\d+__`)
+
+// maskLines replaces the lines that the parser must not see with
+// placeholders, so the file still loads:
+//
+//   - A Match line that the parser cannot read becomes
+//     "Match host __sshush_opaque_N__". The directives in the block stay as
+//     they are, and the block stays a block of its own, so a new directive
+//     for the block before it does not go into it.
+//   - An Include line becomes the comment "# __sshush_opaque_N__". The
+//     parser would read the included files itself (and fail on them); sshush
+//     follows Includes with its own code (see loadFile).
+//
+// It returns the masked bytes and a map from each placeholder to the
+// original line.
+func maskLines(raw []byte) ([]byte, map[string]string) {
+	lines := strings.Split(string(raw), "\n")
+	var opaque map[string]string
+	for i, line := range lines {
+		key, args := splitDirective(line)
+		var masked string
+		switch {
+		case key == "match" && !parserSupportsMatch(args):
+			masked = "Match host "
+		case key == "include":
+			masked = "# "
+		default:
+			continue
+		}
+		if opaque == nil {
+			opaque = map[string]string{}
+		}
+		marker := fmt.Sprintf("__sshush_opaque_%d__", len(opaque))
+		opaque[marker] = line
+		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		lines[i] = indent + masked + marker
+		if strings.HasSuffix(line, "\r") {
+			lines[i] += "\r"
+		}
+	}
+	if opaque == nil {
+		return raw, nil
+	}
+	return []byte(strings.Join(lines, "\n")), opaque
+}
+
+// unmaskLines writes the original lines back in place of the placeholders,
+// byte for byte.
+func unmaskLines(data []byte, opaque map[string]string) []byte {
+	if len(opaque) == 0 {
+		return data
+	}
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		if m := opaqueMarker.FindString(line); m != "" {
+			if orig, ok := opaque[m]; ok {
+				lines[i] = orig
+			}
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+// render returns the bytes that Save writes for lf: the AST, with the
+// original lines back in place of the placeholders.
+func (lf *loadedFile) render() []byte {
+	return unmaskLines([]byte(lf.cfg.String()), lf.opaque)
+}
+
+// opaqueCriteria returns the display criteria ("Match user bob") of a
+// placeholder Match block, or "" when crit is not a placeholder.
+func (lf *loadedFile) opaqueCriteria(crit string) string {
+	m := opaqueMarker.FindString(crit)
+	if m == "" {
+		return ""
+	}
+	orig, ok := lf.opaque[m]
+	if !ok {
+		return ""
+	}
+	_, args := splitDirective(orig)
+	return "Match " + strings.Join(args, " ")
 }
 
 // block is one host block with its place in OpenSSH's read order.
@@ -339,6 +502,9 @@ func (r *FileRepo) blocks() []block {
 			mh, ok := hostFromAST(h)
 			if !ok {
 				continue // wildcard-only / empty block: nothing to surface
+			}
+			if crit := lf.opaqueCriteria(mh.MatchCriteria); crit != "" {
+				mh.ID, mh.Name, mh.MatchCriteria = config.HostID(crit), crit, crit
 			}
 			key := append(append([]int(nil), lf.order...), lines[i])
 			out = append(out, block{lf: lf, host: h, model: mh, key: key})
@@ -405,6 +571,9 @@ func (r *FileRepo) resolvePath() (string, error) {
 // (preserving its indentation and trailing comment) or appending a new one that
 // mimics the block's indentation. The change is in-memory only until Save.
 func (r *FileRepo) SetHostField(h config.HostID, key, val string) error {
+	if err := r.writable(); err != nil {
+		return err
+	}
 	lf, host := r.findHost(h)
 	if host == nil {
 		return fmt.Errorf("unknown host %q", h)
@@ -433,6 +602,9 @@ func (r *FileRepo) SetHostField(h config.HostID, key, val string) error {
 // DeleteHostField removes the first directive matching key from host h. It is a
 // no-op (no error) if the host has no such directive. In-memory until Save.
 func (r *FileRepo) DeleteHostField(h config.HostID, key string) error {
+	if err := r.writable(); err != nil {
+		return err
+	}
 	lf, host := r.findHost(h)
 	if host == nil {
 		return fmt.Errorf("unknown host %q", h)
@@ -453,6 +625,9 @@ func (r *FileRepo) DeleteHostField(h config.HostID, key string) error {
 // AddHostIdentity appends an IdentityFile directive to host h (IdentityFile may
 // appear multiple times). In-memory until Save.
 func (r *FileRepo) AddHostIdentity(h config.HostID, path string) error {
+	if err := r.writable(); err != nil {
+		return err
+	}
 	lf, host := r.findHost(h)
 	if host == nil {
 		return fmt.Errorf("unknown host %q", h)
@@ -477,6 +652,9 @@ func (r *FileRepo) AddHostIdentity(h config.HostID, path string) error {
 // RemoveHostIdentity removes the IdentityFile directive whose path resolves to
 // identity id. No-op if not found.
 func (r *FileRepo) RemoveHostIdentity(h config.HostID, id config.IdentityID) error {
+	if err := r.writable(); err != nil {
+		return err
+	}
 	lf, host := r.findHost(h)
 	if host == nil {
 		return fmt.Errorf("unknown host %q", h)
@@ -499,6 +677,9 @@ func (r *FileRepo) RemoveHostIdentity(h config.HostID, id config.IdentityID) err
 // the host's set fields (HostName/User/Port) and any Options, indented four
 // spaces, followed by a blank line. In-memory until Save.
 func (r *FileRepo) AddHost(h config.Host) error {
+	if err := r.writable(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(h.Name) == "" {
 		return errors.New("host name is required")
 	}
@@ -541,6 +722,9 @@ func (r *FileRepo) AddHost(h config.Host) error {
 
 // DeleteHost removes a host block from whichever file defines it.
 func (r *FileRepo) DeleteHost(h config.HostID) error {
+	if err := r.writable(); err != nil {
+		return err
+	}
 	lf, host := r.findHost(h)
 	if host == nil {
 		return fmt.Errorf("unknown host %q", h)
@@ -595,6 +779,9 @@ func newKV(key, val string) *sshcfg.KV {
 // an unexpected result is always recoverable. Files are written with their
 // existing permissions (default 0600).
 func (r *FileRepo) Save() error {
+	if err := r.writable(); err != nil {
+		return err
+	}
 	for _, lf := range r.files {
 		if !r.dirty[lf.path] {
 			continue
@@ -609,7 +796,7 @@ func (r *FileRepo) Save() error {
 			}
 			r.backedUp[lf.path] = true
 		}
-		data := []byte(lf.cfg.String())
+		data := lf.render()
 		if err := os.WriteFile(lf.path, data, fileMode(lf.path)); err != nil {
 			return fmt.Errorf("write %s: %w", lf.path, err)
 		}

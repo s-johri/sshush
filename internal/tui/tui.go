@@ -262,6 +262,9 @@ type Model struct {
 	ids     []config.Identity  // sorted for stable display
 	hosts   []config.Host      // sorted for stable display
 	srcFile string
+	// configErr is set when the SSH config did not load (see
+	// SshConfigModel.ConfigErr). The Hosts pane shows it.
+	configErr string
 
 	loading     bool
 	err         error
@@ -566,7 +569,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = nil
 		m.applySnapshot(msg.model)
-		if msg.model != nil && len(msg.model.Warnings) > 0 {
+		switch {
+		case msg.model != nil && msg.model.ConfigErr != "":
+			m.status = "SSH config did not load (keys still work): " + msg.model.ConfigErr
+		case msg.model != nil && len(msg.model.Warnings) > 0:
 			m.status = "warning: " + msg.model.Warnings[0]
 		}
 		return m.maybeAutoLoad()
@@ -1209,9 +1215,11 @@ func (m Model) toggleSelectedKey() (tea.Model, tea.Cmd) {
 func (m *Model) applySnapshot(snap *config.SshConfigModel) {
 	m.ids = m.ids[:0]
 	m.hosts = m.hosts[:0]
+	m.configErr = ""
 	if snap == nil {
 		return
 	}
+	m.configErr = snap.ConfigErr
 	for _, id := range snap.Identities {
 		m.ids = append(m.ids, id)
 	}
@@ -1274,6 +1282,9 @@ func (m Model) listCapacity() int {
 	}
 	if m.srcFile != "" {
 		chrome++
+	}
+	if m.configErr != "" && m.active == paneHosts {
+		chrome++ // the config error line at the top of the Hosts pane
 	}
 	if c := m.height - chrome; c > 1 {
 		return c
@@ -1730,6 +1741,16 @@ func (m Model) hostsByKey() map[config.IdentityID][]string {
 }
 
 func (m Model) hostsLines(w int) []string {
+	lines := m.hostsRows(w)
+	if m.configErr != "" {
+		note := fit(errStyle.Render("SSH config did not load; changes are off: "+m.configErr), w)
+		lines = append([]string{note}, lines...)
+	}
+	return lines
+}
+
+// hostsRows renders the Hosts pane rows (see hostsLines).
+func (m Model) hostsRows(w int) []string {
 	vis := m.visibleHosts()
 	if len(m.hosts) == 0 {
 		return []string{dimStyle.Render("no hosts found")}
