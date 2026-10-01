@@ -33,6 +33,42 @@ jobs:
       - name: Test (e2e)
         run: go test -tags e2e ./...
 
+  # Known vulnerabilities, with the Go version that releases use (see
+  # release.yml). Only findings that the code calls fail the job. The scanner
+  # version is pinned, so a new release of it cannot fail CI by itself.
+  #
+  # ALLOW lists IDs that have no fix yet, one per line, each with a reason:
+  # - GO-2026-5932: golang.org/x/crypto/openpgp, imported by go-selfupdate
+  #   for its PGP validator. sshush does not use that validator (it checks
+  #   checksums.txt), but the package init runs. There is no fixed version.
+  #   Remove it with M46 (trim or replace go-selfupdate).
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: govulncheck
+        env:
+          ALLOW: |
+            GO-2026-5932
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... > vuln.json
+          jq -r 'select(.finding != null and .finding.trace[0].function != null) | .finding.osv' vuln.json \
+            | sort -u > called.txt
+          grep -vxF -f <(printf '%s' "$ALLOW" | sed '/^$/d') called.txt > blocked.txt || true
+          if [ -s blocked.txt ]; then
+            echo "govulncheck: the code calls these vulnerabilities:"
+            cat blocked.txt
+            go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./... || true
+            exit 1
+          fi
+          echo "govulncheck: no called vulnerabilities outside ALLOW ($(wc -l < called.txt) allowed)"
+
   # YAML formatting is checked once, on Linux only. The settings live in
   # .yamlfmt at the repo root. The version is pinned so a new yamlfmt release
   # cannot fail CI on an unrelated change.

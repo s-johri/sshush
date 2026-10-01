@@ -16,9 +16,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Build with the latest stable Go, not the minimum version in go.mod, so
+      # the binaries get every standard library security fix.
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: stable
+          check-latest: true
+
+      # Do not publish a release that fails its tests.
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Test (e2e)
+        run: go test -tags e2e ./...
 
       - uses: goreleaser/goreleaser-action@v6
         with:

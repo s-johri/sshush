@@ -532,6 +532,9 @@ e2e, plus the existing `gofmt`/`go vet` gates.
 write + `.bak`) → delete (asserting files gone). Run locally with
 `go test -tags e2e ./internal/service/`. CI is now a `{ubuntu, macOS}` matrix running
 `gofmt`/`vet`/`go test ./...` then `go test -tags e2e ./...`.
+Since pre-1.0 fix T5, CI also runs `govulncheck` (allow list in `ci.yml`), and
+`release.yml` builds with the latest stable Go and runs the tests before
+goreleaser.
 
 ### Milestone 30 detail
 

@@ -35,6 +35,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   of the release before it replaces the binary. It refuses a release with a
   wrong checksum or with no `checksums.txt`. Before, it did not check the
   download. The update notice in the TUI uses the same check.
+- Release binaries are built with the latest stable Go, not the minimum version
+  in `go.mod`, so they get every standard library security fix. The release job
+  runs vet and the tests before it publishes.
+- CI runs `govulncheck`. A vulnerability that the code calls fails CI, unless
+  it has no fix yet and is listed with a reason in `ci.yml`.
 
 ### Changed
 - The Go packages moved from `pkg/` to `internal/`. sshush has no public Go
