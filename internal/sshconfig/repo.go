@@ -43,6 +43,7 @@ type ConfigRepo interface {
 	DeleteHost(config.HostID) error
 	Save() error
 	Backups() []config.Backup
+	RewriteCheck(h config.HostID) config.RewriteCheck
 	Restore() ([]string, error)
 }
 
@@ -62,6 +63,9 @@ type loadedFile struct {
 	// opaque maps each placeholder line to the original line that it stands
 	// for (see maskLines). Save writes the original back.
 	opaque map[string]string
+	// check is what the first save of this file changes besides the edit,
+	// from comparing raw with render() at load (see RewriteCheck).
+	check config.RewriteCheck
 }
 
 // FileRepo is a ConfigRepo backed by an on-disk config file plus its Includes.
@@ -193,9 +197,12 @@ func (r *FileRepo) loadFile(path string, order []int, visited map[string]bool) e
 	if err == nil {
 		hostLines = lines
 	}
-	r.files = append(r.files, &loadedFile{
-		path: path, raw: raw, cfg: cfg, order: order, hostLines: hostLines, opaque: opaque,
-	})
+	lf := &loadedFile{path: path, raw: raw, cfg: cfg, order: order, hostLines: hostLines, opaque: opaque}
+	lf.check = config.RewriteCheck{File: path}
+	if err == nil {
+		lf.check = checkRewrite(path, raw, lf.render())
+	}
+	r.files = append(r.files, lf)
 
 	for _, inc := range includes {
 		sub := append(append([]int(nil), order...), inc.line)
@@ -446,6 +453,120 @@ func unmaskLines(data []byte, opaque map[string]string) []byte {
 		}
 	}
 	return []byte(strings.Join(lines, "\n"))
+}
+
+// checkRewrite compares a file's bytes with what a save writes for it.
+func checkRewrite(path string, raw, out []byte) config.RewriteCheck {
+	c := config.RewriteCheck{File: path}
+	if bytes.Equal(raw, out) {
+		return c
+	}
+	c.Reformat = firstLineChange(string(raw), string(out))
+	before, after := directiveList(string(raw)), directiveList(string(out))
+	for i := 0; i < len(before) || i < len(after); i++ {
+		var b, a []string
+		if i < len(before) {
+			b = before[i]
+		}
+		if i < len(after) {
+			a = after[i]
+		}
+		if !slices.Equal(b, a) {
+			c.Unsafe = fmt.Sprintf("%q would be read by ssh as %q", strings.Join(b, " "), strings.Join(a, " "))
+			break
+		}
+	}
+	return c
+}
+
+// firstLineChange describes the first line that differs between a and b.
+func firstLineChange(a, b string) string {
+	al, bl := strings.Split(a, "\n"), strings.Split(b, "\n")
+	for i := 0; i < len(al) || i < len(bl); i++ {
+		var x, y string
+		if i < len(al) {
+			x = al[i]
+		}
+		if i < len(bl) {
+			y = bl[i]
+		}
+		if x != y {
+			return fmt.Sprintf("line %d: %q becomes %q", i+1, x, y)
+		}
+	}
+	return "the line endings change"
+}
+
+// directiveList returns the directives of a config text as OpenSSH reads
+// them (see directiveTokens), without blank and comment lines.
+func directiveList(text string) [][]string {
+	var out [][]string
+	for _, line := range strings.Split(text, "\n") {
+		if d := directiveTokens(line); d != nil {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// directiveTokens splits one config line the way OpenSSH reads it: the
+// keyword in lower case (it ends at a space, a tab or "="), then the
+// arguments. Double quotes group an argument and are removed. An argument
+// that starts with "#" outside quotes starts a comment, so "User u#x" is
+// "u#x" but "User u #x" is "u". A blank or comment line gives nil.
+func directiveTokens(line string) []string {
+	t := strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+	if t == "" || strings.HasPrefix(t, "#") {
+		return nil
+	}
+	key, rest := t, ""
+	if i := strings.IndexAny(t, " \t="); i >= 0 {
+		key, rest = t[:i], t[i:]
+	}
+	rest = strings.TrimLeft(rest, " \t")
+	rest = strings.TrimLeft(strings.TrimPrefix(rest, "="), " \t")
+	out := []string{strings.ToLower(key)}
+	var cur strings.Builder
+	inQuote, inToken := false, false
+	for _, r := range rest {
+		switch {
+		case r == '"':
+			inQuote = !inQuote
+			inToken = true
+		case !inQuote && (r == ' ' || r == '\t'):
+			if inToken {
+				out = append(out, cur.String())
+				cur.Reset()
+				inToken = false
+			}
+		case !inQuote && !inToken && r == '#':
+			return out
+		default:
+			cur.WriteRune(r)
+			inToken = true
+		}
+	}
+	if inToken {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+// RewriteCheck reports what the first save of the file that holds host h
+// changes besides the edit. An empty h means the main config file (where
+// AddHost writes). See config.RewriteCheck.
+func (r *FileRepo) RewriteCheck(h config.HostID) config.RewriteCheck {
+	if h == "" {
+		if len(r.files) > 0 {
+			return r.files[0].check
+		}
+		return config.RewriteCheck{}
+	}
+	lf, _ := r.findHost(h)
+	if lf == nil {
+		return config.RewriteCheck{}
+	}
+	return lf.check
 }
 
 // render returns the bytes that Save writes for lf: the AST, with the
@@ -786,6 +907,9 @@ func (r *FileRepo) Save() error {
 		if !r.dirty[lf.path] {
 			continue
 		}
+		if lf.check.Unsafe != "" {
+			return fmt.Errorf("not saved: writing %s would change a value: %s", lf.path, lf.check.Unsafe)
+		}
 		if !r.backupOnDisk(lf.path) {
 			bak := r.backupPath(lf.path)
 			if err := os.MkdirAll(filepath.Dir(bak), 0o700); err != nil {
@@ -802,6 +926,7 @@ func (r *FileRepo) Save() error {
 		}
 		lf.raw = data // keep last-known bytes current so reloads can spot external edits
 		r.dirty[lf.path] = false
+		lf.check = config.RewriteCheck{File: lf.path} // the file is now in sshush's format
 	}
 	return nil
 }

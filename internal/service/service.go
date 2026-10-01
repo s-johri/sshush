@@ -42,6 +42,7 @@ type Service interface {
 	RemoveKnownHost(line int) error
 	CanRestore() bool
 	Backups() []config.Backup
+	RewriteCheck(h config.HostID) config.RewriteCheck
 	RestoreBackup() ([]string, error)
 }
 
@@ -276,6 +277,15 @@ func (a *App) Backups() []config.Backup {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.Config.Backups()
+}
+
+// RewriteCheck reports what the first save of the file that holds host h
+// changes besides the edit; an empty h means the main config file. The TUI
+// shows it on the confirm step.
+func (a *App) RewriteCheck(h config.HostID) config.RewriteCheck {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.Config.RewriteCheck(h)
 }
 
 // RestoreBackup reverts the config file(s) to their backup snapshots, then

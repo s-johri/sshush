@@ -67,6 +67,11 @@ func (o *pickerOverlay) View(m *Model) string {
 		}
 	}
 	b.WriteString("\n")
+	// Attach and detach write at once, with no confirm step, so the note
+	// about the save goes here.
+	if note := m.rewriteNote(o.host); note != "" {
+		b.WriteString(note + "\n")
+	}
 	b.WriteString(dimStyle.Render("  ↑/↓ move · enter attach/detach · esc close"))
 	b.WriteString("\n")
 	return b.String()

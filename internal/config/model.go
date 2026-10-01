@@ -103,3 +103,19 @@ type Backup struct {
 	// it overwrites it.
 	PreRestore string
 }
+
+// RewriteCheck tells what the first save of a config file changes besides the
+// edit itself. sshush writes the whole file from its parsed form, so lines
+// the user did not edit can change their formatting.
+type RewriteCheck struct {
+	// File is the config file that the save writes.
+	File string
+	// Reformat describes the first line whose formatting changes (tabs,
+	// spacing, keyword case, line endings). ssh reads the same values. Empty
+	// when the save keeps every byte that it does not edit.
+	Reformat string
+	// Unsafe describes a value that the save would change (for example
+	// "User u#x" written back as "User u #x", which ssh reads as "u"). When
+	// it is set, the save is refused.
+	Unsafe string
+}

@@ -25,6 +25,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- Before the first save of a config file, the confirm step says when the save
+  also changes the formatting of other lines (tabs, runs of spaces,
+  `Key=value`, keyword case, CRLF). ssh reads the same values. The attach and
+  detach screen shows the same note.
+- sshush refuses a save that would change a value that you did not edit. For
+  example, `User u#x` would be written back as `User u #x`, which ssh reads as
+  `u`. The README no longer says that formatting is always kept.
 - A config with a `Match` block that uses `user`, `exec`, `originalhost`,
   `localuser`, `canonical`, `final`, `localnetwork`, `tagged`, `version` or
   `!host` now loads. Before, sshush could not load it, `load-default` and

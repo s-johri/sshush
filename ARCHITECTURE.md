@@ -121,6 +121,7 @@ TUI holds a snapshot. Mutations dispatched as `tea.Cmd` (async goroutine) → ca
 - **Never auto-edit shell rc files**: `sshush shell-init` prints a snippet, user pastes.
 - **Degrade, never crash**: missing `$SSH_AUTH_SOCK`, unreadable key, malformed config, no settings/watcher → status message, keep running.
 - **Round-trip test** is mandatory: parse→write of an unmodified file must produce byte-identical output (modulo intended edits).
+- **Rewrite check** (pre-1.0 fix T11): the library does not keep every byte (tabs, runs of spaces, `Key=value`, keyword case, CRLF). At load, each file is compared with what a save writes. A formatting-only change is shown on the confirm step; a change that ssh reads as a different value (`User u#x` → `User u #x`) makes `Save` refuse the file.
 - **Self-induced reloads are muted**: hot reload ignores fs events caused by sshush's own writes (a short window after each mutation) so they don't spuriously re-notify.
 
 ### Fragile spots (pinned + test-guarded)

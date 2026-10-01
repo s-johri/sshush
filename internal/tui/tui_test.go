@@ -36,6 +36,7 @@ type fakeService struct {
 	khRemoved    []int
 	backups      []string
 	backupTime   time.Time
+	rewrite      config.RewriteCheck
 	restoreCalls int
 	restoreErr   error
 }
@@ -94,7 +95,8 @@ func (f *fakeService) RemoveKnownHost(line int) error {
 	f.khEntries = kept
 	return nil
 }
-func (f *fakeService) CanRestore() bool { return len(f.backups) > 0 }
+func (f *fakeService) CanRestore() bool                               { return len(f.backups) > 0 }
+func (f *fakeService) RewriteCheck(config.HostID) config.RewriteCheck { return f.rewrite }
 func (f *fakeService) Backups() []config.Backup {
 	var out []config.Backup
 	for _, p := range f.backups {
@@ -2144,5 +2146,60 @@ func TestLayoutFitsHeightWithConfigError(t *testing.T) {
 		if lines := strings.Count(v, "\n") + 1; lines > h {
 			t.Errorf("h=%d: view has %d lines (> height)", h, lines)
 		}
+	}
+}
+
+// openEditConfirm opens the edit overlay on the first host and goes to its
+// confirm step.
+func openEditConfirm(t *testing.T, svc *fakeService) Model {
+	t.Helper()
+	m := New(svc)
+	m = feed(m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab}) // Hosts pane
+	m = feed(m, key("e"))
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if o, ok := m.modal.(*editOverlay); !ok || o.phase != edPhaseConfirm {
+		t.Fatalf("not on the edit confirm step: %T", m.modal)
+	}
+	return m
+}
+
+// TestConfirmShowsReformatNote guards T11: the confirm step says when the
+// save also changes the formatting of lines the user did not edit.
+func TestConfirmShowsReformatNote(t *testing.T) {
+	svc := &fakeService{model: snapshot(), rewrite: config.RewriteCheck{
+		File: "/home/u/.ssh/config", Reformat: `line 2: "\tUser u" becomes " User u"`,
+	}}
+	m := openEditConfirm(t, svc)
+	v := view(m)
+	if !strings.Contains(v, "formatting") || !strings.Contains(v, "line 2") {
+		t.Errorf("edit confirm does not show the reformat note:\n%s", v)
+	}
+
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = feed(m, key("d")) // delete host confirm
+	if v := view(m); !strings.Contains(v, "formatting") {
+		t.Errorf("delete confirm does not show the reformat note:\n%s", v)
+	}
+}
+
+// TestConfirmShowsUnsafeNote: when the save would change a value, the
+// confirm step says that it will be refused.
+func TestConfirmShowsUnsafeNote(t *testing.T) {
+	svc := &fakeService{model: snapshot(), rewrite: config.RewriteCheck{
+		File: "/home/u/.ssh/config", Unsafe: `"user u#x" would be read by ssh as "user u"`,
+	}}
+	m := openEditConfirm(t, svc)
+	if v := view(m); !strings.Contains(v, "not be saved") || !strings.Contains(v, "u#x") {
+		t.Errorf("edit confirm does not show the unsafe note:\n%s", v)
+	}
+}
+
+// TestConfirmNoNoteForCleanFile: no note when the save keeps every byte.
+func TestConfirmNoNoteForCleanFile(t *testing.T) {
+	m := openEditConfirm(t, &fakeService{model: snapshot()})
+	if v := view(m); strings.Contains(v, "formatting") || strings.Contains(v, "not be saved") {
+		t.Errorf("note shown for a clean file:\n%s", v)
 	}
 }

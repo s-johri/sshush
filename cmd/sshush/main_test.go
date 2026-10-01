@@ -41,6 +41,9 @@ func (s *stubService) KnownHosts() ([]knownhosts.Entry, error)  { return nil, ni
 func (s *stubService) RemoveKnownHost(int) error                { return nil }
 func (s *stubService) CanRestore() bool                         { return len(s.backups) > 0 }
 func (s *stubService) Backups() []config.Backup                 { return s.backups }
+func (s *stubService) RewriteCheck(config.HostID) config.RewriteCheck {
+	return config.RewriteCheck{}
+}
 func (s *stubService) RestoreBackup() ([]string, error) {
 	s.restored++
 	var out []string

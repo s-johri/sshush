@@ -1519,6 +1519,23 @@ func (m Model) box(content string) string {
 	return s.Render(strings.TrimRight(content, "\n"))
 }
 
+// rewriteNote is the confirm-step note about what a save of the file that
+// holds host h changes besides the edit (see config.RewriteCheck). It is
+// empty, or lines that end in a newline.
+func (m *Model) rewriteNote(h config.HostID) string {
+	c := m.svc.RewriteCheck(h)
+	w := m.width - 8 // inside the overlay card
+	switch {
+	case c.Unsafe != "":
+		return fit(errStyle.Render("  This will not be saved: it would change a value in "+c.File+"."), w) + "\n" +
+			fit(errStyle.Render("  "+c.Unsafe), w) + "\n"
+	case c.Reformat != "":
+		return fit(dimStyle.Render("  The save also changes the formatting of other lines in "+c.File+";"), w) + "\n" +
+			fit(dimStyle.Render("  ssh reads the same values. First change: "+c.Reformat), w) + "\n"
+	}
+	return ""
+}
+
 // fit truncates a (possibly ANSI-styled) string to width w with an ellipsis.
 // w<=0 means width is unknown — leave it untouched.
 func fit(s string, w int) string {

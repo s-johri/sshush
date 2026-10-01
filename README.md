@@ -49,8 +49,12 @@ and edit your config safely without leaving the terminal.
   name/hostname/user).
 - **Edit config in place** — change `HostName`/`User`/`Port`, add/edit/delete any
   directive (e.g. `ForwardAgent yes`), add or delete whole hosts (guided wizard),
-  and attach/detach keys to a host (`IdentityFile`). Formatting and comments are
-  preserved; a backup is written first.
+  and attach/detach keys to a host (`IdentityFile`). Comments, the order of
+  lines and unknown options are kept, and a backup is written first. sshush
+  writes the whole file, so the first save can also change the formatting of
+  lines you did not edit (tabs, runs of spaces, `Key=value`, keyword case, CRLF).
+  The confirm step says so before it writes. If a save would change a value
+  (for example `User u#x`, which would become `User u #x`), sshush refuses it.
 - **Security checks** — audit and fix loose `~/.ssh`/key permissions (`P`), and
   browse or remove `known_hosts` entries (`K`).
 - **Restore from backup** — `R` (or `sshush restore`) reverts the config to the

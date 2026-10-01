@@ -75,7 +75,8 @@ func (f *fakeConfig) DeleteHost(h config.HostID) error {
 	f.deletedHosts = append(f.deletedHosts, h)
 	return nil
 }
-func (f *fakeConfig) Save() error { f.saved++; return nil }
+func (f *fakeConfig) Save() error                                    { f.saved++; return nil }
+func (f *fakeConfig) RewriteCheck(config.HostID) config.RewriteCheck { return config.RewriteCheck{} }
 func (f *fakeConfig) Backups() []config.Backup {
 	var out []config.Backup
 	for _, p := range f.backups {
