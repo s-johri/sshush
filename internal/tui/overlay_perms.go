@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/s-johri/sshush/pkg/perms"
+	"github.com/s-johri/sshush/internal/perms"
 )
 
 // permsOverlay lists permission issues found by the audit and gates the chmod

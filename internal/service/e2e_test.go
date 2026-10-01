@@ -3,7 +3,7 @@
 // Package service e2e coverage: exercises the real wiring (disk scanner,
 // config repo, ssh-agent client) against a throwaway ssh-agent, key, and config.
 // Behind the `e2e` build tag so it only runs where ssh-agent/ssh-add/ssh-keygen
-// exist (CI and opt-in local runs: `go test -tags e2e ./pkg/service/`).
+// exist (CI and opt-in local runs: `go test -tags e2e ./internal/service/`).
 package service_test
 
 import (
@@ -13,11 +13,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-johri/sshush/pkg/agent"
-	"github.com/s-johri/sshush/pkg/config"
-	"github.com/s-johri/sshush/pkg/keys"
-	"github.com/s-johri/sshush/pkg/service"
-	"github.com/s-johri/sshush/pkg/sshconfig"
+	"github.com/s-johri/sshush/internal/agent"
+	"github.com/s-johri/sshush/internal/config"
+	"github.com/s-johri/sshush/internal/keys"
+	"github.com/s-johri/sshush/internal/service"
+	"github.com/s-johri/sshush/internal/sshconfig"
 )
 
 // startAgent launches a private ssh-agent and returns its socket. The agent is

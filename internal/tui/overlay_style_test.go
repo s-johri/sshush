@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-johri/sshush/pkg/knownhosts"
-	"github.com/s-johri/sshush/pkg/perms"
+	"github.com/s-johri/sshush/internal/knownhosts"
+	"github.com/s-johri/sshush/internal/perms"
 )
 
 // assertNoBareText fails if any non-blank line of v contains a run of 4+

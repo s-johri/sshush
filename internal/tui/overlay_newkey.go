@@ -7,8 +7,8 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	"github.com/s-johri/sshush/pkg/config"
-	"github.com/s-johri/sshush/pkg/keys"
+	"github.com/s-johri/sshush/internal/config"
+	"github.com/s-johri/sshush/internal/keys"
 )
 
 // newKeyWizard generates a key in four phases — algorithm, bits/curve (rsa and

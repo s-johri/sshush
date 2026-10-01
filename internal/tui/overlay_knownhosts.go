@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/s-johri/sshush/pkg/knownhosts"
+	"github.com/s-johri/sshush/internal/knownhosts"
 )
 
 // knownHostsOverlay browses ~/.ssh/known_hosts and removes entries (confirm-

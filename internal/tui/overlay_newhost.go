@@ -7,7 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	"github.com/s-johri/sshush/pkg/config"
+	"github.com/s-johri/sshush/internal/config"
 )
 
 // hostSteps drives the new-host wizard's basic phase: an alias (required) then

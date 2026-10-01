@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/s-johri/sshush/pkg/config"
+	"github.com/s-johri/sshush/internal/config"
 )
 
 // compile-time: DiskScanner satisfies KeyScanner.

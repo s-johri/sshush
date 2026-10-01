@@ -37,7 +37,6 @@ exclude:
   - docs/demo-fixture.sh
   - cmd/
   - internal/
-  - pkg/
   - dist/
   - go.mod
   - go.sum

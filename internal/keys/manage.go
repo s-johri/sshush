@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/s-johri/sshush/pkg/config"
+	"github.com/s-johri/sshush/internal/config"
 )
 
 // GenerateOpts describes a key to create with ssh-keygen.

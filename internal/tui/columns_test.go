@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/s-johri/sshush/pkg/config"
+	"github.com/s-johri/sshush/internal/config"
 )
 
 // col returns the visual column where sub starts in line, or -1 if absent.

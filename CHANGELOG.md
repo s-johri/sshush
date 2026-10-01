@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The Go packages moved from `pkg/` to `internal/`. sshush has no public Go
+  API. Only the CLI and the `config.toml` schema are stable.
+
 ## [0.10.0] - 2026-08-18
 
 ### Changed

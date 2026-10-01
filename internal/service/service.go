@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/s-johri/sshush/pkg/agent"
-	"github.com/s-johri/sshush/pkg/config"
-	"github.com/s-johri/sshush/pkg/keys"
-	"github.com/s-johri/sshush/pkg/knownhosts"
-	"github.com/s-johri/sshush/pkg/perms"
-	"github.com/s-johri/sshush/pkg/sshconfig"
+	"github.com/s-johri/sshush/internal/agent"
+	"github.com/s-johri/sshush/internal/config"
+	"github.com/s-johri/sshush/internal/keys"
+	"github.com/s-johri/sshush/internal/knownhosts"
+	"github.com/s-johri/sshush/internal/perms"
+	"github.com/s-johri/sshush/internal/sshconfig"
 )
 
 // ErrNotImplemented is returned by stubbed methods during scaffolding.

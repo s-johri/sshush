@@ -3,10 +3,10 @@ package main
 import (
 	"testing"
 
-	"github.com/s-johri/sshush/pkg/config"
-	"github.com/s-johri/sshush/pkg/keys"
-	"github.com/s-johri/sshush/pkg/knownhosts"
-	"github.com/s-johri/sshush/pkg/perms"
+	"github.com/s-johri/sshush/internal/config"
+	"github.com/s-johri/sshush/internal/keys"
+	"github.com/s-johri/sshush/internal/knownhosts"
+	"github.com/s-johri/sshush/internal/perms"
 )
 
 // stubService implements service.Service; Refresh returns a fixed model and

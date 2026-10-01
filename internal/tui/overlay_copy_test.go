@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/s-johri/sshush/pkg/clip"
+	"github.com/s-johri/sshush/internal/clip"
 )
 
 // copyOverlay is exercised directly through its overlay interface — no full

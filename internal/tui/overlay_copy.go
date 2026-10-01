@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/s-johri/sshush/pkg/clip"
+	"github.com/s-johri/sshush/internal/clip"
 )
 
 // copyOverlay is the clipboard copy menu: pick an option by its hotkey to copy

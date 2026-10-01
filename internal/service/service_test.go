@@ -3,9 +3,9 @@ package service
 import (
 	"testing"
 
-	"github.com/s-johri/sshush/pkg/agent"
-	"github.com/s-johri/sshush/pkg/config"
-	"github.com/s-johri/sshush/pkg/keys"
+	"github.com/s-johri/sshush/internal/agent"
+	"github.com/s-johri/sshush/internal/config"
+	"github.com/s-johri/sshush/internal/keys"
 )
 
 // recordScanner records Generate/Delete calls for routing assertions.

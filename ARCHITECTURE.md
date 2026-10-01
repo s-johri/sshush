@@ -18,7 +18,7 @@ lipgloss and bubbles v2). Adaptive two-column layout (M41) was tried and
 reverted, because the full-height single pane reads better. `Match`-block
 editing is deferred. Brew, AUR and install-script publishing need public
 releases and tap and AUR secrets. Next: end the soak period and tag `v1.0.0`.
-Tests cover every `pkg`; see [README.md](README.md) for usage.
+Tests cover every package; see [README.md](README.md) for usage.
 
 ## Decisions (locked)
 
@@ -38,22 +38,22 @@ Tests cover every `pkg`; see [README.md](README.md) for usage.
 
 ```
 cmd/sshush/main.go     entrypoint + subcommands (TUI, load-default, shell-init, update, version)
-pkg/config/            domain model (Identity, Host, SshConfigModel)
-pkg/sshconfig/         parse + round-trip write (kevinburke wrapper)
-pkg/keys/              scan ~/.ssh for keypairs; generate/delete keys
-pkg/agent/             agent client: List (Go proto), Add/Remove/RemoveAll (exec ssh-add)
-pkg/service/           orchestrator: builds unified model, mediates mutations
-pkg/appconfig/         sshush settings (default identity, SSH dir/config overrides) at ~/.config/sshush
-pkg/watch/             fsnotify wrapper, debounced change signals (hot reload)
+internal/config/       domain model (Identity, Host, SshConfigModel)
+internal/sshconfig/    parse + round-trip write (kevinburke wrapper)
+internal/keys/         scan ~/.ssh for keypairs; generate/delete keys
+internal/agent/        agent client: List (Go proto), Add/Remove/RemoveAll (exec ssh-add)
+internal/service/      orchestrator: builds unified model, mediates mutations
+internal/appconfig/    sshush settings (default identity, SSH dir/config overrides) at ~/.config/sshush
+internal/watch/        fsnotify wrapper, debounced change signals (hot reload)
 internal/tui/          BubbleTea views/update — thin, no IO of its own
 ```
 
-TUI never touches files/agent directly. All IO behind `pkg/service` interfaces → testable headless, mockable, hot-reload-ready. (For interactive subprocesses — `ssh-add` on an encrypted key, `ssh-keygen` — the TUI uses `tea.ExecProcess` with command builders from `pkg/agent`/`pkg/keys`, the one sanctioned exception to "no direct IO".)
+TUI never touches files/agent directly. All IO behind `internal/service` interfaces → testable headless, mockable, hot-reload-ready. (For interactive subprocesses — `ssh-add` on an encrypted key, `ssh-keygen` — the TUI uses `tea.ExecProcess` with command builders from `internal/agent`/`internal/keys`, the one sanctioned exception to "no direct IO".)
 
 ## Interfaces (contracts)
 
 ```go
-// pkg/sshconfig — round-tripping config read/write
+// internal/sshconfig — round-tripping config read/write
 type ConfigRepo interface {
     Load() (*config.SshConfigModel, error)   // parse user config + Includes
     SetHostField(h config.HostID, key, val string) error
@@ -65,14 +65,14 @@ type ConfigRepo interface {
     Save() error                              // backup <path>.bak, then write AST
 }
 
-// pkg/keys — disk scan + key file management
+// internal/keys — disk scan + key file management
 type KeyScanner interface {
     Scan() ([]config.Identity, error)         // walk ~/.ssh, pair pub/priv
     Generate(GenerateOpts) (config.Identity, error)  // ssh-keygen
     Delete(privPath string) error             // remove priv + .pub
 }
 
-// pkg/agent — talk to ssh-agent
+// internal/agent — talk to ssh-agent
 type AgentClient interface {
     List() ([]AgentKey, error)                // loaded keys + fingerprints
     Add(path string) error                    // exec ssh-add <path> (inherits tty)
@@ -80,7 +80,7 @@ type AgentClient interface {
     RemoveAll() error                         // exec ssh-add -D
 }
 
-// pkg/service — the only thing TUI sees
+// internal/service — the only thing TUI sees
 type Service interface {
     Refresh() (*config.SshConfigModel, error) // scan+parse+agent, merged
     AddKeyToAgent(config.IdentityID) error
@@ -98,8 +98,8 @@ type Service interface {
 ```
 
 The TUI also depends on two optional narrow interfaces it can run without:
-`appSettings` (default identity; backed by `pkg/appconfig`) and `fileWatcher`
-(hot reload; backed by `pkg/watch`).
+`appSettings` (default identity; backed by `internal/appconfig`) and `fileWatcher`
+(hot reload; backed by `internal/watch`).
 
 ## Data flow
 
@@ -136,10 +136,10 @@ Two places use reflection to reach unexported fields of `kevinburke/ssh_config`,
 | # | Deliverable | Risk |
 |---|-------------|------|
 | 0 | Libs added, package scaffold, interfaces stubbed, tests compile | none |
-| 1 | `pkg/keys` scan + unit test w/ fixtures | none (read) |
-| 2 | `pkg/sshconfig` parse + Includes + round-trip test | none (read) |
-| 3 | `pkg/agent` List + fingerprint match | none (read) |
-| 4 | `pkg/service` Refresh merges all three | none (read) |
+| 1 | `internal/keys` scan + unit test w/ fixtures | none (read) |
+| 2 | `internal/sshconfig` parse + Includes + round-trip test | none (read) |
+| 3 | `internal/agent` List + fingerprint match | none (read) |
+| 4 | `internal/service` Refresh merges all three | none (read) |
 | 5 | TUI: read-only Keys + Hosts panes | none — **first useful build** |
 | 6 | Agent add/remove (switch keys) + unload-all; auto-expiring status | low (reversible) |
 | 7 | Edit/add/delete host directives, Save w/ backup+confirm | **write — backup gated** |
@@ -187,6 +187,7 @@ users get value before 1.0; the API/config surface only freezes at the RC.
 | — | soak period: bug-fix-only patch releases (v0.9.x) from real-world use | — |
 | 🏷 | **v0.9.3**: `.bak` survives reloads and re-arms on external edits; border contrast fix | — |
 | 🏷 | **v0.10.0**: migrate to the Charm v2 stack (no change to look or keys) | — |
+| — | pre-1.0 fixes from the 2026-09-28 review: see [the plan](docs/superpowers/plans/2026-09-28-pre-1.0-fixes.md) | medium |
 | 🏷 | **v1.0.0** — stable release (tag + announce) | — |
 
 ### Beyond v1.0 — planned features
@@ -519,12 +520,12 @@ Unit tests are thorough; add e2e coverage behind a build tag: spin a real
 edit against a temp `~/.ssh`. CI matrix (ubuntu + macOS) runs the full suite incl.
 e2e, plus the existing `gofmt`/`go vet` gates.
 
-**Status — done.** `pkg/service/e2e_test.go` (`//go:build e2e`) starts a private
+**Status — done.** `internal/service/e2e_test.go` (`//go:build e2e`) starts a private
 `ssh-agent`, generates a passphrase-less ed25519 key, and walks the real wiring
 (disk scanner + config repo + agent client): generate → load → assert
 `LoadedInAgent` (fingerprint match) → unload → edit a config host (asserting the
 write + `.bak`) → delete (asserting files gone). Run locally with
-`go test -tags e2e ./pkg/service/`. CI is now a `{ubuntu, macOS}` matrix running
+`go test -tags e2e ./internal/service/`. CI is now a `{ubuntu, macOS}` matrix running
 `gofmt`/`vet`/`go test ./...` then `go test -tags e2e ./...`.
 
 ### Milestone 30 detail

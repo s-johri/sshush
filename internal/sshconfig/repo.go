@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	sshcfg "github.com/kevinburke/ssh_config"
-	"github.com/s-johri/sshush/pkg/config"
+	"github.com/s-johri/sshush/internal/config"
 )
 
 // ErrNotImplemented is returned by stubbed methods during scaffolding.

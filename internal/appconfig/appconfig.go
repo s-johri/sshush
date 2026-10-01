@@ -17,7 +17,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/s-johri/sshush/pkg/config"
+	"github.com/s-johri/sshush/internal/config"
 )
 
 // Config is the on-disk settings document.

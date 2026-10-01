@@ -21,11 +21,11 @@ import (
 	// agent is imported only to build the ssh-add command handed to
 	// tea.ExecProcess, which yields the terminal so a passphrase prompt works.
 	// All other IO goes through service.Service.
-	"github.com/s-johri/sshush/pkg/agent"
-	"github.com/s-johri/sshush/pkg/config"
-	"github.com/s-johri/sshush/pkg/service"
-	"github.com/s-johri/sshush/pkg/shellinit"
-	"github.com/s-johri/sshush/pkg/watch"
+	"github.com/s-johri/sshush/internal/agent"
+	"github.com/s-johri/sshush/internal/config"
+	"github.com/s-johri/sshush/internal/service"
+	"github.com/s-johri/sshush/internal/shellinit"
+	"github.com/s-johri/sshush/internal/watch"
 )
 
 type pane int

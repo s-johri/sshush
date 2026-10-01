@@ -13,15 +13,15 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	selfupdate "github.com/creativeprojects/go-selfupdate"
 	"github.com/mattn/go-isatty"
+	"github.com/s-johri/sshush/internal/agent"
+	"github.com/s-johri/sshush/internal/appconfig"
+	"github.com/s-johri/sshush/internal/config"
+	"github.com/s-johri/sshush/internal/keys"
+	"github.com/s-johri/sshush/internal/service"
+	"github.com/s-johri/sshush/internal/shellinit"
+	"github.com/s-johri/sshush/internal/sshconfig"
 	"github.com/s-johri/sshush/internal/tui"
-	"github.com/s-johri/sshush/pkg/agent"
-	"github.com/s-johri/sshush/pkg/appconfig"
-	"github.com/s-johri/sshush/pkg/config"
-	"github.com/s-johri/sshush/pkg/keys"
-	"github.com/s-johri/sshush/pkg/service"
-	"github.com/s-johri/sshush/pkg/shellinit"
-	"github.com/s-johri/sshush/pkg/sshconfig"
-	"github.com/s-johri/sshush/pkg/watch"
+	"github.com/s-johri/sshush/internal/watch"
 )
 
 // version is the build version, overridden at release time via
