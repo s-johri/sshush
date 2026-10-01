@@ -189,7 +189,9 @@ func checkLatest() (string, bool) {
 func newService(sshDir, configPath string) service.Service {
 	repo := sshconfig.New(configPath)
 	repo.SshDir = sshDir
-	return service.New(keys.New(sshDir), repo, agent.New(""))
+	app := service.New(keys.New(sshDir), repo, agent.New(""))
+	app.SshDir = sshDir
+	return app
 }
 
 // programOpts returns the bubbletea options for the interactive run. A

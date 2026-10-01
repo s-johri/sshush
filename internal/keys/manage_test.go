@@ -106,3 +106,21 @@ func TestGenerateCommandInteractive(t *testing.T) {
 		}
 	}
 }
+
+// TestGenerateRejectsUnsafeNames: a key name is a file name in the SSH dir.
+// A name with a path separator or ".." could write a key anywhere (T8).
+func TestGenerateRejectsUnsafeNames(t *testing.T) {
+	for _, name := range []string{"../id_x", "sub/id_x", "..", ".", "/tmp/id_x", `a\b`} {
+		if _, _, err := GenerateCommand(GenerateOpts{Dir: "/keys", Name: name, Algorithm: config.AlgED25519}); err == nil {
+			t.Errorf("GenerateCommand accepted name %q", name)
+		}
+		if err := ValidateName(name); err == nil {
+			t.Errorf("ValidateName(%q) = nil", name)
+		}
+	}
+	for _, name := range []string{"id_ed25519", "id_work.2026", "github-key"} {
+		if err := ValidateName(name); err != nil {
+			t.Errorf("ValidateName(%q) = %v", name, err)
+		}
+	}
+}

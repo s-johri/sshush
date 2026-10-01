@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/s-johri/sshush/internal/config"
 )
@@ -41,10 +42,25 @@ func (s *DiskScanner) genPath(opts GenerateOpts) (string, error) {
 			return "", err
 		}
 	}
-	if opts.Name == "" {
-		return "", fmt.Errorf("key name is required")
+	if err := ValidateName(opts.Name); err != nil {
+		return "", err
 	}
 	return filepath.Join(dir, opts.Name), nil
+}
+
+// ValidateName checks a new key's file name. The name must be a plain file
+// name in the SSH dir: no path separator and no "..", so it cannot point
+// outside that dir.
+func ValidateName(name string) error {
+	switch {
+	case name == "":
+		return fmt.Errorf("key name is required")
+	case name == "." || strings.Contains(name, ".."):
+		return fmt.Errorf("key name %q must not contain \"..\"", name)
+	case strings.ContainsAny(name, `/\`):
+		return fmt.Errorf("key name %q must be a file name, not a path", name)
+	}
+	return nil
 }
 
 // Generate creates a key pair with ssh-keygen and no passphrase, returning the

@@ -25,6 +25,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- With `ssh_dir` set, the new-key wizard now creates the key in that
+  directory. Before, it always used `~/.ssh`.
+- With `config_path` set to a file outside the SSH directory (for example in a
+  dotfiles repo), the permission audit and known_hosts now use the SSH
+  directory (`ssh_dir`, default `~/.ssh`). Before, they used the directory of
+  the config file, so the audit could offer `chmod 700` on that directory.
+- A new key name must be a plain file name: sshush rejects a name with `/`,
+  `\` or `..`.
 - When `config.toml` does not load (for example a TOML syntax error), sshush
   no longer writes its defaults over the file when you press `t`, `s` or `m`.
   It shows the reason in the TUI and refuses to save until you fix the file.

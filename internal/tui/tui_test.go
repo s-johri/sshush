@@ -2048,3 +2048,35 @@ func TestSettingsLoadErrorShownOnLaunch(t *testing.T) {
 		t.Errorf("status after first load = %q, want the error kept", m.status)
 	}
 }
+
+// TestNewKeyUsesConfiguredSshDir guards T8: with ssh_dir set, the new-key
+// wizard must create the key there, not in ~/.ssh.
+func TestNewKeyUsesConfiguredSshDir(t *testing.T) {
+	m := New(&fakeService{model: snapshot()}).WithSshDir("/custom/ssh")
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("n"))
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // ed25519
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // name id_ed25519
+	w := m.modal.(*newKeyWizard)
+	if opts := w.generateOpts(&m); opts.Dir != "/custom/ssh" || opts.Name != "id_ed25519" {
+		t.Errorf("opts = %+v, want Dir /custom/ssh", opts)
+	}
+}
+
+// TestNewKeyRejectsUnsafeName: the name step refuses a name with a path in
+// it, and stays on the name step.
+func TestNewKeyRejectsUnsafeName(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("n"))
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // ed25519 -> name step
+	w := m.modal.(*newKeyWizard)
+	w.input.SetValue("../evil")
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if w := m.modal.(*newKeyWizard); w.phase != nkPhaseName {
+		t.Errorf("phase = %d, want the name step", w.phase)
+	}
+	if !strings.Contains(m.status, "name") {
+		t.Errorf("status = %q, want a key name error", m.status)
+	}
+}

@@ -126,8 +126,8 @@ func (o *newKeyWizard) toNameStep() (overlay, tea.Cmd) {
 func (o *newKeyWizard) updateName(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() == "enter" {
 		name := strings.TrimSpace(o.input.Value())
-		if name == "" {
-			m.status = "key name cannot be empty"
+		if err := keys.ValidateName(name); err != nil {
+			m.status = err.Error()
 			return o, nil
 		}
 		o.name = name
@@ -149,14 +149,20 @@ func (o *newKeyWizard) commentOrDefault(name string) string {
 	return name
 }
 
+// generateOpts is the key to create. Dir is the configured SSH dir (empty
+// means ~/.ssh), so a new key goes where sshush scans for keys.
+func (o *newKeyWizard) generateOpts(m *Model) keys.GenerateOpts {
+	return keys.GenerateOpts{
+		Dir: m.sshDir, Name: o.name, Algorithm: o.algo, Bits: o.bits, Comment: o.commentOrDefault(o.name),
+	}
+}
+
 // updateComment collects the -C comment and runs ssh-keygen interactively (via
 // ExecProcess) so it can prompt for a passphrase.
 func (o *newKeyWizard) updateComment(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() == "enter" {
 		m.status = "running ssh-keygen…"
-		cmd, _, err := keys.GenerateCommand(keys.GenerateOpts{
-			Name: o.name, Algorithm: o.algo, Bits: o.bits, Comment: o.commentOrDefault(o.name),
-		})
+		cmd, _, err := keys.GenerateCommand(o.generateOpts(m))
 		if err != nil {
 			m.status = "keygen error: " + err.Error()
 			return nil, nil

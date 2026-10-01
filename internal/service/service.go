@@ -6,6 +6,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 
@@ -57,6 +58,11 @@ type App struct {
 	// another exported method, because mu is not reentrant.
 	mu    sync.Mutex
 	model *config.SshConfigModel // last merged snapshot
+
+	// SshDir is the configured SSH directory, for the permission audit and
+	// known_hosts. Empty means ~/.ssh. It is never guessed from the config
+	// file's location: config_path can point into a dotfiles dir.
+	SshDir string
 }
 
 // New wires an App from its collaborators.
@@ -192,31 +198,27 @@ func (a *App) AuditPermissions() ([]perms.Issue, error) {
 			keyPaths = append(keyPaths, id.Path)
 		}
 	}
-	return perms.Audit(a.sshDirHint(), configFiles, keyPaths), nil
+	return perms.Audit(a.sshDir(), configFiles, keyPaths), nil
 }
 
-// sshDirHint guesses the SSH directory from the cached snapshot (config dir, or
-// a key's dir), or "" to let callers fall back to ~/.ssh.
-func (a *App) sshDirHint() string {
-	if a.model == nil {
+// sshDir is the SSH directory: SshDir, else ~/.ssh. It returns "" only when
+// the home directory is unknown.
+func (a *App) sshDir() string {
+	if a.SshDir != "" {
+		return a.SshDir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
 		return ""
 	}
-	if len(a.model.SourceFiles) > 0 {
-		return filepath.Dir(a.model.SourceFiles[0])
-	}
-	for _, id := range a.model.Identities {
-		if id.Path != "" {
-			return filepath.Dir(id.Path)
-		}
-	}
-	return ""
+	return filepath.Join(home, ".ssh")
 }
 
 // KnownHosts parses the known_hosts file under the SSH directory.
 func (a *App) KnownHosts() ([]knownhosts.Entry, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	path, err := knownhosts.Path(a.sshDirHint())
+	path, err := knownhosts.Path(a.sshDir())
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +229,7 @@ func (a *App) KnownHosts() ([]knownhosts.Entry, error) {
 func (a *App) RemoveKnownHost(line int) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	path, err := knownhosts.Path(a.sshDirHint())
+	path, err := knownhosts.Path(a.sshDir())
 	if err != nil {
 		return err
 	}
