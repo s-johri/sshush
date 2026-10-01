@@ -25,6 +25,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- An `Include` with a quoted path that has spaces (`Include "My Configs/work"`)
+  now loads that file. Before, sshush split the path at the space. A relative
+  `Include` resolves against the configured SSH directory (`ssh_dir`, default
+  `~/.ssh`).
 - Saves and restores of the SSH config, backups, `config.toml` and
   `known_hosts` now write a temp file and rename it into place, so a crash or a
   full disk never leaves a half-written file. A symlinked file (for example

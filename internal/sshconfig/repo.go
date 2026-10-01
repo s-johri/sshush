@@ -362,13 +362,15 @@ type includeLine struct {
 // done here from the source lines. "Key=value" and indented lines count.
 func scanDirectives(raw []byte) (hostLines []int, includes []includeLine) {
 	for n, line := range strings.Split(string(raw), "\n") {
-		key, args := splitDirective(line)
+		key, _ := splitDirective(line)
 		switch key {
 		case "host", "match":
 			hostLines = append(hostLines, n)
 		case "include":
-			if len(args) > 0 {
-				includes = append(includes, includeLine{line: n, args: args})
+			// Quote-aware, as OpenSSH reads it: "My Configs/work" is one
+			// path, and the quotes are removed.
+			if paths := directiveTokens(line)[1:]; len(paths) > 0 {
+				includes = append(includes, includeLine{line: n, args: paths})
 			}
 		}
 	}
