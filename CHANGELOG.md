@@ -115,7 +115,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - CI runs `govulncheck`. A vulnerability that the code calls fails CI, unless
   it has no fix yet and is listed with a reason in `ci.yml`.
 
+### Removed
+- `sshush -v` no longer prints the version, and exits 2 as an unknown command.
+  Use `sshush version` or `sshush --version`. This keeps `-v` free for a later
+  `--verbose` within 1.x.
+
 ### Changed
+- The `usage` text says "default identities" (plural), as sshush loads all of
+  them.
 - The Go packages moved from `pkg/` to `internal/`. sshush has no public Go
   API. Only the CLI and the `config.toml` schema are stable.
 

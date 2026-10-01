@@ -135,7 +135,8 @@ func TestMainRejectsUnknownArgument(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, args := range []string{"restore --help", "install-extras --refres", "version x"} {
+	// -v is not a flag: it stays free for a later --verbose (T17).
+	for _, args := range []string{"restore --help", "install-extras --refres", "version x", "-v"} {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestMainRejectsUnknownArgument$")
 		cmd.Env = append(os.Environ(), "SSHUSH_TEST_MAIN=1", "SSHUSH_TEST_ARGS="+args,
 			"HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"),

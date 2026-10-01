@@ -174,7 +174,7 @@ sshush completion fish > ~/.config/fish/completions/sshush.fish
 
 ```bash
 sshush              # launch the interactive TUI
-sshush load-default # load the configured default identity into the agent
+sshush load-default # load the configured default identities into the agent
 sshush shell-init   # print a shell snippet to load the default on shell start
 sshush restore      # revert the SSH config to the backup from before edits
 sshush update       # update to the latest release

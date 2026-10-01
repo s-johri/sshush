@@ -55,7 +55,7 @@ func main() {
 			}
 			fmt.Print(shellinit.Snippet)
 			return
-		case "version", "--version", "-v":
+		case "version", "--version":
 			fmt.Printf("sshush %s\n", version)
 			return
 		case "restore":
@@ -220,7 +220,7 @@ func runTUI() {
 	}
 	opts := programOpts(os.Getenv("NO_COLOR"))
 
-	// App settings (default identity, SSH dir/config overrides). Best-effort.
+	// App settings (default identities, SSH dir/config overrides). Best-effort.
 	settings := appconfig.New("")
 	if _, err := settings.Load(); err != nil {
 		// Malformed config.toml: warn, then run with built-in defaults rather
@@ -276,7 +276,7 @@ func validateArgs(args []string) error {
 		allowed, n = []string{"--refresh"}, 1
 	case "completion":
 		return checkCount(cmd, rest, 1)
-	case "load-default", "shell-init", "update", "version", "--version", "-v", "help", "-h", "--help":
+	case "load-default", "shell-init", "update", "version", "--version", "help", "-h", "--help":
 	default:
 		return nil
 	}
@@ -417,7 +417,7 @@ const usage = `sshush — interactive SSH key and host manager
 
 Usage:
   sshush              launch the interactive TUI
-  sshush load-default load the configured default identity into the agent
+  sshush load-default load the configured default identities into the agent
   sshush shell-init   print a shell snippet to load the default on shell start
   sshush restore      revert the SSH config to its backup (asks first; --yes: do not ask)
   sshush update       update sshush to the latest release
