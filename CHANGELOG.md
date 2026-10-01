@@ -30,6 +30,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `R` screen shows the time of each backup. It no longer says that the
   backup is from the start of this session, because it can be older.
 
+### Security
+- `sshush update` now checks the downloaded archive against the `checksums.txt`
+  of the release before it replaces the binary. It refuses a release with a
+  wrong checksum or with no `checksums.txt`. Before, it did not check the
+  download. The update notice in the TUI uses the same check.
+
 ### Changed
 - The Go packages moved from `pkg/` to `internal/`. sshush has no public Go
   API. Only the CLI and the `config.toml` schema are stable.

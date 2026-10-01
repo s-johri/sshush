@@ -105,26 +105,18 @@ func selfUpdate(ctx context.Context) error {
 	if version == "dev" {
 		return fmt.Errorf("self-update is only available for released builds (this is %q); install a tagged release", version)
 	}
-	rel, found, err := selfupdate.DetectLatest(ctx, selfupdate.ParseSlug(repoSlug))
+	up, err := newUpdater(nil)
 	if err != nil {
-		return fmt.Errorf("checking latest release: %w", err)
-	}
-	if !found {
-		return fmt.Errorf("no release found for %s", repoSlug)
-	}
-	if rel.LessOrEqual(version) {
-		fmt.Printf("already up to date (%s)\n", version)
-		return nil
+		return err
 	}
 	exe, err := selfupdate.ExecutablePath()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("updating %s -> %s …\n", version, rel.Version())
-	if err := selfupdate.UpdateTo(ctx, rel.AssetURL, rel.AssetName, exe); err != nil {
-		return fmt.Errorf("applying update: %w", err)
+	updated, err := applyUpdate(ctx, up, version, exe, os.Stdout)
+	if err != nil || !updated {
+		return err
 	}
-	fmt.Printf("updated to %s\n", rel.Version())
 	// Refresh previously-installed man page/completions from the NEW binary
 	// (this process is still the old version). Best-effort.
 	if out, err := exec.Command(exe, "install-extras", "--refresh").CombinedOutput(); err == nil {
@@ -133,13 +125,55 @@ func selfUpdate(ctx context.Context) error {
 	return nil
 }
 
+// checksumsFile is the checksum file that goreleaser publishes with each
+// release (see .goreleaser.yaml).
+const checksumsFile = "checksums.txt"
+
+// newUpdater returns the updater for detect and update. src nil means GitHub.
+// It checks the downloaded archive against checksumsFile, and it does not
+// install a release that has no checksumsFile.
+func newUpdater(src selfupdate.Source) (*selfupdate.Updater, error) {
+	return selfupdate.NewUpdater(selfupdate.Config{
+		Source:    src,
+		Validator: &selfupdate.ChecksumValidator{UniqueFilename: checksumsFile},
+	})
+}
+
+// applyUpdate replaces exe with the latest release when it is newer than
+// current. It reports whether it replaced exe.
+func applyUpdate(ctx context.Context, up *selfupdate.Updater, current, exe string, out io.Writer) (bool, error) {
+	rel, found, err := up.DetectLatest(ctx, selfupdate.ParseSlug(repoSlug))
+	if err != nil {
+		return false, fmt.Errorf("checking latest release: %w", err)
+	}
+	if !found {
+		return false, fmt.Errorf("no release found for %s", repoSlug)
+	}
+	if rel.LessOrEqual(current) {
+		fmt.Fprintf(out, "already up to date (%s)\n", current)
+		return false, nil
+	}
+	fmt.Fprintf(out, "updating %s -> %s …\n", current, rel.Version())
+	if err := up.UpdateTo(ctx, rel, exe); err != nil {
+		return false, fmt.Errorf("applying update: %w", err)
+	}
+	fmt.Fprintf(out, "updated to %s\n", rel.Version())
+	return true, nil
+}
+
 // checkLatest reports the latest release tag and whether it is newer than this
 // build, for the TUI's launch update-check. Best-effort: any failure (offline,
 // rate-limited, private/auth-gated releases) yields ("", false) and no notice.
 func checkLatest() (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	rel, found, err := selfupdate.DetectLatest(ctx, selfupdate.ParseSlug(repoSlug))
+	// The same updater as `sshush update`, so the TUI does not offer a release
+	// that the update then refuses (for example one with no checksums).
+	up, err := newUpdater(nil)
+	if err != nil {
+		return "", false
+	}
+	rel, found, err := up.DetectLatest(ctx, selfupdate.ParseSlug(repoSlug))
 	if err != nil || !found || rel == nil {
 		return "", false
 	}
