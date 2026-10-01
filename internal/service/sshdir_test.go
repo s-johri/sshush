@@ -85,3 +85,29 @@ func TestSshDirDefaultsToHomeSsh(t *testing.T) {
 		t.Errorf("issues = %+v, want one for %s", issues, sshDir)
 	}
 }
+
+// TestRemoveKnownHostKeepsFirstBackup guards T13 through the service: App
+// keeps one Remover for its lifetime, so two removals keep the first backup.
+func TestRemoveKnownHostKeepsFirstBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "known_hosts")
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+	orig := "a.example " + key + "\nb.example " + key + "\n"
+	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := New(fakeScanner{}, &fakeConfig{model: &config.SshConfigModel{}}, &fakeAgent{})
+	a.SshDir = dir
+	for i := 0; i < 2; i++ {
+		entries, err := a.KnownHosts()
+		if err != nil || len(entries) == 0 {
+			t.Fatalf("KnownHosts: %v %v", entries, err)
+		}
+		if err := a.RemoveKnownHost(entries[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := os.ReadFile(path + ".bak"); string(got) != orig {
+		t.Errorf(".bak = %q, want the original", got)
+	}
+}

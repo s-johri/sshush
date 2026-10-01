@@ -25,6 +25,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- `known_hosts.bak` is now written once per session, before the first removal.
+  Before, each removal overwrote it, so after a second removal the first one
+  could not be undone.
+- Removing a `known_hosts` entry now checks that its line did not change since
+  the list was read. Before, if ssh added a host in the meantime, sshush could
+  remove the wrong line.
 - sshush no longer writes a config line that makes every ssh connection fail.
   A new option name must be an ssh_config(5) keyword (`ForwadAgent` is
   refused), `Port` must be 1 to 65535, `HostName`, `User` and a new alias must

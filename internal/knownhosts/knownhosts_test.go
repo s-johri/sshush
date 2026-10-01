@@ -43,7 +43,8 @@ func TestParseAndRemove(t *testing.T) {
 	}
 
 	// Remove the github line; gitlab remains, backup written.
-	if err := Remove(path, gh.Line); err != nil {
+	var r Remover
+	if err := r.Remove(path, gh); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := Parse(path)
@@ -59,5 +60,68 @@ func TestParseMissingFile(t *testing.T) {
 	got, err := Parse(filepath.Join(t.TempDir(), "nope"))
 	if err != nil || got != nil {
 		t.Errorf("missing file: got %v, err %v", got, err)
+	}
+}
+
+// TestRemoveKeepsFirstBackup guards T13: the .bak is the file from before
+// the first removal of the session. A second removal must not overwrite it.
+func TestRemoveKeepsFirstBackup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	orig := "github.com " + edKey + "\ngitlab.com " + rsaKey + "\n"
+	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var r Remover
+	for i := 0; i < 2; i++ {
+		entries, err := Parse(path)
+		if err != nil || len(entries) == 0 {
+			t.Fatalf("Parse: %v %v", entries, err)
+		}
+		if err := r.Remove(path, entries[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := os.ReadFile(path + ".bak"); string(got) != orig {
+		t.Errorf(".bak = %q, want the original %q", got, orig)
+	}
+	if fi, _ := os.Stat(path + ".bak"); fi.Mode().Perm() != 0o600 {
+		t.Errorf(".bak mode = %o, want 600", fi.Mode().Perm())
+	}
+
+	// A deleted .bak is written again on the next removal.
+	if err := os.Remove(path + ".bak"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := Parse(path)
+	if err := r.Remove(path, entries[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".bak"); err != nil {
+		t.Errorf(".bak not written again: %v", err)
+	}
+}
+
+// TestRemoveRefusesChangedLine guards T13: when the file changed after it
+// was read (ssh added a host), the line index can point at another entry.
+// Remove must refuse, not delete the wrong line.
+func TestRemoveRefusesChangedLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte("github.com "+edKey+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := Parse(path)
+	changed := "new.example " + rsaKey + "\ngithub.com " + edKey + "\n"
+	if err := os.WriteFile(path, []byte(changed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var r Remover
+	if err := r.Remove(path, entries[0]); err == nil {
+		t.Error("Remove deleted a line that changed")
+	}
+	if got, _ := os.ReadFile(path); string(got) != changed {
+		t.Errorf("file changed: %q", got)
 	}
 }

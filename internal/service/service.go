@@ -39,7 +39,7 @@ type Service interface {
 	AuditPermissions() ([]perms.Issue, error)
 	FixPermissions([]perms.Issue) error
 	KnownHosts() ([]knownhosts.Entry, error)
-	RemoveKnownHost(line int) error
+	RemoveKnownHost(e knownhosts.Entry) error
 	CanRestore() bool
 	Backups() []config.Backup
 	RewriteCheck(h config.HostID) config.RewriteCheck
@@ -59,6 +59,8 @@ type App struct {
 	// another exported method, because mu is not reentrant.
 	mu    sync.Mutex
 	model *config.SshConfigModel // last merged snapshot
+
+	kh knownhosts.Remover // keeps the known_hosts backup to once per session
 
 	// SshDir is the configured SSH directory, for the permission audit and
 	// known_hosts. Empty means ~/.ssh. It is never guessed from the config
@@ -226,15 +228,16 @@ func (a *App) KnownHosts() ([]knownhosts.Entry, error) {
 	return knownhosts.Parse(path)
 }
 
-// RemoveKnownHost deletes a known_hosts line (backing up the file first).
-func (a *App) RemoveKnownHost(line int) error {
+// RemoveKnownHost deletes a known_hosts entry. The file is backed up once per
+// session, and the entry's line must not have changed since KnownHosts read it.
+func (a *App) RemoveKnownHost(e knownhosts.Entry) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	path, err := knownhosts.Path(a.sshDir())
 	if err != nil {
 		return err
 	}
-	return knownhosts.Remove(path, line)
+	return a.kh.Remove(path, e)
 }
 
 // FixPermissions chmods each issue to its suggested mode, stopping at the first

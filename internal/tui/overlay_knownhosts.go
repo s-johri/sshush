@@ -55,7 +55,7 @@ func (o *knownHostsOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.
 func (o *knownHostsOverlay) remove(m *Model) (overlay, tea.Cmd) {
 	ent := o.entries[o.vp.cursor]
 	o.confirm = false
-	if err := m.svc.RemoveKnownHost(ent.Line); err != nil {
+	if err := m.svc.RemoveKnownHost(ent); err != nil {
 		m.status = "remove failed: " + err.Error()
 		return nil, nil
 	}

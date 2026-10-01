@@ -83,7 +83,8 @@ func (f *fakeService) FixPermissions(is []perms.Issue) error {
 	return nil
 }
 func (f *fakeService) KnownHosts() ([]knownhosts.Entry, error) { return f.khEntries, f.khErr }
-func (f *fakeService) RemoveKnownHost(line int) error {
+func (f *fakeService) RemoveKnownHost(ent knownhosts.Entry) error {
+	line := ent.Line
 	f.khRemoved = append(f.khRemoved, line)
 	// Simulate removal so a re-fetch reflects it.
 	var kept []knownhosts.Entry
