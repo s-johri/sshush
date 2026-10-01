@@ -2014,3 +2014,18 @@ func TestRestoreConfirmShowsBackupTime(t *testing.T) {
 		t.Errorf("confirm still says the backup is from this session:\n%s", v)
 	}
 }
+
+// TestReloadKeyIgnoredWhileLoading: `r` during a load must not start a second
+// refresh, which would run at the same time as the first one (T6).
+func TestReloadKeyIgnoredWhileLoading(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, refreshedMsg{model: snapshot()})
+	out, cmd := m.Update(key("r"))
+	m = out.(Model)
+	if cmd == nil || !m.loading {
+		t.Fatalf("first r: cmd=%v loading=%v, want a refresh", cmd, m.loading)
+	}
+	if _, cmd := m.Update(key("r")); cmd != nil {
+		t.Error("second r while loading started another refresh")
+	}
+}

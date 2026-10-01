@@ -755,6 +755,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "R":
 		return m.beginRestore()
 	case "r":
+		if m.loading {
+			return m, nil // a refresh is already running
+		}
 		m.loading = true
 		return m, m.refresh
 	}

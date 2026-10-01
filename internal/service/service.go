@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 
 	"github.com/s-johri/sshush/internal/agent"
 	"github.com/s-johri/sshush/internal/config"
@@ -49,6 +50,12 @@ type App struct {
 	Config sshconfig.ConfigRepo
 	Agent  agent.AgentClient
 
+	// mu serializes every exported method. The TUI calls them from separate
+	// tea.Cmd goroutines (hot reload, `r`, edits), and the config repo and
+	// the cached model are not safe for concurrent use. Exported methods take
+	// mu and call only unexported helpers (refresh, diskIdentity), never
+	// another exported method, because mu is not reentrant.
+	mu    sync.Mutex
 	model *config.SshConfigModel // last merged snapshot
 }
 
@@ -64,6 +71,13 @@ func New(k keys.KeyScanner, c sshconfig.ConfigRepo, a agent.AgentClient) *App {
 // agent's true state is visible. A missing agent degrades gracefully — keys
 // simply show as unloaded. The merged model is cached for mutation methods.
 func (a *App) Refresh() (*config.SshConfigModel, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.refresh()
+}
+
+// refresh is Refresh for callers that hold a.mu.
+func (a *App) refresh() (*config.SshConfigModel, error) {
 	model, err := a.Config.Load()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -135,6 +149,8 @@ func agentName(ak agent.AgentKey) string {
 // AddKeyToAgent loads the identity's private key into the agent. The identity
 // must exist on disk; agent-only and missing keys cannot be added.
 func (a *App) AddKeyToAgent(id config.IdentityID) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	ident, err := a.diskIdentity(id)
 	if err != nil {
 		return err
@@ -145,6 +161,8 @@ func (a *App) AddKeyToAgent(id config.IdentityID) error {
 // RemoveKeyFromAgent drops the identity's key from the agent (ssh-add -d needs
 // the key file, so the identity must exist on disk).
 func (a *App) RemoveKeyFromAgent(id config.IdentityID) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	ident, err := a.diskIdentity(id)
 	if err != nil {
 		return err
@@ -154,12 +172,16 @@ func (a *App) RemoveKeyFromAgent(id config.IdentityID) error {
 
 // UnloadAllKeys drops every identity from the agent in one call.
 func (a *App) UnloadAllKeys() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	return a.Agent.RemoveAll()
 }
 
 // AuditPermissions checks the SSH directory, config files, and private keys for
 // over-permissive modes that SSH would reject. Requires a prior Refresh.
 func (a *App) AuditPermissions() ([]perms.Issue, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.model == nil {
 		return nil, errors.New("no snapshot loaded; call Refresh first")
 	}
@@ -192,6 +214,8 @@ func (a *App) sshDirHint() string {
 
 // KnownHosts parses the known_hosts file under the SSH directory.
 func (a *App) KnownHosts() ([]knownhosts.Entry, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	path, err := knownhosts.Path(a.sshDirHint())
 	if err != nil {
 		return nil, err
@@ -201,6 +225,8 @@ func (a *App) KnownHosts() ([]knownhosts.Entry, error) {
 
 // RemoveKnownHost deletes a known_hosts line (backing up the file first).
 func (a *App) RemoveKnownHost(line int) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	path, err := knownhosts.Path(a.sshDirHint())
 	if err != nil {
 		return err
@@ -211,6 +237,8 @@ func (a *App) RemoveKnownHost(line int) error {
 // FixPermissions chmods each issue to its suggested mode, stopping at the first
 // error.
 func (a *App) FixPermissions(issues []perms.Issue) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	for _, i := range issues {
 		if err := perms.Fix(i); err != nil {
 			return err
@@ -235,20 +263,30 @@ func (a *App) diskIdentity(id config.IdentityID) (config.Identity, error) {
 }
 
 // CanRestore reports whether a backup exists to revert the config to.
-func (a *App) CanRestore() bool { return len(a.Config.Backups()) > 0 }
+func (a *App) CanRestore() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.Config.Backups()) > 0
+}
 
 // Backups lists the backup snapshot of each config file that has one.
-func (a *App) Backups() []config.Backup { return a.Config.Backups() }
+func (a *App) Backups() []config.Backup {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.Config.Backups()
+}
 
 // RestoreBackup reverts the config file(s) to their backup snapshots, then
 // refreshes the cached snapshot so callers see the reverted state. Returns the
 // restored file paths.
 func (a *App) RestoreBackup() ([]string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	restored, err := a.Config.Restore()
 	if err != nil {
 		return restored, err
 	}
-	if _, err := a.Refresh(); err != nil {
+	if _, err := a.refresh(); err != nil {
 		return restored, err
 	}
 	return restored, nil
@@ -257,32 +295,38 @@ func (a *App) RestoreBackup() ([]string, error) {
 // EditHost sets field=val on host h, persists the change (backing up the file),
 // and refreshes the cached snapshot so callers see the result.
 func (a *App) EditHost(h config.HostID, field, val string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if err := a.Config.SetHostField(h, field, val); err != nil {
 		return err
 	}
 	if err := a.Config.Save(); err != nil {
 		return err
 	}
-	_, err := a.Refresh()
+	_, err := a.refresh()
 	return err
 }
 
 // DeleteHostField removes a directive from host h, persists (with backup), and
 // refreshes the cached snapshot.
 func (a *App) DeleteHostField(h config.HostID, field string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if err := a.Config.DeleteHostField(h, field); err != nil {
 		return err
 	}
 	if err := a.Config.Save(); err != nil {
 		return err
 	}
-	_, err := a.Refresh()
+	_, err := a.refresh()
 	return err
 }
 
 // AttachKey associates identity id with host h by writing an IdentityFile
 // directive pointing at the key's path, then persists and refreshes.
 func (a *App) AttachKey(h config.HostID, id config.IdentityID) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	ident, err := a.diskIdentity(id)
 	if err != nil {
 		return err
@@ -293,53 +337,61 @@ func (a *App) AttachKey(h config.HostID, id config.IdentityID) error {
 	if err := a.Config.Save(); err != nil {
 		return err
 	}
-	_, err = a.Refresh()
+	_, err = a.refresh()
 	return err
 }
 
 // DetachKey removes identity id's IdentityFile directive from host h.
 func (a *App) DetachKey(h config.HostID, id config.IdentityID) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if err := a.Config.RemoveHostIdentity(h, id); err != nil {
 		return err
 	}
 	if err := a.Config.Save(); err != nil {
 		return err
 	}
-	_, err := a.Refresh()
+	_, err := a.refresh()
 	return err
 }
 
 // AddHost appends a new host, persists (with backup), and refreshes.
 func (a *App) AddHost(h config.Host) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if err := a.Config.AddHost(h); err != nil {
 		return err
 	}
 	if err := a.Config.Save(); err != nil {
 		return err
 	}
-	_, err := a.Refresh()
+	_, err := a.refresh()
 	return err
 }
 
 // DeleteHost removes a host, persists (with backup), and refreshes.
 func (a *App) DeleteHost(h config.HostID) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if err := a.Config.DeleteHost(h); err != nil {
 		return err
 	}
 	if err := a.Config.Save(); err != nil {
 		return err
 	}
-	_, err := a.Refresh()
+	_, err := a.refresh()
 	return err
 }
 
 // GenerateKey creates a new key pair on disk and refreshes the snapshot.
 func (a *App) GenerateKey(opts keys.GenerateOpts) (config.Identity, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	id, err := a.Keys.Generate(opts)
 	if err != nil {
 		return config.Identity{}, err
 	}
-	if _, err := a.Refresh(); err != nil {
+	if _, err := a.refresh(); err != nil {
 		return id, err
 	}
 	return id, nil
@@ -350,6 +402,8 @@ func (a *App) GenerateKey(opts keys.GenerateOpts) (config.Identity, error) {
 // file, which must still exist). Agent removal is best-effort so a flaky agent
 // never blocks the file deletion. The identity must exist on disk.
 func (a *App) DeleteKey(id config.IdentityID) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	ident, err := a.diskIdentity(id)
 	if err != nil {
 		return err
@@ -360,6 +414,6 @@ func (a *App) DeleteKey(id config.IdentityID) error {
 	if err := a.Keys.Delete(ident.Path); err != nil {
 		return err
 	}
-	_, err = a.Refresh()
+	_, err = a.refresh()
 	return err
 }
