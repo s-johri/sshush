@@ -58,6 +58,17 @@ func (o *newKeyWizard) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) 
 	}
 }
 
+// Paste adds pasted text to the input on the name and comment steps. The
+// algorithm and size steps are list pickers.
+func (o *newKeyWizard) Paste(msg tea.PasteMsg) tea.Cmd {
+	if o.phase != nkPhaseName && o.phase != nkPhaseComment {
+		return nil
+	}
+	var cmd tea.Cmd
+	o.input, cmd = o.input.Update(msg)
+	return cmd
+}
+
 // updateAlgo selects the algorithm, then advances to bits/curve selection
 // (rsa/ecdsa) or straight to the filename (ed25519).
 func (o *newKeyWizard) updateAlgo(msg tea.KeyPressMsg) (overlay, tea.Cmd) {

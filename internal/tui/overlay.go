@@ -21,6 +21,14 @@ type overlay interface {
 	View(m *Model) string
 }
 
+// paster is an overlay with a text input. bubbletea v2 sends a paste as one
+// tea.PasteMsg, not as key presses, so the main Update passes it here. Paste
+// changes the input only in a phase where the user types; on other steps (a
+// y/n gate, a list picker) it does nothing.
+type paster interface {
+	Paste(msg tea.PasteMsg) tea.Cmd
+}
+
 // styleTextInput paints an input's prompt and text with the theme body style.
 // bubbles v2 keeps separate focused and blurred style states, so both get the
 // same style, which is what the single v1 style did.

@@ -633,8 +633,29 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case tea.PasteMsg:
+		return m.handlePaste(msg)
 	}
 	return m, nil
+}
+
+// handlePaste sends pasted text to the text input that has focus: the active
+// overlay's input, else the filter. With no input open, a paste does nothing.
+func (m Model) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	if m.modal != nil {
+		if p, ok := m.modal.(paster); ok {
+			return m, p.Paste(msg)
+		}
+		return m, nil
+	}
+	if !m.filtering {
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.filterInput, cmd = m.filterInput.Update(msg)
+	m.afterFilterChange()
+	return m, cmd
 }
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

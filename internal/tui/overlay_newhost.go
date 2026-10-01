@@ -46,6 +46,14 @@ func newNewHostWizard() *newHostWizard {
 	return &newHostWizard{input: ti}
 }
 
+// Paste adds pasted text to the input. Every step of this wizard is a text
+// step.
+func (o *newHostWizard) Paste(msg tea.PasteMsg) tea.Cmd {
+	var cmd tea.Cmd
+	o.input, cmd = o.input.Update(msg)
+	return cmd
+}
+
 func (o *newHostWizard) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	if msg.String() == "esc" {
 		m.status = "cancelled"

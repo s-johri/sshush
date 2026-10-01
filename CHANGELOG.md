@@ -25,6 +25,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- Paste works again in the filter, the edit screen, the new-host wizard and the
+  name and comment steps of the new-key wizard. It stopped working in 0.10.0.
 - The `R` screen shows the time of each backup. It no longer says that the
   backup is from the start of this session, because it can be older.
 

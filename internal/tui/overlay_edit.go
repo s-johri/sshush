@@ -106,6 +106,16 @@ func (o *editOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
 	}
 }
 
+// Paste adds pasted text to the input on the value and option-name steps.
+func (o *editOverlay) Paste(msg tea.PasteMsg) tea.Cmd {
+	if o.phase != edPhaseValue && o.phase != edPhaseOptName {
+		return nil
+	}
+	var cmd tea.Cmd
+	o.input, cmd = o.input.Update(msg)
+	return cmd
+}
+
 // updateValue drives value entry. tab cycles fields (existing edits only);
 // ctrl+d deletes the active directive; enter confirms.
 func (o *editOverlay) updateValue(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd) {
