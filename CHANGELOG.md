@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-01
+
+The first stable release. From 1.0, the command line and the `config.toml`
+schema follow semantic versioning. sshush has no public Go API.
+
+### Changed
+- The `usage` text says "default identities" (plural), as sshush loads all of
+  them.
+- The Go packages moved from `pkg/` to `internal/`. sshush has no public Go
+  API. Only the CLI and the `config.toml` schema are stable.
+
+### Removed
+- `sshush -v` no longer prints the version, and exits 2 as an unknown command.
+  Use `sshush version` or `sshush --version`. This keeps `-v` free for a later
+  `--verbose` within 1.x.
+
 ### Fixed
 - Backups no longer go next to the config file. Before, an edit of a file in
   `config.d/` wrote `config.d/<file>.bak`, and an `Include config.d/*` glob
@@ -123,17 +139,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   runs vet and the tests before it publishes.
 - CI runs `govulncheck`. A vulnerability that the code calls fails CI, unless
   it has no fix yet and is listed with a reason in `ci.yml`.
-
-### Removed
-- `sshush -v` no longer prints the version, and exits 2 as an unknown command.
-  Use `sshush version` or `sshush --version`. This keeps `-v` free for a later
-  `--verbose` within 1.x.
-
-### Changed
-- The `usage` text says "default identities" (plural), as sshush loads all of
-  them.
-- The Go packages moved from `pkg/` to `internal/`. sshush has no public Go
-  API. Only the CLI and the `config.toml` schema are stable.
 
 ## [0.10.0] - 2026-08-18
 
@@ -298,7 +303,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hot reload.
 - Versioned self-update (`sshush update`) and a goreleaser release pipeline.
 
-[Unreleased]: https://github.com/s-johri/sshush/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/s-johri/sshush/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/s-johri/sshush/compare/v0.10.0...v1.0.0
 [0.10.0]: https://github.com/s-johri/sshush/compare/v0.9.3...v0.10.0
 [0.9.3]: https://github.com/s-johri/sshush/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/s-johri/sshush/compare/v0.9.1...v0.9.2

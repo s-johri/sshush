@@ -2,7 +2,7 @@
 
 Interactive CLI/TUI to switch SSH keys, inspect the agent, view hosts, and edit SSH config.
 
-**Status:** through `v0.10.0` (milestones 0-31, 39, 40, 42, 43). Shipped: full
+**Status:** through `v1.0.0` (milestones 0-31, 39, 40, 42, 43). Shipped: full
 read and merge pipeline, agent switch (load, unload, unload-all), host directive
 and key and host CRUD with backup and confirm, wildcard hosts, read-only `Match`
 blocks, restore-from-backup, key-to-host association, hot reload, app config with
@@ -16,8 +16,12 @@ versioned self-update and release pipeline. `v0.9.3` fixed `.bak` handling
 across reloads. `v0.10.0` moved the TUI to the Charm v2 stack (bubbletea,
 lipgloss and bubbles v2). Adaptive two-column layout (M41) was tried and
 reverted, because the full-height single pane reads better. `Match`-block
-editing is deferred. Brew, AUR and install-script publishing need public
-releases and tap and AUR secrets. Next: end the soak period and tag `v1.0.0`.
+editing is deferred. `v1.0.0` fixed the findings of the 2026-09-28 review
+(backups out of `Include` globs, a safe `restore`, checksum-verified updates,
+serialized service calls, `Match` criteria, rewrite and `ssh -G` checks before
+a save, and more; see `CHANGELOG.md`), and froze the CLI and the `config.toml`
+schema. The packages moved to `internal/`, so there is no public Go API. Brew
+and AUR publishing need the tap and AUR secrets.
 Tests cover every package; see [README.md](README.md) for usage.
 
 ## Decisions (locked)
@@ -185,10 +189,10 @@ users get value before 1.0; the API/config surface only freezes at the RC.
 | 🏷 | **v0.7.0** — e2e/CI matrix + packaging (completions/man/brew/AUR) + install script + update-check | — |
 | 31 | v1.0 stabilization: error-handling audit, config schema freeze, docs/screenshots, CHANGELOG — *done (RC ready; demo GIF needs `vhs docs/demo.tape`)* | low |
 | 🏷 | **v0.9.0** — release candidate (feature-complete, schema frozen) | — |
-| — | soak period: bug-fix-only patch releases (v0.9.x) from real-world use | — |
+| — | soak period: bug-fix-only patch releases (v0.9.x) from real-world use (*done*) | — |
 | 🏷 | **v0.9.3**: `.bak` survives reloads and re-arms on external edits; border contrast fix | — |
 | 🏷 | **v0.10.0**: migrate to the Charm v2 stack (no change to look or keys) | — |
-| — | pre-1.0 fixes from the 2026-09-28 review (the plan is kept locally) | medium |
+| — | pre-1.0 fixes from the 2026-09-28 review (the plan is kept locally, *done*) | medium |
 | 🏷 | **v1.0.0** — stable release (tag + announce) | — |
 
 ### Beyond v1.0 — planned features
