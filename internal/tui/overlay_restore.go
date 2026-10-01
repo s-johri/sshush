@@ -24,10 +24,11 @@ func (o *restoreOverlay) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd
 func (o *restoreOverlay) View(m *Model) string {
 	var b strings.Builder
 	b.WriteString(errStyle.Render("Restore config from backup") + "\n\n")
-	b.WriteString(textStyle.Render("  Revert these file(s) to their backup snapshot (taken before") + "\n")
-	b.WriteString(textStyle.Render("  sshush's first edit), discarding changes made since:") + "\n\n")
-	for _, p := range m.svc.BackupPaths() {
-		b.WriteString("  " + textStyle.Render(p) + "\n")
+	b.WriteString(textStyle.Render("  Write these backups over the current files. The current content") + "\n")
+	b.WriteString(textStyle.Render("  of each file is saved first, next to its backup.") + "\n\n")
+	for _, bk := range m.svc.Backups() {
+		b.WriteString("  " + textStyle.Render(bk.File) +
+			dimStyle.Render("  backup from "+bk.ModTime.Format("2006-01-02 15:04")) + "\n")
 	}
 	b.WriteString("\n  " + keyCap.Render("y") + textStyle.Render(" restore    ") + keyCap.Render("n") + textStyle.Render(" cancel"))
 	b.WriteString("\n")

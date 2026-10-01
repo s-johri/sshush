@@ -54,8 +54,10 @@ and edit your config safely without leaving the terminal.
 - **Security checks** — audit and fix loose `~/.ssh`/key permissions (`P`), and
   browse or remove `known_hosts` entries (`K`).
 - **Restore from backup** — `R` (or `sshush restore`) reverts the config to the
-  backup snapshot written before the session's first edit, so a bad change is one
-  keystroke to undo. Backups go to `$XDG_STATE_HOME/sshush/backups/` (default
+  backup snapshot that sshush wrote before its first edit of the file in a
+  session. That can be an earlier session, so the confirm step shows the time of
+  each backup. The current content is saved first, as `<backup>.pre-restore`.
+  `sshush restore` asks y/n; use `--yes` in scripts. Backups go to `$XDG_STATE_HOME/sshush/backups/` (default
   `~/.local/state/sshush/backups/`), not next to the config file, so an
   `Include config.d/*` glob never matches them.
 - **Generate & delete keys** — `ssh-keygen` wrapper; the new-key wizard prompts
@@ -210,7 +212,7 @@ declined on them.
 | `PgUp` `PgDn`, `g` `G` | page / jump to top / bottom |
 | `/` | filter the active pane (`esc` clears) |
 | `P` / `K` | permission audit / known_hosts |
-| `R` | restore config from backup (undo edits since session start) |
+| `R` | restore config from backup (shows the backup time, asks first) |
 | `t` / `m` | switch theme / toggle motion |
 | `?` | full keybinding help |
 | `r` | refresh |

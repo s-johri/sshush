@@ -34,6 +34,7 @@ type fakeService struct {
 	khErr        error
 	khRemoved    []int
 	backups      []string
+	backupTime   time.Time
 	restoreCalls int
 	restoreErr   error
 }
@@ -92,8 +93,14 @@ func (f *fakeService) RemoveKnownHost(line int) error {
 	f.khEntries = kept
 	return nil
 }
-func (f *fakeService) CanRestore() bool      { return len(f.backups) > 0 }
-func (f *fakeService) BackupPaths() []string { return f.backups }
+func (f *fakeService) CanRestore() bool { return len(f.backups) > 0 }
+func (f *fakeService) Backups() []config.Backup {
+	var out []config.Backup
+	for _, p := range f.backups {
+		out = append(out, config.Backup{File: p, Path: p + ".bak", ModTime: f.backupTime})
+	}
+	return out
+}
 func (f *fakeService) RestoreBackup() ([]string, error) {
 	f.restoreCalls++
 	return f.backups, f.restoreErr
@@ -1987,5 +1994,23 @@ func TestLoadWarningShownInStatus(t *testing.T) {
 	m = feed(m, refreshedMsg{model: snap})
 	if !strings.Contains(m.status, "/x/config.d/work.bak") {
 		t.Errorf("status = %q, want the load warning", m.status)
+	}
+}
+
+// TestRestoreConfirmShowsBackupTime: the backup can be from an earlier
+// session, so the confirm screen shows when it was written.
+func TestRestoreConfirmShowsBackupTime(t *testing.T) {
+	svc := &fakeService{model: snapshot(), backups: []string{"/x/config"},
+		backupTime: time.Date(2026, 9, 1, 10, 30, 0, 0, time.Local)}
+	m := New(svc)
+	m = feed(m, tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, key("R"))
+	v := view(m)
+	if !strings.Contains(v, "2026-09-01 10:30") {
+		t.Errorf("confirm does not show the backup time:\n%s", v)
+	}
+	if strings.Contains(v, "session") {
+		t.Errorf("confirm still says the backup is from this session:\n%s", v)
 	}
 }

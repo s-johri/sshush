@@ -12,8 +12,10 @@ import (
 // stubService implements service.Service; Refresh returns a fixed model and
 // AddKeyToAgent records which identities were loaded.
 type stubService struct {
-	model *config.SshConfigModel
-	added []config.IdentityID
+	model    *config.SshConfigModel
+	added    []config.IdentityID
+	backups  []config.Backup
+	restored int
 }
 
 func (s *stubService) Refresh() (*config.SshConfigModel, error) { return s.model, nil }
@@ -37,9 +39,16 @@ func (s *stubService) AuditPermissions() ([]perms.Issue, error) { return nil, ni
 func (s *stubService) FixPermissions([]perms.Issue) error       { return nil }
 func (s *stubService) KnownHosts() ([]knownhosts.Entry, error)  { return nil, nil }
 func (s *stubService) RemoveKnownHost(int) error                { return nil }
-func (s *stubService) CanRestore() bool                         { return false }
-func (s *stubService) BackupPaths() []string                    { return nil }
-func (s *stubService) RestoreBackup() ([]string, error)         { return nil, nil }
+func (s *stubService) CanRestore() bool                         { return len(s.backups) > 0 }
+func (s *stubService) Backups() []config.Backup                 { return s.backups }
+func (s *stubService) RestoreBackup() ([]string, error) {
+	s.restored++
+	var out []string
+	for _, b := range s.backups {
+		out = append(out, b.File)
+	}
+	return out, nil
+}
 
 func modelWith(id config.Identity) *config.SshConfigModel {
 	return &config.SshConfigModel{

@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 type KeyAlgorithm string
 
 const (
@@ -76,4 +78,18 @@ type SshConfigModel struct {
 	// Warnings are problems found while loading that do not stop the load,
 	// for example a stale backup file that an Include glob matches.
 	Warnings []string
+}
+
+// Backup is a snapshot of one config file that sshush can restore.
+type Backup struct {
+	// File is the config file that the backup is for.
+	File string
+	// Path is the backup file.
+	Path string
+	// ModTime is when the backup was written. It can be from an earlier
+	// session.
+	ModTime time.Time
+	// PreRestore is where a restore saves the current content of File before
+	// it overwrites it.
+	PreRestore string
 }

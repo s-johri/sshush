@@ -521,8 +521,8 @@ func TestRestoreFromBackup(t *testing.T) {
 	if _, err := r.Load(); err != nil {
 		t.Fatal(err)
 	}
-	if len(r.BackupPaths()) != 0 {
-		t.Fatalf("no backup should exist before any edit: %v", r.BackupPaths())
+	if len(backupFiles(r)) != 0 {
+		t.Fatalf("no backup should exist before any edit: %v", backupFiles(r))
 	}
 
 	// Edit + save writes <path>.bak (holding orig) then the new content.
@@ -535,8 +535,8 @@ func TestRestoreFromBackup(t *testing.T) {
 	if got, _ := os.ReadFile(path); string(got) != "Host web\n    User new\n" {
 		t.Fatalf("edit not saved: %q", got)
 	}
-	if len(r.BackupPaths()) != 1 {
-		t.Fatalf("backup should exist after save: %v", r.BackupPaths())
+	if len(backupFiles(r)) != 1 {
+		t.Fatalf("backup should exist after save: %v", backupFiles(r))
 	}
 
 	// Restore reverts the file to the backup snapshot.

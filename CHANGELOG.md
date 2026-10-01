@@ -17,6 +17,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   warning, because ssh still reads that file: remove it by hand.
 - `restore` still finds a `<file>.bak` next to the config file from an earlier
   version.
+- `sshush restore` now shows each backup with its time and asks y/n before it
+  writes. Use `--yes` to restore without a prompt. Without `--yes`, it refuses
+  when stdin is not a terminal. Before, it wrote with no confirmation.
+- A restore first saves the current content of each file as
+  `<backup>.pre-restore`, so a restore can be undone.
+- Every subcommand rejects arguments that it does not take, with exit code 2.
+  Before, `sshush restore --help` ran a restore, and `install-extras --refres`
+  ran a full install.
+- The `R` screen shows the time of each backup. It no longer says that the
+  backup is from the start of this session, because it can be older.
 
 ### Changed
 - The Go packages moved from `pkg/` to `internal/`. sshush has no public Go

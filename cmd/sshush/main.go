@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,6 +36,10 @@ var version = "dev"
 const repoSlug = "s-johri/sshush"
 
 func main() {
+	if err := validateArgs(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "sshush: %v\n\n%s", err, usage)
+		os.Exit(2)
+	}
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "load-default":
@@ -51,7 +59,7 @@ func main() {
 			fmt.Printf("sshush %s\n", version)
 			return
 		case "restore":
-			if err := restore(); err != nil {
+			if err := restore(len(os.Args) > 2); err != nil {
 				fmt.Fprintf(os.Stderr, "sshush: %v\n", err)
 				os.Exit(1)
 			}
@@ -73,7 +81,7 @@ func main() {
 			}
 			return
 		case "install-extras":
-			refresh := len(os.Args) > 2 && os.Args[2] == "--refresh"
+			refresh := len(os.Args) > 2 // validateArgs allows only --refresh
 			if err := installExtras(refresh); err != nil {
 				fmt.Fprintf(os.Stderr, "sshush: %v\n", err)
 				os.Exit(1)
@@ -214,9 +222,49 @@ func runTUI() {
 	}
 }
 
-// restore reverts the SSH config (and any Included files) to the backup
-// snapshots sshush wrote before its first edit, then reports what changed.
-func restore() error {
+// validateArgs rejects arguments that a subcommand does not take, so that a
+// typo such as `sshush restore --help` never runs the command. args is
+// os.Args[1:]. An unknown command is left to the dispatch in main.
+func validateArgs(args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	cmd, rest := args[0], args[1:]
+	var allowed []string // the flags cmd takes; each one at most once
+	n := 0               // how many arguments cmd takes
+	switch cmd {
+	case "restore":
+		allowed, n = []string{"--yes", "-y"}, 1
+	case "install-extras":
+		allowed, n = []string{"--refresh"}, 1
+	case "completion":
+		return checkCount(cmd, rest, 1)
+	case "load-default", "shell-init", "update", "version", "--version", "-v", "help", "-h", "--help":
+	default:
+		return nil
+	}
+	if err := checkCount(cmd, rest, n); err != nil {
+		return err
+	}
+	for _, a := range rest {
+		if !slices.Contains(allowed, a) {
+			return fmt.Errorf("%s: unknown argument %q", cmd, a)
+		}
+	}
+	return nil
+}
+
+// checkCount returns an error when cmd has more than n arguments.
+func checkCount(cmd string, rest []string, n int) error {
+	if len(rest) > n {
+		return fmt.Errorf("%s: unexpected argument %q", cmd, rest[n])
+	}
+	return nil
+}
+
+// restore reverts the SSH config (and any Included files) to their backup
+// snapshots. With yes it does not ask first.
+func restore(yes bool) error {
 	settings := appconfig.New("")
 	if _, err := settings.Load(); err != nil {
 		return err
@@ -230,17 +278,55 @@ func restore() error {
 	for _, w := range model.Warnings {
 		fmt.Fprintf(os.Stderr, "sshush: warning: %s\n", w)
 	}
+	return runRestore(svc, restoreOpts{
+		yes: yes,
+		tty: isatty.IsTerminal(os.Stdin.Fd()),
+		in:  os.Stdin,
+		out: os.Stdout,
+	})
+}
+
+// restoreOpts are the inputs of runRestore.
+type restoreOpts struct {
+	yes bool      // restore without a prompt (--yes)
+	tty bool      // in is a terminal, so a prompt can get an answer
+	in  io.Reader // where the y/n answer comes from
+	out io.Writer
+}
+
+// runRestore lists each backup with its time, asks y/n (unless o.yes), then
+// restores. With no terminal and no --yes it writes nothing and returns an
+// error, so a script never overwrites the config by accident.
+func runRestore(svc service.Service, o restoreOpts) error {
 	if !svc.CanRestore() {
-		fmt.Println("no backup to restore (sshush writes one before its first edit)")
+		fmt.Fprintln(o.out, "no backup to restore (sshush writes one before its first edit)")
 		return nil
+	}
+	backups := svc.Backups()
+	fmt.Fprintln(o.out, "These backups will replace the current files:")
+	for _, b := range backups {
+		fmt.Fprintf(o.out, "  %s\n    backup from %s: %s\n", b.File, b.ModTime.Format("2006-01-02 15:04"), b.Path)
+	}
+	if !o.yes {
+		if !o.tty {
+			return errors.New("stdin is not a terminal: use `sshush restore --yes` to restore without a prompt")
+		}
+		fmt.Fprint(o.out, "Restore? [y/N] ")
+		answer, _ := bufio.NewReader(o.in).ReadString('\n')
+		if a := strings.TrimSpace(answer); a != "y" && a != "Y" {
+			fmt.Fprintln(o.out, "restore cancelled")
+			return nil
+		}
 	}
 	files, err := svc.RestoreBackup()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("restored %d file(s) from backup:\n", len(files))
-	for _, f := range files {
-		fmt.Printf("  %s\n", f)
+	fmt.Fprintf(o.out, "restored %d file(s) from backup:\n", len(files))
+	for _, b := range backups {
+		if slices.Contains(files, b.File) {
+			fmt.Fprintf(o.out, "  %s\n    content before the restore: %s\n", b.File, b.PreRestore)
+		}
 	}
 	return nil
 }
@@ -293,7 +379,7 @@ Usage:
   sshush              launch the interactive TUI
   sshush load-default load the configured default identity into the agent
   sshush shell-init   print a shell snippet to load the default on shell start
-  sshush restore      revert the SSH config to the backup from before edits
+  sshush restore      revert the SSH config to its backup (asks first; --yes: do not ask)
   sshush update       update sshush to the latest release
   sshush version      print the version
   sshush completion <shell>  print a bash/zsh/fish completion script

@@ -75,8 +75,14 @@ func (f *fakeConfig) DeleteHost(h config.HostID) error {
 	f.deletedHosts = append(f.deletedHosts, h)
 	return nil
 }
-func (f *fakeConfig) Save() error           { f.saved++; return nil }
-func (f *fakeConfig) BackupPaths() []string { return f.backups }
+func (f *fakeConfig) Save() error { f.saved++; return nil }
+func (f *fakeConfig) Backups() []config.Backup {
+	var out []config.Backup
+	for _, p := range f.backups {
+		out = append(out, config.Backup{File: p, Path: p + ".bak"})
+	}
+	return out
+}
 func (f *fakeConfig) Restore() ([]string, error) {
 	f.restored = true
 	return f.backups, f.restoreErr

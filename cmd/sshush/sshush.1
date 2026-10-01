@@ -30,7 +30,15 @@ to your shell rc, e.g.
 .TP
 .B restore
 Revert the SSH config (and any Included files) to the backup snapshot
-written before sshush's first edit of the session. A
+that sshush wrote before its first edit of the file in a session. That can be
+an earlier session: the command shows the time of each backup and asks y/n
+first. The current content is saved as
+.IR <backup>.pre-restore .
+Use
+.B \-\-yes
+to restore without a prompt. Without
+.BR \-\-yes ,
+it refuses when stdin is not a terminal. A
 .I <file>.bak
 next to a config file, from sshush before 1.0, is also found.
 .TP

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/s-johri/sshush/internal/config"
 )
@@ -162,7 +163,7 @@ func TestRestoreFindsLegacyBak(t *testing.T) {
 	if _, err := r.Load(); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.BackupPaths(); len(got) != 1 || got[0] != path {
+	if got := backupFiles(r); len(got) != 1 || got[0] != path {
 		t.Fatalf("BackupPaths() = %v, want [%s]", got, path)
 	}
 	if _, err := r.Restore(); err != nil {
@@ -190,4 +191,89 @@ func TestRestorePrefersStateDirBackup(t *testing.T) {
 	if got, _ := os.ReadFile(path); string(got) != orig {
 		t.Errorf("restored %q, want %q", got, orig)
 	}
+}
+
+// TestBackupsReportPathAndTime: each backup gives the config file, the
+// backup file and the backup's modification time, so the user can see how
+// old the snapshot is before a restore.
+func TestBackupsReportPathAndTime(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host web\n    User old\n")
+
+	r := New(path)
+	r.BackupDir = t.TempDir()
+	editAndSave(t, r, "web", "User", "new")
+	when := time.Date(2026, 9, 1, 10, 30, 0, 0, time.Local)
+	if err := os.Chtimes(r.backupPath(path), when, when); err != nil {
+		t.Fatal(err)
+	}
+
+	got := r.Backups()
+	if len(got) != 1 {
+		t.Fatalf("Backups() = %v, want 1", got)
+	}
+	b := got[0]
+	if b.File != path || b.Path != r.backupPath(path) || !b.ModTime.Equal(when) {
+		t.Errorf("Backups()[0] = %+v, want file %s, path %s, time %v", b, path, r.backupPath(path), when)
+	}
+	if want := r.backupPath(path) + ".pre-restore"; b.PreRestore != want {
+		t.Errorf("PreRestore = %q, want %q", b.PreRestore, want)
+	}
+}
+
+// TestRestoreKeepsPreRestoreCopy: Restore saves the current content before
+// it overwrites the file, so a restore can be undone.
+func TestRestoreKeepsPreRestoreCopy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host web\n    User old\n")
+
+	r := New(path)
+	r.BackupDir = t.TempDir()
+	editAndSave(t, r, "web", "User", "new")
+	if _, err := r.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	pre, err := os.ReadFile(r.backupPath(path) + ".pre-restore")
+	if err != nil {
+		t.Fatalf("no pre-restore copy: %v", err)
+	}
+	if want := "Host web\n    User new\n"; string(pre) != want {
+		t.Errorf("pre-restore = %q, want %q", pre, want)
+	}
+}
+
+// TestRestoreLegacyKeepsPreRestoreInStateDir: for a sibling .bak from an
+// earlier version, the pre-restore copy also goes to the state dir, not next
+// to the file, where an Include glob could match it.
+func TestRestoreLegacyKeepsPreRestoreInStateDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	writeFile(t, path, "Host web\n    User new\n")
+	writeFile(t, path+".bak", "Host web\n    User old\n")
+
+	r := New(path)
+	r.BackupDir = t.TempDir()
+	if _, err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(r.backupPath(path) + ".pre-restore"); err != nil {
+		t.Errorf("pre-restore not in state dir: %v", err)
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, "*.pre-restore")); len(m) != 0 {
+		t.Errorf("pre-restore written next to the file: %v", m)
+	}
+}
+
+// backupFiles returns the config files that have a backup.
+func backupFiles(r *FileRepo) []string {
+	var out []string
+	for _, b := range r.Backups() {
+		out = append(out, b.File)
+	}
+	return out
 }

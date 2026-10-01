@@ -503,9 +503,9 @@ Expose an undo: restore `<path>` from `<path>.bak` (confirm-gated), so a bad edi
 is one keystroke to revert. Surface in the TUI and as a `sshush restore`
 subcommand.
 
-**Status — done.** `FileRepo.BackupPaths()`/`Restore()` revert every loaded file
+**Status — done.** `FileRepo.Backups()`/`Restore()` revert every loaded file
 (main + Includes) that has a sibling `.bak` to that pre-edit snapshot; the
-service exposes `CanRestore`/`BackupPaths`/`RestoreBackup` (restore + refresh).
+service exposes `CanRestore`/`Backups`/`RestoreBackup` (restore + refresh).
 In the TUI, `R` opens a confirm gate listing the files to revert (or reports
 "no backup" when none); `sshush restore` does the same non-interactively. The
 `.bak` is the snapshot from before sshush's first edit of the session, so
@@ -515,6 +515,8 @@ step-by-step undo is possible later but unscoped.
 
 Since pre-1.0 fix T1, the backup goes to `$XDG_STATE_HOME/sshush/backups/`,
 not next to the file. `Restore` also finds a sibling `.bak` from older versions.
+Since fix T2, restore shows the time of each backup and asks first (`--yes` for
+scripts), and saves the current content as `<backup>.pre-restore`.
 
 ### Milestone 29 detail
 

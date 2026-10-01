@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	sshcfg "github.com/kevinburke/ssh_config"
 	"github.com/s-johri/sshush/internal/config"
@@ -39,7 +40,7 @@ type ConfigRepo interface {
 	AddHost(config.Host) error
 	DeleteHost(config.HostID) error
 	Save() error
-	BackupPaths() []string
+	Backups() []config.Backup
 	Restore() ([]string, error)
 }
 
@@ -597,22 +598,42 @@ func (r *FileRepo) backupOnDisk(path string) bool {
 	return err == nil
 }
 
-// BackupPaths returns the loaded config files that have a backup to restore
-// from. A backup is written before sshush's first edit of a file, so its
-// presence means there is a pre-edit snapshot to revert to.
-func (r *FileRepo) BackupPaths() []string {
-	var out []string
+// Backups returns the backup of each loaded config file that has one. A
+// backup is written before sshush's first edit of a file in a session, so it
+// can be from an earlier session: ModTime tells the user how old it is.
+func (r *FileRepo) Backups() []config.Backup {
+	var out []config.Backup
 	for _, lf := range r.files {
-		if r.findBackup(lf.path) != "" {
-			out = append(out, lf.path)
+		bak := r.findBackup(lf.path)
+		if bak == "" {
+			continue
 		}
+		var mod time.Time
+		if fi, err := os.Stat(bak); err == nil {
+			mod = fi.ModTime()
+		}
+		out = append(out, config.Backup{
+			File:       lf.path,
+			Path:       bak,
+			ModTime:    mod,
+			PreRestore: r.preRestorePath(lf.path),
+		})
 	}
 	return out
 }
 
+// preRestorePath is where Restore saves the current content of path before it
+// overwrites it. It is always in the backup dir, also for a legacy sibling
+// .bak, so that an Include glob cannot match it.
+func (r *FileRepo) preRestorePath(path string) string {
+	return r.backupPath(path) + ".pre-restore"
+}
+
 // Restore overwrites each loaded file that has a backup with the backup's
 // contents, reverting every change made since the backup was taken (sshush's
-// first edit this session). Returns the restored file paths. The in-memory AST
+// first edit of the file in some session, see Backups). Before each overwrite
+// it saves the current content to the PreRestore path. Returns the restored
+// file paths. The in-memory AST
 // is left stale on purpose — callers reload (via Refresh) to pick up the
 // reverted content.
 func (r *FileRepo) Restore() ([]string, error) {
@@ -625,6 +646,9 @@ func (r *FileRepo) Restore() ([]string, error) {
 		data, err := os.ReadFile(bak)
 		if err != nil {
 			return restored, fmt.Errorf("read backup %s: %w", bak, err)
+		}
+		if err := r.savePreRestore(lf.path); err != nil {
+			return restored, err
 		}
 		if err := os.WriteFile(lf.path, data, fileMode(lf.path)); err != nil {
 			return restored, fmt.Errorf("restore %s: %w", lf.path, err)
@@ -652,4 +676,24 @@ func fileMode(path string) os.FileMode {
 		return fi.Mode().Perm()
 	}
 	return 0o600
+}
+
+// savePreRestore copies the current content of path to preRestorePath(path),
+// so that the restore can be undone. A missing file has nothing to save.
+func (r *FileRepo) savePreRestore(path string) error {
+	cur, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	pre := r.preRestorePath(path)
+	if err := os.MkdirAll(filepath.Dir(pre), 0o700); err != nil {
+		return fmt.Errorf("save %s before restore: %w", path, err)
+	}
+	if err := os.WriteFile(pre, cur, 0o600); err != nil {
+		return fmt.Errorf("save %s before restore: %w", path, err)
+	}
+	return nil
 }

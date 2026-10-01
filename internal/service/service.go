@@ -39,7 +39,7 @@ type Service interface {
 	KnownHosts() ([]knownhosts.Entry, error)
 	RemoveKnownHost(line int) error
 	CanRestore() bool
-	BackupPaths() []string
+	Backups() []config.Backup
 	RestoreBackup() ([]string, error)
 }
 
@@ -235,10 +235,10 @@ func (a *App) diskIdentity(id config.IdentityID) (config.Identity, error) {
 }
 
 // CanRestore reports whether a backup exists to revert the config to.
-func (a *App) CanRestore() bool { return len(a.Config.BackupPaths()) > 0 }
+func (a *App) CanRestore() bool { return len(a.Config.Backups()) > 0 }
 
-// BackupPaths lists the config files that have a backup snapshot to restore.
-func (a *App) BackupPaths() []string { return a.Config.BackupPaths() }
+// Backups lists the backup snapshot of each config file that has one.
+func (a *App) Backups() []config.Backup { return a.Config.Backups() }
 
 // RestoreBackup reverts the config file(s) to their backup snapshots, then
 // refreshes the cached snapshot so callers see the reverted state. Returns the
