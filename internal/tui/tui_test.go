@@ -464,11 +464,16 @@ func TestNewHostFlow(t *testing.T) {
 	if w := m.modal.(*newHostWizard); w.phase != nhPhaseOptKey {
 		t.Fatalf("expected options loop, got phase %d", w.phase)
 	}
-	// blank option name finishes the wizard
+	// blank option name opens the confirm step; y dispatches AddHost
 	out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = out.(Model)
+	if w := m.modal.(*newHostWizard); w.phase != nhPhaseConfirm || cmd != nil {
+		t.Fatalf("blank option should open the confirm step, got phase %d", w.phase)
+	}
+	out, cmd = m.Update(key("y"))
+	m = out.(Model)
 	if cmd == nil {
-		t.Fatal("blank option should dispatch AddHost")
+		t.Fatal("y should dispatch AddHost")
 	}
 	cmd()
 	if len(svc.addedHosts) != 1 {
@@ -509,7 +514,8 @@ func TestNewHostWithCustomOption(t *testing.T) {
 	if w := m.modal.(*newHostWizard); w.phase != nhPhaseOptKey {
 		t.Fatalf("expected to loop back for another option, got %d", w.phase)
 	}
-	out, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // blank -> finish
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // blank -> confirm step
+	out, cmd := m.Update(key("y"))
 	m = out.(Model)
 	cmd()
 
@@ -2201,5 +2207,99 @@ func TestConfirmNoNoteForCleanFile(t *testing.T) {
 	m := openEditConfirm(t, &fakeService{model: snapshot()})
 	if v := view(m); strings.Contains(v, "formatting") || strings.Contains(v, "not be saved") {
 		t.Errorf("note shown for a clean file:\n%s", v)
+	}
+}
+
+// typeText feeds s one key at a time.
+func typeText(m Model, s string) Model {
+	for _, r := range s {
+		m = feed(m, key(string(r)))
+	}
+	return m
+}
+
+func enter(m Model) Model { return feed(m, tea.KeyPressMsg{Code: tea.KeyEnter}) }
+
+// TestNewHostChecksEachStep guards T12: the wizard refuses a bad alias,
+// value or option name on the step where it is typed.
+func TestNewHostChecksEachStep(t *testing.T) {
+	svc := &fakeService{model: snapshot()}
+	m := New(svc)
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = feed(m, key("n"))
+
+	m = enter(typeText(m, "a b")) // alias with a space
+	if w := m.modal.(*newHostWizard); w.step != 0 || !strings.Contains(m.status, "one word") {
+		t.Fatalf("alias with a space: step %d, status %q", w.step, m.status)
+	}
+	m.modal.(*newHostWizard).input.SetValue("db")
+	m = enter(m)                  // -> HostName
+	m = enter(typeText(m, "h o")) // HostName with a space
+	if w := m.modal.(*newHostWizard); w.step != 1 {
+		t.Fatalf("HostName with a space accepted: step %d", w.step)
+	}
+	m.modal.(*newHostWizard).input.SetValue("10.0.0.1")
+	m = enter(m)                    // -> User
+	m = enter(m)                    // skip -> Port
+	m = enter(typeText(m, "70000")) // bad port
+	if w := m.modal.(*newHostWizard); w.step != 3 || !strings.Contains(m.status, "65535") {
+		t.Fatalf("port 70000: step %d, status %q", w.step, m.status)
+	}
+	m.modal.(*newHostWizard).input.SetValue("")
+	m = enter(m)                          // skip -> options
+	m = enter(typeText(m, "ForwadAgent")) // typo
+	if w := m.modal.(*newHostWizard); w.phase != nhPhaseOptKey || !strings.Contains(m.status, "unknown option") {
+		t.Fatalf("unknown option: phase %d, status %q", w.phase, m.status)
+	}
+	if len(svc.addedHosts) != 0 {
+		t.Errorf("host added: %v", svc.addedHosts)
+	}
+}
+
+// TestNewHostConfirmStep: the wizard shows the block and asks y/n before it
+// writes; n writes nothing.
+func TestNewHostConfirmStep(t *testing.T) {
+	svc := &fakeService{model: snapshot(), rewrite: config.RewriteCheck{
+		File: "/home/u/.ssh/config", Reformat: "line 1: x becomes y",
+	}}
+	m := New(svc)
+	m = feed(m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = feed(m, key("n"))
+	m = enter(typeText(m, "db"))
+	m = enter(typeText(m, "10.0.0.1"))
+	m = enter(m) // skip User
+	m = enter(m) // skip Port
+	m = enter(m) // no options -> confirm
+	v := view(m)
+	for _, want := range []string{"Host db", "HostName 10.0.0.1", "formatting"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("confirm step does not show %q:\n%s", want, v)
+		}
+	}
+	m = feed(m, key("n"))
+	if m.modal != nil || len(svc.addedHosts) != 0 {
+		t.Errorf("n must close and write nothing: modal %T, added %v", m.modal, svc.addedHosts)
+	}
+}
+
+// TestEditChecksOptionAndValue guards T12 in the edit overlay.
+func TestEditChecksOptionAndValue(t *testing.T) {
+	m := New(&fakeService{model: snapshot()})
+	m = feed(m, refreshedMsg{model: snapshot()})
+	m = feed(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = feed(m, key("e"))
+	m = feed(m, tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = enter(typeText(m, "ForwadAgent"))
+	if o := m.modal.(*editOverlay); o.phase != edPhaseOptName || !strings.Contains(m.status, "unknown option") {
+		t.Fatalf("unknown option: phase %d, status %q", o.phase, m.status)
+	}
+	m.modal.(*editOverlay).input.SetValue("Port")
+	m = enter(m)
+	m = enter(typeText(m, "abc"))
+	if o := m.modal.(*editOverlay); o.phase != edPhaseValue || !strings.Contains(m.status, "port") {
+		t.Fatalf("Port abc: phase %d, status %q", o.phase, m.status)
 	}
 }

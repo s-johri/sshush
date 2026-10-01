@@ -5,10 +5,12 @@ package sshconfig
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -74,6 +76,10 @@ type FileRepo struct {
 	// SshDir is the directory that relative Include directives and ~ resolve
 	// against (per OpenSSH, ~/.ssh). Empty means ~/.ssh.
 	SshDir string
+	// Check, when set, is run by Save on a temp copy of each file before it
+	// writes it (see SSHCheck). Save refuses a write when the current file
+	// passes and the new one fails. Nil means no check.
+	Check func(path string) error
 	// BackupDir is where Save writes backups. Empty means DefaultBackupDir().
 	// Backups must not go next to the config file: an Include glob such as
 	// config.d/* would match them, and ssh would read the old values.
@@ -695,6 +701,9 @@ func (r *FileRepo) SetHostField(h config.HostID, key, val string) error {
 	if err := r.writable(); err != nil {
 		return err
 	}
+	if err := config.ValidateValue(key, val); err != nil {
+		return err
+	}
 	lf, host := r.findHost(h)
 	if host == nil {
 		return fmt.Errorf("unknown host %q", h)
@@ -712,7 +721,12 @@ func (r *FileRepo) SetHostField(h config.HostID, key, val string) error {
 		}
 	}
 
-	// No existing directive: append one indented like its siblings.
+	// No existing directive: append one indented like its siblings. Only a
+	// new name is checked: one already in the file is ssh's (or the user's)
+	// business, for example a newer option or one under IgnoreUnknown.
+	if err := config.ValidateOption(key); err != nil {
+		return err
+	}
 	kv := &sshcfg.KV{Key: key, Value: val}
 	setKVIndent(kv, blockIndent(host))
 	host.Nodes = append(host.Nodes, kv)
@@ -747,6 +761,9 @@ func (r *FileRepo) DeleteHostField(h config.HostID, key string) error {
 // appear multiple times). In-memory until Save.
 func (r *FileRepo) AddHostIdentity(h config.HostID, path string) error {
 	if err := r.writable(); err != nil {
+		return err
+	}
+	if err := config.ValidateValue("IdentityFile", path); err != nil {
 		return err
 	}
 	lf, host := r.findHost(h)
@@ -801,8 +818,8 @@ func (r *FileRepo) AddHost(h config.Host) error {
 	if err := r.writable(); err != nil {
 		return err
 	}
-	if strings.TrimSpace(h.Name) == "" {
-		return errors.New("host name is required")
+	if err := validateNewHost(h); err != nil {
+		return err
 	}
 	main, err := r.ensureMainFile()
 	if err != nil {
@@ -910,6 +927,9 @@ func (r *FileRepo) Save() error {
 		if lf.check.Unsafe != "" {
 			return fmt.Errorf("not saved: writing %s would change a value: %s", lf.path, lf.check.Unsafe)
 		}
+		if err := r.sshAccepts(lf.raw, lf.render()); err != nil {
+			return fmt.Errorf("not saved: ssh rejects the new %s: %w", lf.path, err)
+		}
 		if !r.backupOnDisk(lf.path) {
 			bak := r.backupPath(lf.path)
 			if err := os.MkdirAll(filepath.Dir(bak), 0o700); err != nil {
@@ -927,6 +947,115 @@ func (r *FileRepo) Save() error {
 		lf.raw = data // keep last-known bytes current so reloads can spot external edits
 		r.dirty[lf.path] = false
 		lf.check = config.RewriteCheck{File: lf.path} // the file is now in sshush's format
+	}
+	return nil
+}
+
+// validateNewHost checks the fields of a host that AddHost writes.
+func validateNewHost(h config.Host) error {
+	if err := config.ValidateAlias(h.Name); err != nil {
+		return err
+	}
+	if h.Hostname != "" {
+		if err := config.ValidateValue("HostName", h.Hostname); err != nil {
+			return err
+		}
+	}
+	if h.User != "" {
+		if err := config.ValidateValue("User", h.User); err != nil {
+			return err
+		}
+	}
+	if h.Port != 0 {
+		if err := config.ValidateValue("Port", strconv.Itoa(h.Port)); err != nil {
+			return err
+		}
+	}
+	for _, k := range sortedKeys(h.Options) {
+		if err := config.ValidateOption(k); err != nil {
+			return err
+		}
+		if err := config.ValidateValue(k, h.Options[k]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sshAccepts runs r.Check on temp copies of a file's current and new
+// content. It returns an error only when the current content passes and the
+// new content fails, so a config that the local ssh already rejects (for
+// example a newer option) does not block every save. It does not run for a
+// file with a Match exec block, because ssh -G would run its command.
+func (r *FileRepo) sshAccepts(before, after []byte) error {
+	if r.Check == nil || hasMatchExec(before) || hasMatchExec(after) {
+		return nil
+	}
+	if checkContent(r.Check, before) != nil {
+		return nil
+	}
+	return checkContent(r.Check, after)
+}
+
+// checkContent writes data to a private temp file and runs check on it.
+func checkContent(check func(string) error, data []byte) error {
+	f, err := os.CreateTemp("", "sshush-check-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := check(f.Name()); err != nil {
+		// The message names the temp file; name what it stands for.
+		return errors.New(strings.ReplaceAll(err.Error(), f.Name(), "the new content"))
+	}
+	return nil
+}
+
+// hasMatchExec reports whether a config text has a Match block with an exec
+// criterion.
+func hasMatchExec(data []byte) bool {
+	for _, line := range strings.Split(string(data), "\n") {
+		d := directiveTokens(line)
+		if len(d) == 0 || d[0] != "match" {
+			continue
+		}
+		for _, a := range d[1:] {
+			if strings.EqualFold(strings.TrimPrefix(a, "!"), "exec") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// SSHCheck runs "ssh -G -F path" to check that ssh accepts a config file. ssh
+// reads every line of the file, also in blocks that do not match, so a bad
+// option name or value anywhere fails. It returns nil when ssh is not
+// installed.
+func SSHCheck(path string) error {
+	bin, err := exec.LookPath("ssh")
+	if err != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "-G", "-F", path, "sshush-config-check").CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if i := strings.IndexByte(msg, '\n'); i >= 0 {
+			msg = msg[:i]
+		}
+		if msg == "" {
+			msg = err.Error()
+		}
+		return errors.New(msg)
 	}
 	return nil
 }

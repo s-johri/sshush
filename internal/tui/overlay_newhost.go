@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -34,6 +35,7 @@ const (
 	nhPhaseBasics = iota
 	nhPhaseOptKey
 	nhPhaseOptVal
+	nhPhaseConfirm // y/n before AddHost writes the block
 )
 
 // newNewHostWizard starts the wizard at the alias step.
@@ -46,9 +48,11 @@ func newNewHostWizard() *newHostWizard {
 	return &newHostWizard{input: ti}
 }
 
-// Paste adds pasted text to the input. Every step of this wizard is a text
-// step.
+// Paste adds pasted text to the input on the text steps (not the y/n step).
 func (o *newHostWizard) Paste(msg tea.PasteMsg) tea.Cmd {
+	if o.phase == nhPhaseConfirm {
+		return nil
+	}
 	var cmd tea.Cmd
 	o.input, cmd = o.input.Update(msg)
 	return cmd
@@ -58,6 +62,15 @@ func (o *newHostWizard) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd)
 	if msg.String() == "esc" {
 		m.status = "cancelled"
 		return nil, nil
+	}
+	if o.phase == nhPhaseConfirm {
+		if msg.String() != "y" && msg.String() != "Y" {
+			m.status = "cancelled"
+			return nil, nil
+		}
+		host := o.draft
+		m.status = "creating host…"
+		return nil, func() tea.Msg { return editDoneMsg{verb: "host added", err: m.svc.AddHost(host)} }
 	}
 	if msg.String() != "enter" {
 		var cmd tea.Cmd
@@ -80,28 +93,28 @@ func (o *newHostWizard) Update(msg tea.KeyPressMsg, m *Model) (overlay, tea.Cmd)
 func (o *newHostWizard) enterBasic(val string, m *Model) (overlay, tea.Cmd) {
 	switch hostSteps[o.step].field {
 	case "alias":
-		if val == "" {
-			m.status = "host alias cannot be empty"
+		if err := config.ValidateAlias(val); err != nil {
+			m.status = err.Error()
 			return o, nil
 		}
 		o.draft.ID = config.HostID(val)
 		o.draft.Name = val
-	case "HostName":
-		if val != "" {
+	case "HostName", "User", "Port":
+		if val == "" {
+			break // optional: skip
+		}
+		field := hostSteps[o.step].field
+		if err := config.ValidateValue(field, val); err != nil {
+			m.status = err.Error()
+			return o, nil
+		}
+		switch field {
+		case "HostName":
 			o.draft.Hostname = val
-		}
-	case "User":
-		if val != "" {
+		case "User":
 			o.draft.User = val
-		}
-	case "Port":
-		if val != "" {
-			p, err := strconv.Atoi(val)
-			if err != nil {
-				m.status = "port must be a number"
-				return o, nil
-			}
-			o.draft.Port = p
+		default:
+			o.draft.Port, _ = strconv.Atoi(val) // checked above
 		}
 	}
 	if o.step == len(hostSteps)-1 {
@@ -113,13 +126,17 @@ func (o *newHostWizard) enterBasic(val string, m *Model) (overlay, tea.Cmd) {
 	return o, nil
 }
 
-// enterOptKey collects a custom option name; a blank name finishes the wizard
-// and dispatches AddHost.
+// enterOptKey collects a custom option name; a blank name goes to the y/n
+// step.
 func (o *newHostWizard) enterOptKey(key string, m *Model) (overlay, tea.Cmd) {
 	if key == "" {
-		host := o.draft
-		m.status = "creating host…"
-		return nil, func() tea.Msg { return editDoneMsg{verb: "host added", err: m.svc.AddHost(host)} }
+		o.phase = nhPhaseConfirm
+		o.input.Blur()
+		return o, nil
+	}
+	if err := config.ValidateOption(key); err != nil {
+		m.status = err.Error()
+		return o, nil
 	}
 	o.optKey = key
 	o.phase = nhPhaseOptVal
@@ -129,8 +146,8 @@ func (o *newHostWizard) enterOptKey(key string, m *Model) (overlay, tea.Cmd) {
 
 // enterOptVal stores a custom option value, then loops back for more.
 func (o *newHostWizard) enterOptVal(val string, m *Model) (overlay, tea.Cmd) {
-	if val == "" {
-		m.status = "value cannot be empty"
+	if err := config.ValidateValue(o.optKey, val); err != nil {
+		m.status = err.Error()
 		return o, nil
 	}
 	if o.draft.Options == nil {
@@ -153,9 +170,43 @@ func (o *newHostWizard) View(m *Model) string {
 	case nhPhaseOptKey:
 		return o.prompt("New host: add option",
 			"option name (e.g. ForwardAgent) — enter blank to finish")
+	case nhPhaseConfirm:
+		return o.viewConfirm(m)
 	default:
 		return o.prompt("New host: add option", o.optKey+" value")
 	}
+}
+
+// viewConfirm shows the block that AddHost will write, and asks y/n.
+func (o *newHostWizard) viewConfirm(m *Model) string {
+	var b strings.Builder
+	b.WriteString(tabActive.Render("Confirm new host") + "\n\n")
+	lines := []string{"Host " + o.draft.Name}
+	if o.draft.Hostname != "" {
+		lines = append(lines, "    HostName "+o.draft.Hostname)
+	}
+	if o.draft.User != "" {
+		lines = append(lines, "    User "+o.draft.User)
+	}
+	if o.draft.Port != 0 {
+		lines = append(lines, "    Port "+strconv.Itoa(o.draft.Port))
+	}
+	keys := make([]string, 0, len(o.draft.Options))
+	for k := range o.draft.Options {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		lines = append(lines, "    "+k+" "+o.draft.Options[k])
+	}
+	for _, l := range lines {
+		b.WriteString("  " + textStyle.Render(l) + "\n")
+	}
+	b.WriteString("\n" + dimStyle.Render("  (a backup of the config file is written first)") + "\n")
+	b.WriteString(m.rewriteNote("") + "\n")
+	b.WriteString("  " + keyCap.Render("y") + textStyle.Render(" write    ") + keyCap.Render("n") + textStyle.Render(" cancel"))
+	b.WriteString("\n")
+	return b.String()
 }
 
 // prompt renders a single-line text prompt for the current step.

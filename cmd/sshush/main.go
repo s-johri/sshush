@@ -189,6 +189,7 @@ func checkLatest() (string, bool) {
 func newService(sshDir, configPath string) service.Service {
 	repo := sshconfig.New(configPath)
 	repo.SshDir = sshDir
+	repo.Check = sshconfig.SSHCheck // refuse a save that ssh would reject
 	app := service.New(keys.New(sshDir), repo, agent.New(""))
 	app.SshDir = sshDir
 	return app

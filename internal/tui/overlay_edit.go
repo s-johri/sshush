@@ -154,6 +154,10 @@ func (o *editOverlay) updateValue(msg tea.KeyPressMsg, m *Model) (overlay, tea.C
 			m.status = "value cannot be empty (ctrl+d to delete a directive)"
 			return o, nil
 		}
+		if err := config.ValidateValue(o.activeField(), strings.TrimSpace(o.input.Value())); err != nil {
+			m.status = err.Error()
+			return o, nil
+		}
 		o.phase = edPhaseConfirm
 		return o, nil
 	}
@@ -170,8 +174,8 @@ func (o *editOverlay) updateOptName(msg tea.KeyPressMsg, m *Model) (overlay, tea
 		return nil, nil
 	case "enter":
 		key := strings.TrimSpace(o.input.Value())
-		if key == "" {
-			m.status = "option name cannot be empty"
+		if err := config.ValidateOption(key); err != nil {
+			m.status = err.Error()
 			return o, nil
 		}
 		o.newKey = key

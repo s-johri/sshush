@@ -216,3 +216,45 @@ func TestE2EDuplicateAliasMatchesSsh(t *testing.T) {
 		}
 	}
 }
+
+// TestE2ESaveRefusedWhenSshRejects: with the real ssh -G check, a value that
+// ssh rejects is not written (T12).
+func TestE2ESaveRefusedWhenSshRejects(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	orig := "Host a\n    User u\n"
+	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo := sshconfig.New(path)
+	repo.SshDir = dir
+	repo.BackupDir = t.TempDir()
+	repo.Check = sshconfig.SSHCheck
+	if _, err := repo.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetHostField("a", "Compression", "maybe"); err != nil {
+		t.Fatal(err)
+	}
+	err := repo.Save()
+	if err == nil || !strings.Contains(err.Error(), "maybe") {
+		t.Errorf("Save err = %v, want the ssh error", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "sshush-check-") {
+		t.Errorf("error names the temp file: %v", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != orig {
+		t.Errorf("file changed:\n%s", got)
+	}
+
+	// A good value is written.
+	if _, err := repo.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetHostField("a", "Compression", "yes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(); err != nil {
+		t.Errorf("Save of a good value: %v", err)
+	}
+}

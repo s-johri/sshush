@@ -25,6 +25,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every subcommand rejects arguments that it does not take, with exit code 2.
   Before, `sshush restore --help` ran a restore, and `install-extras --refres`
   ran a full install.
+- sshush no longer writes a config line that makes every ssh connection fail.
+  A new option name must be an ssh_config(5) keyword (`ForwadAgent` is
+  refused), `Port` must be 1 to 65535, `HostName`, `User` and a new alias must
+  be one word, and no value can span lines. An existing directive that sshush
+  does not know (for example one under `IgnoreUnknown`) can still be edited.
+- Before a save, sshush runs `ssh -G` on the new file and refuses a change that
+  ssh rejects. It does not refuse when the file already failed before the
+  change, and it does not run for a file with `Match exec`.
+- The new-host wizard now shows the block and asks y/n before it writes.
 - Before the first save of a config file, the confirm step says when the save
   also changes the formatting of other lines (tabs, runs of spaces,
   `Key=value`, keyword case, CRLF). ssh reads the same values. The attach and

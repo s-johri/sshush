@@ -55,6 +55,10 @@ and edit your config safely without leaving the terminal.
   lines you did not edit (tabs, runs of spaces, `Key=value`, keyword case, CRLF).
   The confirm step says so before it writes. If a save would change a value
   (for example `User u#x`, which would become `User u #x`), sshush refuses it.
+  A new option name must be one that ssh knows, `Port` must be 1 to 65535, and
+  `HostName`, `User` and the alias must be one word. Before it writes, sshush
+  runs `ssh -G` on the new file and refuses a change that ssh rejects (not for a
+  file with `Match exec`, because `ssh -G` would run that command).
 - **Security checks** — audit and fix loose `~/.ssh`/key permissions (`P`), and
   browse or remove `known_hosts` entries (`K`).
 - **Restore from backup** — `R` (or `sshush restore`) reverts the config to the
