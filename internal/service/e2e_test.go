@@ -63,6 +63,8 @@ func TestE2EKeyAgentConfigLifecycle(t *testing.T) {
 
 	repo := sshconfig.New(cfgPath)
 	repo.SshDir = dir
+	backups := t.TempDir()
+	repo.BackupDir = backups
 	svc := service.New(keys.New(dir), repo, agent.New(sock))
 
 	// Generate a throwaway, passphrase-less key.
@@ -100,7 +102,7 @@ func TestE2EKeyAgentConfigLifecycle(t *testing.T) {
 		t.Error("key still loaded after RemoveKeyFromAgent")
 	}
 
-	// Config edit persists to disk (with a .bak backup).
+	// Config edit persists to disk (with a backup in the backup dir).
 	if err := svc.EditHost("demo", "User", "deploy"); err != nil {
 		t.Fatalf("EditHost: %v", err)
 	}
@@ -108,8 +110,11 @@ func TestE2EKeyAgentConfigLifecycle(t *testing.T) {
 	if !strings.Contains(string(raw), "User deploy") {
 		t.Errorf("config edit not persisted:\n%s", raw)
 	}
-	if _, err := os.Stat(cfgPath + ".bak"); err != nil {
-		t.Errorf("backup not written on edit: %v", err)
+	if baks, _ := filepath.Glob(filepath.Join(backups, "*.bak")); len(baks) != 1 {
+		t.Errorf("backup not written on edit: %v", baks)
+	}
+	if _, err := os.Stat(cfgPath + ".bak"); !os.IsNotExist(err) {
+		t.Errorf("backup written next to the config file: %v", err)
 	}
 
 	// Delete removes the key files from disk.
@@ -121,5 +126,54 @@ func TestE2EKeyAgentConfigLifecycle(t *testing.T) {
 	}
 	if _, err := os.Stat(fresh.Path + ".pub"); !os.IsNotExist(err) {
 		t.Errorf("public key still on disk after DeleteKey: %v", err)
+	}
+}
+
+// TestE2EIncludeGlobEditSeenBySsh: with Include config.d/*, an edit of a host
+// in config.d/work must reach ssh. A backup next to the file would match the
+// glob, and ssh would keep the old value (C1).
+func TestE2EIncludeGlobEditSeenBySsh(t *testing.T) {
+	dir := t.TempDir()
+	confd := filepath.Join(dir, "config.d")
+	if err := os.Mkdir(confd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "config")
+	if err := os.WriteFile(cfgPath, []byte("Include "+confd+"/*\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	work := "Host work\n    HostName 10.0.0.9\n    ProxyJump bastion\n"
+	if err := os.WriteFile(filepath.Join(confd, "work"), []byte(work), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := sshconfig.New(cfgPath)
+	repo.SshDir = dir
+	repo.BackupDir = t.TempDir()
+	if _, err := repo.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteHostField("work", "ProxyJump"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	model, err := repo.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pj := model.Hosts["work"].Options["ProxyJump"]; pj != "" {
+		t.Errorf("model ProxyJump = %q after delete, want empty", pj)
+	}
+	out, err := exec.Command("ssh", "-G", "-F", cfgPath, "work").Output()
+	if err != nil {
+		t.Fatalf("ssh -G: %v", err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "proxyjump ") {
+			t.Errorf("ssh still applies the deleted ProxyJump: %q", line)
+		}
 	}
 }

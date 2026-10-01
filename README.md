@@ -22,7 +22,7 @@ Go. Switch keys, see what's loaded in the agent, browse and connect to hosts,
 and edit your config safely without leaving the terminal.
 
 > Status: in active development. Edits to your SSH config are gated behind a
-> confirmation and a `.bak` backup is written before the first change, but treat
+> confirmation and a backup is written before the first change, but treat
 > it as pre-1.0 software.
 
 ## Features
@@ -54,8 +54,10 @@ and edit your config safely without leaving the terminal.
 - **Security checks** — audit and fix loose `~/.ssh`/key permissions (`P`), and
   browse or remove `known_hosts` entries (`K`).
 - **Restore from backup** — `R` (or `sshush restore`) reverts the config to the
-  `.bak` snapshot written before the session's first edit, so a bad change is one
-  keystroke to undo.
+  backup snapshot written before the session's first edit, so a bad change is one
+  keystroke to undo. Backups go to `$XDG_STATE_HOME/sshush/backups/` (default
+  `~/.local/state/sshush/backups/`), not next to the config file, so an
+  `Include config.d/*` glob never matches them.
 - **Generate & delete keys** — `ssh-keygen` wrapper; the new-key wizard prompts
   for algorithm, size, file name, and a key comment (`-C`, defaulting to the file
   name). Deleting a key also removes it from the agent.

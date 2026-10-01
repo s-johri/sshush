@@ -12,9 +12,10 @@ switch keys, see what is loaded in the agent, browse hosts, and edit the config
 without leaving the terminal.
 .PP
 Run with no arguments to launch the interactive UI. Config edits are gated behind
-a confirmation and a
-.I .bak
-backup is written before the first change of a session.
+a confirmation and a backup is written before the first change of a session.
+Backups go to
+.IR $XDG_STATE_HOME/sshush/backups/ " (default " ~/.local/state/sshush/backups/ ),
+not next to the config file.
 .SH COMMANDS
 .TP
 .B load-default
@@ -28,9 +29,10 @@ to your shell rc, e.g.
 .IR ~/.bashrc " or " ~/.zshrc .
 .TP
 .B restore
-Revert the SSH config (and any Included files) to the
-.I .bak
-snapshot written before sshush's first edit of the session.
+Revert the SSH config (and any Included files) to the backup snapshot
+written before sshush's first edit of the session. A
+.I <file>.bak
+next to a config file, from sshush before 1.0, is also found.
 .TP
 .B update
 Update sshush to the latest release in place. Only available for released builds.

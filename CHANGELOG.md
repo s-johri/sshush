@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Backups no longer go next to the config file. Before, an edit of a file in
+  `config.d/` wrote `config.d/<file>.bak`, and an `Include config.d/*` glob
+  matched it. Then ssh applied the old values from the backup (for example a
+  removed `ProxyJump` stayed in effect), and sshush showed the old values after
+  a save. Backups now go to `$XDG_STATE_HOME/sshush/backups/` (default
+  `~/.local/state/sshush/backups/`).
+- sshush does not load a `.bak` file that an `Include` glob matches. It shows a
+  warning, because ssh still reads that file: remove it by hand.
+- `restore` still finds a `<file>.bak` next to the config file from an earlier
+  version.
+
 ### Changed
 - The Go packages moved from `pkg/` to `internal/`. sshush has no public Go
   API. Only the CLI and the `config.toml` schema are stable.

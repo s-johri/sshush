@@ -1976,3 +1976,16 @@ func TestThemedScreenPaintsEdgeToEdge(t *testing.T) {
 	}
 	assertFullyPainted(t, out, bgOpenSeq())
 }
+
+// TestLoadWarningShownInStatus: a load warning (for example an old .bak that
+// an Include glob matches) shows in the status line.
+func TestLoadWarningShownInStatus(t *testing.T) {
+	snap := snapshot()
+	snap.Warnings = []string{"ssh reads the old backup /x/config.d/work.bak through an Include. Remove this file."}
+	m := New(&fakeService{model: snap})
+	m = feed(m, tea.WindowSizeMsg{Width: 200, Height: 30})
+	m = feed(m, refreshedMsg{model: snap})
+	if !strings.Contains(m.status, "/x/config.d/work.bak") {
+		t.Errorf("status = %q, want the load warning", m.status)
+	}
+}

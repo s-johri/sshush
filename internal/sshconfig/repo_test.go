@@ -222,7 +222,7 @@ func TestSaveWritesBackupAndFile(t *testing.T) {
 	if string(got) != "Host web\n    User new\n" {
 		t.Errorf("written file = %q", got)
 	}
-	bak, err := os.ReadFile(path + ".bak")
+	bak, err := os.ReadFile(r.backupPath(path))
 	if err != nil {
 		t.Fatalf("backup not written: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestBackupSurvivesReloadBetweenEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bak, err := os.ReadFile(path + ".bak")
+	bak, err := os.ReadFile(r.backupPath(path))
 	if err != nil {
 		t.Fatalf("backup not written: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestBackupRecreatedAfterExternalDeletion(t *testing.T) {
 	if err := r.Save(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(path + ".bak"); err != nil {
+	if err := os.Remove(r.backupPath(path)); err != nil {
 		t.Fatal(err)
 	}
 	// Service does Save+Refresh after every edit; mirror that.
@@ -304,7 +304,7 @@ func TestBackupRecreatedAfterExternalDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bak, err := os.ReadFile(path + ".bak")
+	bak, err := os.ReadFile(r.backupPath(path))
 	if err != nil {
 		t.Fatalf("backup not re-created after external deletion: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestExternalEditRearmsBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bak, err := os.ReadFile(path + ".bak")
+	bak, err := os.ReadFile(r.backupPath(path))
 	if err != nil {
 		t.Fatal(err)
 	}

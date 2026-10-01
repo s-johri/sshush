@@ -561,6 +561,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = nil
 		m.applySnapshot(msg.model)
+		if msg.model != nil && len(msg.model.Warnings) > 0 {
+			m.status = "warning: " + msg.model.Warnings[0]
+		}
 		return m.maybeAutoLoad()
 
 	case agentDoneMsg:

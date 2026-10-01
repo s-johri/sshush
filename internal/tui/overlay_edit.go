@@ -253,7 +253,7 @@ func (o *editOverlay) viewConfirm(m *Model) string {
 	if h, ok := m.hostByID(o.host); ok && h.IsPattern {
 		b.WriteString(errStyle.Render("  this is a wildcard block — affects every matching connection") + "\n")
 	}
-	b.WriteString(dimStyle.Render("  (a .bak backup of the config file is written first)") + "\n\n")
+	b.WriteString(dimStyle.Render("  (a backup of the config file is written first)") + "\n\n")
 	b.WriteString("  " + keyCap.Render("y") + textStyle.Render(" write    ") + keyCap.Render("n") + textStyle.Render(" cancel"))
 	b.WriteString("\n")
 	return b.String()

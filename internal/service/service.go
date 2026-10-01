@@ -237,10 +237,10 @@ func (a *App) diskIdentity(id config.IdentityID) (config.Identity, error) {
 // CanRestore reports whether a backup exists to revert the config to.
 func (a *App) CanRestore() bool { return len(a.Config.BackupPaths()) > 0 }
 
-// BackupPaths lists the config files that have a ".bak" snapshot to restore.
+// BackupPaths lists the config files that have a backup snapshot to restore.
 func (a *App) BackupPaths() []string { return a.Config.BackupPaths() }
 
-// RestoreBackup reverts the config file(s) to their ".bak" snapshots, then
+// RestoreBackup reverts the config file(s) to their backup snapshots, then
 // refreshes the cached snapshot so callers see the reverted state. Returns the
 // restored file paths.
 func (a *App) RestoreBackup() ([]string, error) {

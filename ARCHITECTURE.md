@@ -62,7 +62,7 @@ type ConfigRepo interface {
     RemoveHostIdentity(h config.HostID, id config.IdentityID) error
     AddHost(config.Host) error
     DeleteHost(config.HostID) error
-    Save() error                              // backup <path>.bak, then write AST
+    Save() error                              // backup to the state dir, then write AST
 }
 
 // internal/keys — disk scan + key file management
@@ -116,7 +116,7 @@ TUI holds a snapshot. Mutations dispatched as `tea.Cmd` (async goroutine) → ca
 
 ## Safety invariants
 
-- **Backup before first write**: each file is copied to `<path>.bak` once per session before its first mutation.
+- **Backup before first write**: each file is copied to `$XDG_STATE_HOME/sshush/backups/<escaped-path>.bak` once per session before its first mutation. Never next to the file: an `Include config.d/*` glob would match it (pre-1.0 fix T1).
 - **Confirm before**: every file write and every key delete (key-file deletion is flagged irreversible).
 - **Never auto-edit shell rc files**: `sshush shell-init` prints a snippet, user pastes.
 - **Degrade, never crash**: missing `$SSH_AUTH_SOCK`, unreadable key, malformed config, no settings/watcher → status message, keep running.
@@ -512,6 +512,9 @@ In the TUI, `R` opens a confirm gate listing the files to revert (or reports
 restore reverts the whole session's writes — coarser than per-edit undo, matching
 the backup model. Granularity note: a stack of timestamped backups for true
 step-by-step undo is possible later but unscoped.
+
+Since pre-1.0 fix T1, the backup goes to `$XDG_STATE_HOME/sshush/backups/`,
+not next to the file. `Restore` also finds a sibling `.bak` from older versions.
 
 ### Milestone 29 detail
 

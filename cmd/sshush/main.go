@@ -214,7 +214,7 @@ func runTUI() {
 	}
 }
 
-// restore reverts the SSH config (and any Included files) to the ".bak"
+// restore reverts the SSH config (and any Included files) to the backup
 // snapshots sshush wrote before its first edit, then reports what changed.
 func restore() error {
 	settings := appconfig.New("")
@@ -223,8 +223,12 @@ func restore() error {
 	}
 	warnConfig(settings)
 	svc := newService(settings.SshDir(), settings.ConfigPath())
-	if _, err := svc.Refresh(); err != nil { // populates the config repo
+	model, err := svc.Refresh() // populates the config repo
+	if err != nil {
 		return err
+	}
+	for _, w := range model.Warnings {
+		fmt.Fprintf(os.Stderr, "sshush: warning: %s\n", w)
 	}
 	if !svc.CanRestore() {
 		fmt.Println("no backup to restore (sshush writes one before its first edit)")

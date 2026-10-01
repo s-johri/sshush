@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -56,15 +57,21 @@ type FileRepo struct {
 	// SshDir is the directory that relative Include directives and ~ resolve
 	// against (per OpenSSH, ~/.ssh). Empty means ~/.ssh.
 	SshDir string
+	// BackupDir is where Save writes backups. Empty means DefaultBackupDir().
+	// Backups must not go next to the config file: an Include glob such as
+	// config.d/* would match them, and ssh would read the old values.
+	BackupDir string
 
 	files []*loadedFile   // parse order: main file first, then includes
 	dirty map[string]bool // files mutated since load, keyed by path
-	// backedUp marks files whose .bak has been written. It must survive
+	// backedUp marks files whose backup has been written. It must survive
 	// reloads (the service reloads after every Save; resetting it would let
-	// the next edit clobber the .bak with already-edited content). Load
+	// the next edit clobber the backup with already-edited content). Load
 	// clears an entry only when the file changed outside sshush, so the next
 	// Save re-snapshots the external state before writing over it.
 	backedUp map[string]bool
+	// warnings collects non-fatal problems found by the current Load.
+	warnings []string
 }
 
 // New returns a FileRepo for path. Empty path defaults to ~/.ssh/config.
@@ -91,12 +98,13 @@ func (r *FileRepo) Load() (*config.SshConfigModel, error) {
 
 	r.files = nil
 	r.dirty = map[string]bool{}
+	r.warnings = nil
 	visited := map[string]bool{}
 	if err := r.loadFile(main, 0, visited); err != nil {
 		return nil, err
 	}
 
-	// A file that changed outside sshush (editor, Restore) makes the .bak
+	// A file that changed outside sshush (editor, Restore) makes the backup
 	// stale: re-arm the backup so the next Save snapshots the new state
 	// instead of letting Restore silently revert the external edits.
 	for _, lf := range r.files {
@@ -108,6 +116,7 @@ func (r *FileRepo) Load() (*config.SshConfigModel, error) {
 	model := &config.SshConfigModel{
 		Identities: map[config.IdentityID]config.Identity{},
 		Hosts:      map[config.HostID]config.Host{},
+		Warnings:   r.warnings,
 	}
 	for _, lf := range r.files {
 		model.SourceFiles = append(model.SourceFiles, lf.path)
@@ -265,7 +274,8 @@ func includeTargets(raw []byte) []string {
 }
 
 // resolveInclude expands ~ and globs and resolves relative paths against ~/.ssh,
-// returning matched file paths.
+// returning matched file paths. A glob match that ends in ".bak" is skipped
+// with a warning: it is an old sshush backup, and ssh still reads it.
 func (r *FileRepo) resolveInclude(arg string) []string {
 	arg = strings.Trim(arg, `"`)
 	if strings.HasPrefix(arg, "~/") {
@@ -280,7 +290,19 @@ func (r *FileRepo) resolveInclude(arg string) []string {
 	if err != nil || matches == nil {
 		return nil
 	}
-	return matches
+	if strings.HasSuffix(arg, ".bak") {
+		return matches // the user asked for this .bak by name
+	}
+	out := matches[:0]
+	for _, m := range matches {
+		if strings.HasSuffix(m, ".bak") {
+			r.warnings = append(r.warnings, fmt.Sprintf(
+				"ssh reads the old backup %s through an Include. Remove this file.", m))
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // sshBaseDir is the directory relative Includes resolve against: r.SshDir, else
@@ -496,8 +518,8 @@ func newKV(key, val string) *sshcfg.KV {
 }
 
 // Save writes every dirty file back to disk. Before the first write of a file
-// this session it copies the file's original contents to "<path>.bak", so an
-// unexpected result is always recoverable. Files are written with their
+// this session it copies the file's original contents to backupPath(path), so
+// an unexpected result is always recoverable. Files are written with their
 // existing permissions (default 0600).
 func (r *FileRepo) Save() error {
 	for _, lf := range r.files {
@@ -505,7 +527,11 @@ func (r *FileRepo) Save() error {
 			continue
 		}
 		if !r.backupOnDisk(lf.path) {
-			if err := os.WriteFile(lf.path+".bak", lf.raw, fileMode(lf.path)); err != nil {
+			bak := r.backupPath(lf.path)
+			if err := os.MkdirAll(filepath.Dir(bak), 0o700); err != nil {
+				return fmt.Errorf("backup %s: %w", lf.path, err)
+			}
+			if err := os.WriteFile(bak, lf.raw, 0o600); err != nil {
 				return fmt.Errorf("backup %s: %w", lf.path, err)
 			}
 			r.backedUp[lf.path] = true
@@ -520,31 +546,71 @@ func (r *FileRepo) Save() error {
 	return nil
 }
 
-// backupOnDisk reports whether this session's .bak for path was written and is
-// still present. Checking the disk guards against the .bak being deleted
+// DefaultBackupDir is $XDG_STATE_HOME/sshush/backups, or
+// ~/.local/state/sshush/backups when XDG_STATE_HOME is not set.
+func DefaultBackupDir() string {
+	state := os.Getenv("XDG_STATE_HOME")
+	if state == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = "."
+		}
+		state = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(state, "sshush", "backups")
+}
+
+// backupPath is where Save writes the backup of the config file at path: the
+// absolute path, escaped into one file name, in the backup dir.
+func (r *FileRepo) backupPath(path string) string {
+	dir := r.BackupDir
+	if dir == "" {
+		dir = DefaultBackupDir()
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	return filepath.Join(dir, url.PathEscape(abs)+".bak")
+}
+
+// findBackup returns the backup to restore path from: the one in the backup
+// dir, else a sibling "<path>.bak" that sshush wrote before 1.0. It returns
+// "" when there is none.
+func (r *FileRepo) findBackup(path string) string {
+	for _, bak := range []string{r.backupPath(path), path + ".bak"} {
+		if _, err := os.Stat(bak); err == nil {
+			return bak
+		}
+	}
+	return ""
+}
+
+// backupOnDisk reports whether this session's backup for path was written and
+// is still present. Checking the disk guards against the backup being deleted
 // externally mid-session, which would otherwise leave later edits unrecoverable.
 func (r *FileRepo) backupOnDisk(path string) bool {
 	if !r.backedUp[path] {
 		return false
 	}
-	_, err := os.Stat(path + ".bak")
+	_, err := os.Stat(r.backupPath(path))
 	return err == nil
 }
 
-// BackupPaths returns the loaded config files that have a sibling ".bak" to
-// restore from. A ".bak" is written before sshush's first edit of a file, so
-// its presence means there is a pre-edit snapshot to revert to.
+// BackupPaths returns the loaded config files that have a backup to restore
+// from. A backup is written before sshush's first edit of a file, so its
+// presence means there is a pre-edit snapshot to revert to.
 func (r *FileRepo) BackupPaths() []string {
 	var out []string
 	for _, lf := range r.files {
-		if _, err := os.Stat(lf.path + ".bak"); err == nil {
+		if r.findBackup(lf.path) != "" {
 			out = append(out, lf.path)
 		}
 	}
 	return out
 }
 
-// Restore overwrites each loaded file that has a ".bak" with the backup's
+// Restore overwrites each loaded file that has a backup with the backup's
 // contents, reverting every change made since the backup was taken (sshush's
 // first edit this session). Returns the restored file paths. The in-memory AST
 // is left stale on purpose — callers reload (via Refresh) to pick up the
@@ -552,12 +618,12 @@ func (r *FileRepo) BackupPaths() []string {
 func (r *FileRepo) Restore() ([]string, error) {
 	var restored []string
 	for _, lf := range r.files {
-		bak := lf.path + ".bak"
+		bak := r.findBackup(lf.path)
+		if bak == "" {
+			continue
+		}
 		data, err := os.ReadFile(bak)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
 			return restored, fmt.Errorf("read backup %s: %w", bak, err)
 		}
 		if err := os.WriteFile(lf.path, data, fileMode(lf.path)); err != nil {

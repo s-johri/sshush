@@ -72,4 +72,8 @@ type SshConfigModel struct {
 	// SourceFiles is a list of all the ssh config files that were parsed to build this model, in the order they were parsed.
 	// This can be used for debugging and for determining where a particular host or identity was defined.
 	SourceFiles []string
+
+	// Warnings are problems found while loading that do not stop the load,
+	// for example a stale backup file that an Include glob matches.
+	Warnings []string
 }
